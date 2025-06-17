@@ -1,20 +1,18 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
+import { validateInputs } from './validation';
+import { handleError, logInfo, setOutput } from './utils';
 
 export async function run(): Promise<void> {
   try {
-    const greeting: string = core.getInput('greeting') || 'Hello';
+    const inputs = validateInputs();
 
-    if (!greeting.trim()) {
-      throw new Error('Greeting cannot be empty');
-    }
+    logInfo(`Processing greeting: ${inputs.greeting}`);
+    logInfo('Starting code review analysis...');
+    const message: string = `${inputs.greeting} from GitHub Actions!`;
 
-    core.info(`Processing greeting: ${greeting}`);
-    core.info('Starting code review analysis...');
-    const message: string = `${greeting} from GitHub Actions!`;
-
-    core.info(`Generated message: ${message}`);
-    core.setOutput('message', message);
+    logInfo(`Generated message: ${message}`);
+    setOutput('message', message);
 
     // Add job summary (visible in Actions tab)
     await core.summary
@@ -29,7 +27,7 @@ export async function run(): Promise<void> {
       .write();
 
     // Add PR comment if this is a pull request
-    const token = core.getInput('github-token');
+    const token = inputs.githubToken;
     if (token && github.context.eventName === 'pull_request') {
       const octokit = github.getOctokit(token);
 
@@ -51,12 +49,10 @@ ${message}
         body: commentBody,
       });
 
-      core.info('PR comment added successfully');
+      logInfo('PR comment added successfully');
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    core.error(`Action failed: ${errorMessage}`);
-    core.setFailed(errorMessage);
+    handleError(error);
   }
 }
 

@@ -29957,17 +29957,16 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
+const validation_1 = __nccwpck_require__(4344);
+const utils_1 = __nccwpck_require__(1798);
 async function run() {
     try {
-        const greeting = core.getInput('greeting') || 'Hello';
-        if (!greeting.trim()) {
-            throw new Error('Greeting cannot be empty');
-        }
-        core.info(`Processing greeting: ${greeting}`);
-        core.info('Starting code review analysis...');
-        const message = `${greeting} from GitHub Actions!`;
-        core.info(`Generated message: ${message}`);
-        core.setOutput('message', message);
+        const inputs = (0, validation_1.validateInputs)();
+        (0, utils_1.logInfo)(`Processing greeting: ${inputs.greeting}`);
+        (0, utils_1.logInfo)('Starting code review analysis...');
+        const message = `${inputs.greeting} from GitHub Actions!`;
+        (0, utils_1.logInfo)(`Generated message: ${message}`);
+        (0, utils_1.setOutput)('message', message);
         // Add job summary (visible in Actions tab)
         await core.summary
             .addHeading('Code Review Results')
@@ -29980,7 +29979,7 @@ async function run() {
         ])
             .write();
         // Add PR comment if this is a pull request
-        const token = core.getInput('github-token');
+        const token = inputs.githubToken;
         if (token && github.context.eventName === 'pull_request') {
             const octokit = github.getOctokit(token);
             const commentBody = `## 🤖 AI Code Review Results
@@ -29999,17 +29998,134 @@ ${message}
                 issue_number: github.context.issue.number,
                 body: commentBody,
             });
-            core.info('PR comment added successfully');
+            (0, utils_1.logInfo)('PR comment added successfully');
         }
     }
     catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        core.error(`Action failed: ${errorMessage}`);
-        core.setFailed(errorMessage);
+        (0, utils_1.handleError)(error);
     }
 }
 if (require.main === require.cache[eval('__filename')]) {
     run();
+}
+
+
+/***/ }),
+
+/***/ 1798:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.handleError = handleError;
+exports.logInfo = logInfo;
+exports.setOutput = setOutput;
+const core = __importStar(__nccwpck_require__(7484));
+function handleError(error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    core.error(`Action failed: ${errorMessage}`);
+    core.setFailed(errorMessage);
+}
+function logInfo(message) {
+    core.info(message);
+}
+function setOutput(name, value) {
+    core.setOutput(name, value);
+}
+
+
+/***/ }),
+
+/***/ 4344:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.validateInputs = validateInputs;
+const core = __importStar(__nccwpck_require__(7484));
+function validateInputs() {
+    const greeting = core.getInput('greeting') || 'Hello';
+    const githubToken = core.getInput('github-token');
+    const anthropicApiKey = core.getInput('anthropic-api-key');
+    if (!greeting.trim()) {
+        throw new Error('Greeting cannot be empty');
+    }
+    if (!anthropicApiKey.trim()) {
+        throw new Error('Anthropic API key is required');
+    }
+    return {
+        greeting: greeting.trim(),
+        githubToken,
+        anthropicApiKey
+    };
 }
 
 
