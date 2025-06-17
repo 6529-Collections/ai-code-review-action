@@ -19,9 +19,18 @@ export async function run(): Promise<void> {
     // Verify installation
     await exec.exec('claude', ['--version']);
 
-    // Test Claude API connection
+    // Test Claude API connection and verify repo context
     logInfo('Testing Claude API connection...');
-    await exec.exec('bash', ['-c', 'echo "Explain this code" | claude -p']);
+    logInfo('Current working directory:');
+    await exec.exec('pwd');
+    logInfo('Repository contents:');
+    await exec.exec('ls', ['-la']);
+
+    // Test Claude with a simple prompt first
+    await exec.exec('bash', [
+      '-c',
+      'echo "What files do you see in the current directory?" | claude -p',
+    ]);
     logInfo('Claude API connection successful');
 
     logInfo(`Processing greeting: ${inputs.greeting}`);
