@@ -29,4 +29,4 @@ jobs:
     - name: Test the action
       uses: ./
       with:
-        greeting: ${{ github.event.inputs.greeting || 'Hello from GitHub Actions!' }}
+        greeting: ${{ github.event.inputs.greeting || 'Hello from GitHub Actions!!!' }}
