@@ -1,0 +1,17 @@
+name: 'My First Action'
+description: 'A basic GitHub Action'
+author: 'Your Name'
+
+inputs:
+  greeting:
+    description: 'Greeting message'
+    required: false
+    default: 'Hello'
+
+outputs:
+  message:
+    description: 'The greeting message'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
