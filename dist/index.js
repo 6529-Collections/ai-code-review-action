@@ -29971,9 +29971,17 @@ async function run() {
         (0, utils_1.logInfo)('Claude Code CLI installed successfully');
         // Verify installation
         await exec.exec('claude', ['--version']);
-        // Test Claude API connection
+        // Test Claude API connection and verify repo context
         (0, utils_1.logInfo)('Testing Claude API connection...');
-        await exec.exec('bash', ['-c', 'echo "Explain this code" | claude -p']);
+        (0, utils_1.logInfo)('Current working directory:');
+        await exec.exec('pwd');
+        (0, utils_1.logInfo)('Repository contents:');
+        await exec.exec('ls', ['-la']);
+        // Test Claude with a simple prompt first
+        await exec.exec('bash', [
+            '-c',
+            'echo "What files do you see in the current directory?" | claude -p',
+        ]);
         (0, utils_1.logInfo)('Claude API connection successful');
         (0, utils_1.logInfo)(`Processing greeting: ${inputs.greeting}`);
         (0, utils_1.logInfo)('Starting code review analysis...');
