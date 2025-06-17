@@ -29964,6 +29964,7 @@ async function run() {
             throw new Error('Greeting cannot be empty');
         }
         core.info(`Processing greeting: ${greeting}`);
+        core.info('Starting code review analysis...');
         const message = `${greeting} from GitHub Actions!`;
         core.info(`Generated message: ${message}`);
         core.setOutput('message', message);
