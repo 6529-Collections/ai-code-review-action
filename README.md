@@ -8,6 +8,7 @@ AI-powered code review GitHub Action that provides automated code analysis and f
 - 💬 **PR Comments**: Posts review results directly on pull requests
 - 📊 **Job Summaries**: Detailed analysis visible in GitHub Actions
 - ⚡ **Fast Setup**: Easy to integrate into existing workflows
+- 🔄 **Auto-sync**: Automatically keeps built files up-to-date
 
 ## Usage
 
