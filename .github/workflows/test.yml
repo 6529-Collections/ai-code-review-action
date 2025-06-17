@@ -1,0 +1,24 @@
+name: Test Action
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      greeting:
+        description: 'Custom greeting message'
+        required: false
+        default: 'Hello World'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Test the action
+      uses: ./
+      with:
+        greeting: ${{ github.event.inputs.greeting || 'Hello from GitHub Actions!' }}
