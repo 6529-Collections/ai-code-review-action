@@ -10,6 +10,7 @@ export async function run(): Promise<void> {
     }
 
     core.info(`Processing greeting: ${greeting}`);
+    core.info('Starting code review analysis...');
     const message: string = `${greeting} from GitHub Actions!`;
 
     core.info(`Generated message: ${message}`);
