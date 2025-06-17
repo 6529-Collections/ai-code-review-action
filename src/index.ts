@@ -1,11 +1,28 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
+import * as exec from '@actions/exec';
 import { validateInputs } from './validation';
 import { handleError, logInfo, setOutput } from './utils';
 
 export async function run(): Promise<void> {
   try {
     const inputs = validateInputs();
+
+    // Set Anthropic API key for Claude CLI
+    process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+
+    // Install Claude Code CLI
+    logInfo('Installing Claude Code CLI...');
+    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
+    logInfo('Claude Code CLI installed successfully');
+
+    // Verify installation
+    await exec.exec('claude', ['--version']);
+
+    // Test Claude API connection
+    logInfo('Testing Claude API connection...');
+    await exec.exec('bash', ['-c', 'echo "Explain this code" | claude -p']);
+    logInfo('Claude API connection successful');
 
     logInfo(`Processing greeting: ${inputs.greeting}`);
     logInfo('Starting code review analysis...');

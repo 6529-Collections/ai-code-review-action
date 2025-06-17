@@ -29957,11 +29957,24 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const github = __importStar(__nccwpck_require__(3228));
+const exec = __importStar(__nccwpck_require__(5236));
 const validation_1 = __nccwpck_require__(4344);
 const utils_1 = __nccwpck_require__(1798);
 async function run() {
     try {
         const inputs = (0, validation_1.validateInputs)();
+        // Set Anthropic API key for Claude CLI
+        process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+        // Install Claude Code CLI
+        (0, utils_1.logInfo)('Installing Claude Code CLI...');
+        await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
+        (0, utils_1.logInfo)('Claude Code CLI installed successfully');
+        // Verify installation
+        await exec.exec('claude', ['--version']);
+        // Test Claude API connection
+        (0, utils_1.logInfo)('Testing Claude API connection...');
+        await exec.exec('bash', ['-c', 'echo "Explain this code" | claude -p']);
+        (0, utils_1.logInfo)('Claude API connection successful');
         (0, utils_1.logInfo)(`Processing greeting: ${inputs.greeting}`);
         (0, utils_1.logInfo)('Starting code review analysis...');
         const timestamp = new Date().toISOString();
