@@ -29964,7 +29964,8 @@ async function run() {
         const inputs = (0, validation_1.validateInputs)();
         (0, utils_1.logInfo)(`Processing greeting: ${inputs.greeting}`);
         (0, utils_1.logInfo)('Starting code review analysis...');
-        const message = `${inputs.greeting} from GitHub Actions!`;
+        const timestamp = new Date().toISOString();
+        const message = `${inputs.greeting} from GitHub Actions! (${timestamp})`;
         (0, utils_1.logInfo)(`Generated message: ${message}`);
         (0, utils_1.setOutput)('message', message);
         // Add job summary (visible in Actions tab)
@@ -30124,7 +30125,7 @@ function validateInputs() {
     return {
         greeting: greeting.trim(),
         githubToken,
-        anthropicApiKey
+        anthropicApiKey,
     };
 }
 

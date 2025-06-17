@@ -9,7 +9,8 @@ export async function run(): Promise<void> {
 
     logInfo(`Processing greeting: ${inputs.greeting}`);
     logInfo('Starting code review analysis...');
-    const message: string = `${inputs.greeting} from GitHub Actions!`;
+    const timestamp = new Date().toISOString();
+    const message: string = `${inputs.greeting} from GitHub Actions! (${timestamp})`;
 
     logInfo(`Generated message: ${message}`);
     setOutput('message', message);
