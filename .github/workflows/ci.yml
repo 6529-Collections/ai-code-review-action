@@ -33,10 +33,12 @@ jobs:
     - name: Build
       run: yarn build
     
-    - name: Check for uncommitted changes
+    - name: Auto-commit built files
       run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add dist/
         if [ -n "$(git status --porcelain)" ]; then
-          echo "Uncommitted changes found. Please commit the built files."
-          git status
-          exit 1
+          git commit -m "Auto-build dist files [skip ci]"
+          git push
         fi
