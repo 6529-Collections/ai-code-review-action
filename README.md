@@ -29,6 +29,7 @@ jobs:
         with:
           greeting: "AI Code Review Complete"
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
 ### Advanced Usage
@@ -38,6 +39,7 @@ jobs:
   with:
     greeting: "Custom review message"
     github-token: ${{ secrets.GITHUB_TOKEN }}
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
   id: review
 
 - name: Use review output
@@ -50,6 +52,7 @@ jobs:
 |-------|-------------|----------|---------|
 | `greeting` | Custom greeting message for the review | No | `Hello` |
 | `github-token` | GitHub token for API access | No | `${{ github.token }}` |
+| `anthropic-api-key` | Anthropic API key for Claude access | Yes | - |
 
 ## Outputs
 
@@ -88,31 +91,77 @@ Detailed analysis is also available in the GitHub Actions job summary.
 
 ## Development
 
-### Local Testing
+### Project Structure
 
-```bash
-# Install dependencies
-npm install
+The action is built with a modular structure:
 
-# Run tests
-npm test
-
-# Build the action
-npm run build
-
-# Test locally
-npm run test:local "Test message"
+```
+src/
+├── index.ts       # Main entry point
+├── validation.ts  # Input validation
+└── utils.ts       # Utility functions
 ```
 
-### Using act for local testing
+### Local Development Setup
 
+1. **Install dependencies**
+   ```bash
+   yarn install
+   ```
+
+2. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env and add your ANTHROPIC_API_KEY
+   ```
+
+3. **Available scripts**
+   ```bash
+   # Build the action
+   yarn build
+
+   # Run tests
+   yarn test
+
+   # Run linter
+   yarn lint
+
+   # Format code
+   yarn format
+
+   # Test locally with Node.js
+   yarn test:local "Test message"
+
+   # Test with act (GitHub Actions locally)
+   yarn test:act
+   ```
+
+### Local Testing
+
+#### Method 1: Node.js Testing
+```bash
+# Uses test-local.js and loads .env file
+yarn test:local "Hello World"
+```
+
+#### Method 2: GitHub Actions Testing with act
 ```bash
 # Install act
 brew install act
 
-# Test the action locally
-act -W .github/workflows/test.yml
+# Test the action locally (loads secrets from .env)
+yarn test:act
 ```
+
+### Environment Variables
+
+For local development, create a `.env` file:
+
+```env
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+The `.env` file is already in `.gitignore` to keep your API keys secure.
 
 ## Contributing
 

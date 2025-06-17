@@ -4,7 +4,7 @@ author: '6529 Collections'
 
 inputs:
   greeting:
-    description: 'Greeting message'
+    description: 'Custom greeting message for the code review'
     required: false
     default: 'Hello'
   github-token:
@@ -17,7 +17,7 @@ inputs:
 
 outputs:
   message:
-    description: 'The greeting message'
+    description: 'The formatted code review message'
 
 branding:
   icon: 'eye'

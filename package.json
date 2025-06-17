@@ -30,7 +30,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:local": "yarn build && node test-local.js",
-    "test:act": "act -j test -W .github/workflows/local-test.yml --secret-file .env"
+    "test:act": "act -j test -W .github/workflows/local-test.yml --secret-file .env",
+    "dev": "yarn lint && yarn test && yarn build",
+    "ci": "yarn lint && yarn test && yarn build"
   },
   "dependencies": {
     "@actions/core": "^1.10.0",
