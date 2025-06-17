@@ -25694,6 +25694,17 @@ async function run() {
         const message = `${greeting} from GitHub Actions!`;
         core.info(`Generated message: ${message}`);
         core.setOutput('message', message);
+        // Add job summary (visible in Actions tab)
+        await core.summary
+            .addHeading('Code Review Results')
+            .addRaw(`**Message:** ${message}`)
+            .addSeparator()
+            .addTable([
+            ['File', 'Status', 'Issues'],
+            ['src/index.ts', '✅ Clean', '0'],
+            ['Example file', '⚠️ Warning', '1']
+        ])
+            .write();
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
