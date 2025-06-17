@@ -1,6 +1,6 @@
-name: 'My First Action'
-description: 'A basic GitHub Action'
-author: 'Your Name'
+name: 'AI Code Review Action'
+description: 'AI-powered code review GitHub Action that provides automated code analysis and feedback'
+author: '6529 Collections'
 
 inputs:
   greeting:
@@ -18,6 +18,10 @@ inputs:
 outputs:
   message:
     description: 'The greeting message'
+
+branding:
+  icon: 'eye'
+  color: 'blue'
 
 runs:
   using: 'node20'

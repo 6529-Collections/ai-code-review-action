@@ -30,3 +30,4 @@ jobs:
       uses: ./
       with:
         greeting: ${{ github.event.inputs.greeting || 'Hello from GitHub Actions!!!' }}
+        anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
