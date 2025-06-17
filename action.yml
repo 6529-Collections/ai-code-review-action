@@ -11,6 +11,9 @@ inputs:
     description: 'GitHub token for API access'
     required: false
     default: ${{ github.token }}
+  anthropic-api-key:
+    description: 'Anthropic API key for Claude access'
+    required: true
 
 outputs:
   message:
