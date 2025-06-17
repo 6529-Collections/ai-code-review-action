@@ -29975,7 +29975,7 @@ async function run() {
             .addTable([
             ['File', 'Status', 'Issues'],
             ['src/index.ts', '✅ Clean', '0'],
-            ['Example file', '⚠️ Warning', '1']
+            ['Example file', '⚠️ Warning', '1'],
         ])
             .write();
         // Add PR comment if this is a pull request
@@ -29996,7 +29996,7 @@ ${message}
             await octokit.rest.issues.createComment({
                 ...github.context.repo,
                 issue_number: github.context.issue.number,
-                body: commentBody
+                body: commentBody,
             });
             core.info('PR comment added successfully');
         }
