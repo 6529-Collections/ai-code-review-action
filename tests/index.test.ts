@@ -16,7 +16,10 @@ describe('Action', () => {
     await run();
     
     expect(mockCore.getInput).toHaveBeenCalledWith('greeting');
-    expect(mockCore.setOutput).toHaveBeenCalledWith('message', 'Hello World from GitHub Actions!');
+    expect(mockCore.setOutput).toHaveBeenCalledWith(
+      'message', 
+      expect.stringMatching(/^Hello World from GitHub Actions! \(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\)$/)
+    );
   });
 
   it('should handle errors', async () => {
