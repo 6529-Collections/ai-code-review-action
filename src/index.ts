@@ -23,7 +23,7 @@ export async function run(): Promise<void> {
       .addTable([
         ['File', 'Status', 'Issues'],
         ['src/index.ts', '✅ Clean', '0'],
-        ['Example file', '⚠️ Warning', '1']
+        ['Example file', '⚠️ Warning', '1'],
       ])
       .write();
 
@@ -31,7 +31,7 @@ export async function run(): Promise<void> {
     const token = core.getInput('github-token');
     if (token && github.context.eventName === 'pull_request') {
       const octokit = github.getOctokit(token);
-      
+
       const commentBody = `## 🤖 AI Code Review Results
 
 ${message}
@@ -47,9 +47,9 @@ ${message}
       await octokit.rest.issues.createComment({
         ...github.context.repo,
         issue_number: github.context.issue.number,
-        body: commentBody
+        body: commentBody,
       });
-      
+
       core.info('PR comment added successfully');
     }
   } catch (error) {
