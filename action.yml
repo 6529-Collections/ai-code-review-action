@@ -1,16 +1,27 @@
-name: 'My First Action'
-description: 'A basic GitHub Action'
-author: 'Your Name'
+name: 'AI Code Review Action'
+description: 'AI-powered code review GitHub Action that provides automated code analysis and feedback'
+author: '6529 Collections'
 
 inputs:
   greeting:
-    description: 'Greeting message'
+    description: 'Custom greeting message for the code review'
     required: false
     default: 'Hello'
+  github-token:
+    description: 'GitHub token for API access'
+    required: false
+    default: ${{ github.token }}
+  anthropic-api-key:
+    description: 'Anthropic API key for Claude access'
+    required: true
 
 outputs:
   message:
-    description: 'The greeting message'
+    description: 'The formatted code review message'
+
+branding:
+  icon: 'eye'
+  color: 'blue'
 
 runs:
   using: 'node20'

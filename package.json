@@ -1,8 +1,26 @@
 {
-  "name": "my-first-action",
+  "name": "ai-code-review-action",
   "version": "1.0.0",
-  "description": "A basic GitHub Action",
+  "description": "AI-powered code review GitHub Action that provides automated code analysis and feedback",
   "main": "dist/index.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/6529-Collections/ai-code-review-action.git"
+  },
+  "keywords": [
+    "github-action",
+    "code-review",
+    "ai",
+    "automation",
+    "pull-request",
+    "analysis"
+  ],
+  "author": "6529 Collections",
+  "bugs": {
+    "url": "https://github.com/6529-Collections/ai-code-review-action/issues"
+  },
+  "homepage": "https://github.com/6529-Collections/ai-code-review-action#readme",
   "scripts": {
     "build": "ncc build src/index.ts -o dist",
     "package": "yarn build",
@@ -11,17 +29,23 @@
     "format": "prettier --write src/**/*.ts",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:local": "yarn build && node test-local.js"
+    "test:local": "yarn build && node test-local.js",
+    "test:act": "act -j test -W .github/workflows/local-test.yml --secret-file .env",
+    "dev": "yarn lint && yarn test && yarn build",
+    "ci": "yarn lint && yarn test && yarn build"
   },
   "dependencies": {
-    "@actions/core": "^1.10.0"
+    "@actions/core": "^1.10.0",
+    "@actions/github": "^6.0.1"
   },
   "devDependencies": {
+    "@types/dotenv": "^8.2.3",
     "@types/jest": "^29.0.0",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@vercel/ncc": "^0.38.3",
+    "dotenv": "^16.5.0",
     "eslint": "^8.0.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-prettier": "^5.0.0",

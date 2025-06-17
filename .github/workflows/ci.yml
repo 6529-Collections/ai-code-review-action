@@ -36,7 +36,10 @@ jobs:
     - name: Check for uncommitted changes
       run: |
         if [ -n "$(git status --porcelain)" ]; then
-          echo "Uncommitted changes found. Please commit the built files."
-          git status
+          echo "⚠️ Warning: There are uncommitted changes after build:"
+          git status --porcelain
+          echo "Please run 'yarn build' locally and commit the changes."
           exit 1
+        else
+          echo "✅ No uncommitted changes after build"
         fi

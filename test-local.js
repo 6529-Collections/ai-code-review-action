@@ -1,5 +1,9 @@
+// Load environment variables from .env file for local testing
+require('dotenv').config();
+
 // Mock @actions/core for local testing
 process.env.INPUT_GREETING = process.argv[2] || 'Hello World';
+process.env.INPUT_ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || process.env.INPUT_ANTHROPIC_API_KEY;
 
 const mockCore = {
   getInput: (name) => process.env[`INPUT_${name.toUpperCase()}`] || '',
