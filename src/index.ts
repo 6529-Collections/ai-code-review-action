@@ -1,16 +1,16 @@
 import * as core from '@actions/core';
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
   try {
     const greeting: string = core.getInput('greeting') || 'Hello';
-    
+
     if (!greeting.trim()) {
       throw new Error('Greeting cannot be empty');
     }
-    
+
     core.info(`Processing greeting: ${greeting}`);
     const message: string = `${greeting} from GitHub Actions!`;
-    
+
     core.info(`Generated message: ${message}`);
     core.setOutput('message', message);
   } catch (error) {
@@ -20,4 +20,6 @@ async function run(): Promise<void> {
   }
 }
 
-run();
+if (require.main === module) {
+  run();
+}

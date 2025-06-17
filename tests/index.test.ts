@@ -1,4 +1,5 @@
 import * as core from '@actions/core';
+import { run } from '../src/index';
 
 // Mock @actions/core
 jest.mock('@actions/core');
@@ -12,8 +13,7 @@ describe('Action', () => {
   it('should output greeting message', async () => {
     mockCore.getInput.mockReturnValue('Hello World');
     
-    // Import and run the action
-    await import('../src/index');
+    await run();
     
     expect(mockCore.getInput).toHaveBeenCalledWith('greeting');
     expect(mockCore.setOutput).toHaveBeenCalledWith('message', 'Hello World from GitHub Actions!');
@@ -24,7 +24,7 @@ describe('Action', () => {
       throw new Error('Test error');
     });
     
-    await import('../src/index');
+    await run();
     
     expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
   });
