@@ -37,10 +37,12 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add dist/
+        git add -A
         if [ -n "$(git status --porcelain)" ]; then
           git commit -m "Auto-build dist files [skip ci]"
-          git fetch origin ${{ github.head_ref || github.ref_name }}
-          git rebase origin/${{ github.head_ref || github.ref_name }}
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          if [ "$GITHUB_ACTIONS" = "true" ]; then
+            git push origin HEAD:${{ github.head_ref || github.ref_name }}
+          else
+            echo "Skipping push in local environment"
+          fi
         fi
