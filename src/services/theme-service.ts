@@ -3,6 +3,7 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { AnalysisLogger } from '../utils/analysis-logger';
 
 export interface Theme {
   id: string;
@@ -65,24 +66,27 @@ export interface ThemeAnalysisResult {
 }
 
 class ClaudeService {
-  constructor(private readonly apiKey: string) {}
+  constructor(
+    private readonly apiKey: string,
+    private readonly logger?: AnalysisLogger
+  ) {}
 
   async analyzeChunk(
     chunk: CodeChunk,
     context: string
   ): Promise<ChunkAnalysis> {
+    const prompt = this.buildAnalysisPrompt(chunk, context);
+    let output = '';
+    let error: string | undefined;
+
     try {
-      const prompt = this.buildAnalysisPrompt(chunk, context);
-
       // Use a temporary file approach instead of echo to avoid shell escaping issues
-
       const tempFile = path.join(
         os.tmpdir(),
         `claude-prompt-${Date.now()}.txt`
       );
       fs.writeFileSync(tempFile, prompt);
 
-      let output = '';
       await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
         listeners: {
           stdout: (data: Buffer) => {
@@ -94,10 +98,37 @@ class ClaudeService {
       // Clean up temp file
       fs.unlinkSync(tempFile);
 
-      return this.parseClaudeResponse(output);
-    } catch (error) {
+      const result = this.parseClaudeResponse(output);
+
+      // Log the Claude interaction
+      if (this.logger) {
+        this.logger.logClaudeCall({
+          filename: chunk.filename,
+          prompt,
+          response: output,
+          success: true,
+        });
+      }
+
+      return result;
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
       console.warn('Claude analysis failed, using fallback:', error);
-      return this.createFallbackAnalysis(chunk);
+
+      const fallback = this.createFallbackAnalysis(chunk);
+
+      // Log the failed Claude interaction
+      if (this.logger) {
+        this.logger.logClaudeCall({
+          filename: chunk.filename,
+          prompt,
+          response: output,
+          success: false,
+          error,
+        });
+      }
+
+      return fallback;
     }
   }
 
@@ -173,14 +204,14 @@ class ThemeContextManager {
   private context: LiveContext;
   private claudeService: ClaudeService;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, logger?: AnalysisLogger) {
     this.context = {
       themes: new Map(),
       rootThemeIds: [],
       globalInsights: [],
       processingState: 'idle',
     };
-    this.claudeService = new ClaudeService(apiKey);
+    this.claudeService = new ClaudeService(apiKey, logger);
   }
 
   async processChunk(chunk: CodeChunk): Promise<void> {
@@ -288,7 +319,10 @@ class ThemeContextManager {
 }
 
 export class ThemeService {
-  constructor(private readonly anthropicApiKey: string) {}
+  constructor(
+    private readonly anthropicApiKey: string,
+    private readonly logger?: AnalysisLogger
+  ) {}
 
   async analyzeThemes(
     changedFiles: ChangedFile[]
@@ -314,7 +348,10 @@ export class ThemeService {
     }
 
     try {
-      const contextManager = new ThemeContextManager(this.anthropicApiKey);
+      const contextManager = new ThemeContextManager(
+        this.anthropicApiKey,
+        this.logger
+      );
       const chunkProcessor = new ChunkProcessor();
 
       contextManager.setProcessingState('processing');
@@ -331,6 +368,11 @@ export class ThemeService {
       analysisResult.themes = themes;
       analysisResult.totalThemes = themes.length;
       analysisResult.processingTime = Date.now() - startTime;
+
+      // Log final results
+      if (this.logger) {
+        this.logger.logResult(themes);
+      }
 
       if (themes.length > 0) {
         analysisResult.summary = `Discovered ${themes.length} themes: ${themes

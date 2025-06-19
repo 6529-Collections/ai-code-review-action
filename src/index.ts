@@ -4,6 +4,7 @@ import { validateInputs } from './validation';
 import { handleError, logInfo } from './utils';
 import { GitService } from './services/git-service';
 import { ThemeService } from './services/theme-service';
+import { AnalysisLogger } from './utils/analysis-logger';
 
 export async function run(): Promise<void> {
   try {
@@ -19,21 +20,24 @@ export async function run(): Promise<void> {
 
     logInfo('Starting AI code review analysis...');
 
-    // Initialize services
-    const gitService = new GitService(inputs.githubToken || '');
-    const themeService = new ThemeService(inputs.anthropicApiKey);
+    // Initialize logger and services
+    const logger = new AnalysisLogger();
+    const gitService = new GitService(inputs.githubToken || '', logger);
+    const themeService = new ThemeService(inputs.anthropicApiKey, logger);
 
     // Get PR context and changed files
     const prContext = await gitService.getPullRequestContext();
     const changedFiles = await gitService.getChangedFiles();
-    
+
     // Log dev mode info
     if (prContext && prContext.number === 0) {
-      logInfo(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
+      logInfo(
+        `Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`
+      );
       logInfo(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
       logInfo(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
     }
-    
+
     logInfo(`Found ${changedFiles.length} changed files`);
 
     if (changedFiles.length === 0) {
@@ -53,13 +57,16 @@ export async function run(): Promise<void> {
 
     logInfo(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
     logInfo(`Processing time: ${themeAnalysis.processingTime}ms`);
-    
+
     // Log theme names only (not full JSON)
     if (themeAnalysis.themes.length > 0) {
-      const themeNames = themeAnalysis.themes.map(t => t.name).join(', ');
+      const themeNames = themeAnalysis.themes.map((t) => t.name).join(', ');
       logInfo(`Themes: ${themeNames}`);
     }
 
+    // Generate analysis report
+    logger.generateReport();
+    logInfo('Analysis report saved to analysis-log.txt');
   } catch (error) {
     handleError(error);
   }

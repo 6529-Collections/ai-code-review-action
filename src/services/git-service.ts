@@ -1,5 +1,6 @@
 import * as github from '@actions/github';
 import * as exec from '@actions/exec';
+import { AnalysisLogger } from '../utils/analysis-logger';
 
 export interface ChangedFile {
   filename: string;
@@ -20,7 +21,10 @@ export interface PullRequestContext {
 }
 
 export class GitService {
-  constructor(private readonly githubToken: string) {}
+  constructor(
+    private readonly githubToken: string,
+    private readonly logger?: AnalysisLogger
+  ) {}
 
   async getPullRequestContext(): Promise<PullRequestContext | null> {
     // Check if we're in a GitHub Actions PR context
@@ -144,13 +148,20 @@ export class GitService {
         pull_number: prNumber,
       });
 
-      return files.map((file) => ({
+      const changedFiles = files.map((file) => ({
         filename: file.filename,
         status: file.status as ChangedFile['status'],
         additions: file.additions,
         deletions: file.deletions,
         patch: file.patch,
       }));
+
+      // Log diffs for analysis
+      if (this.logger) {
+        changedFiles.forEach((file) => this.logger!.logDiff(file));
+      }
+
+      return changedFiles;
     } catch (error) {
       console.error('Failed to get changed files from GitHub:', error);
       return [];
@@ -210,13 +221,20 @@ export class GitService {
         const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
         const deletions = (patch.match(/^-(?!-)/gm) || []).length;
 
-        files.push({
+        const file = {
           filename,
           status: this.mapGitStatusToChangedFileStatus(status),
           additions,
           deletions,
           patch,
-        });
+        };
+
+        files.push(file);
+
+        // Log the diff for analysis
+        if (this.logger) {
+          this.logger.logDiff(file);
+        }
       }
 
       return files;
