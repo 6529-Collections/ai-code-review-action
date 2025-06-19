@@ -13,7 +13,7 @@ echo "Test completed, extracting analysis content..."
 grep "\[Local Test/test\]   | " full_output.log | sed 's/.*\[Local Test\/test\]   | //' > raw-analysis.txt
 
 # Extract just the clean analysis report (not the code)
-grep -A 1000 "^=== AI Code Review Analysis ===$" raw-analysis.txt > analysis-log.txt
+grep -A 1000 "=== AI Code Review Analysis ===" raw-analysis.txt | tail -n +2 > analysis-log.txt
 
 if [ -f analysis-log.txt ] && [ -s analysis-log.txt ]; then
     echo "✅ Clean analysis log extracted to analysis-log.txt"

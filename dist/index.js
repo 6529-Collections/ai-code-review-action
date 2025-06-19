@@ -31198,11 +31198,14 @@ class AnalysisLogger {
         report += `Files: ${fileCount} changed, Time: ${processingTime}ms\n\n`;
         // Diffs section (limited to prevent truncation)
         report += `=== DIFFS ===\n`;
-        for (const file of this.diffs.slice(0, 5)) { // Limit to first 5 files
+        for (const file of this.diffs.slice(0, 5)) {
+            // Limit to first 5 files
             report += `${file.filename}: +${file.additions}/-${file.deletions} lines\n`;
             if (file.patch) {
                 // Limit patch size to prevent huge logs
-                const patch = file.patch.length > 500 ? file.patch.substring(0, 500) + '...\n[TRUNCATED]' : file.patch;
+                const patch = file.patch.length > 500
+                    ? file.patch.substring(0, 500) + '...\n[TRUNCATED]'
+                    : file.patch;
                 report += `${patch}\n\n`;
             }
         }
@@ -31216,7 +31219,9 @@ class AnalysisLogger {
             report += `Call ${index + 1} (${call.filename}):\n`;
             report += `PROMPT: ${call.prompt.substring(0, 200)}...\n`;
             // Limit response size
-            const response = call.response.length > 300 ? call.response.substring(0, 300) + '...\n[TRUNCATED]' : call.response;
+            const response = call.response.length > 300
+                ? call.response.substring(0, 300) + '...\n[TRUNCATED]'
+                : call.response;
             report += `RESPONSE: ${response}\n`;
             report += `STATUS: ${call.success ? '✅ Success' : '❌ Failed'}\n`;
             if (call.error) {

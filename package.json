@@ -31,6 +31,8 @@
     "test:watch": "jest --watch",
     "test:local": "yarn build && node test-local.js",
     "test:act": "act -j test -W .github/workflows/local-test.yml --secret-file .env",
+    "validate": "node validate-themes.js",
+    "validate:quick": "node validate-themes.js --runs 2",
     "dev": "yarn lint && yarn test && yarn build",
     "ci": "yarn lint && yarn test && yarn build"
   },
