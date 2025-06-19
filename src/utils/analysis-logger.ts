@@ -37,8 +37,33 @@ export class AnalysisLogger {
     const processingTime = Date.now() - this.startTime;
     const report = this.buildReport(processingTime);
 
-    const logPath = path.join(process.cwd(), 'analysis-log.txt');
-    fs.writeFileSync(logPath, report);
+    // Try multiple possible locations to ensure the file is accessible on host
+    const possiblePaths = [
+      process.env.GITHUB_WORKSPACE,
+      process.env.RUNNER_WORKSPACE,
+      '/github/workspace',
+      process.cwd(),
+      '.',
+    ].filter(Boolean);
+
+    // Try each path until one works
+    let logPath = '';
+    for (const basePath of possiblePaths) {
+      try {
+        logPath = path.join(basePath as string, 'analysis-log.txt');
+        fs.writeFileSync(logPath, report);
+        console.log(`Analysis log saved to: ${logPath}`);
+        break;
+      } catch (error) {
+        console.warn(`Failed to write to ${logPath}:`, error);
+        continue;
+      }
+    }
+  }
+
+  getReportContent(): string {
+    const processingTime = Date.now() - this.startTime;
+    return this.buildReport(processingTime);
   }
 
   private buildReport(processingTime: number): string {

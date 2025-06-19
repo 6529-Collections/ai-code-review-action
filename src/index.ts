@@ -1,5 +1,6 @@
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
+import * as fs from 'fs';
 import { validateInputs } from './validation';
 import { handleError, logInfo } from './utils';
 import { GitService } from './services/git-service';
@@ -67,6 +68,25 @@ export async function run(): Promise<void> {
     // Generate analysis report
     logger.generateReport();
     logInfo('Analysis report saved to analysis-log.txt');
+
+    // Also output the report content as GitHub Actions artifact
+    const reportContent = logger.getReportContent();
+    core.setOutput('analysis_report', reportContent);
+
+    // Try to write to multiple locations as backup
+    try {
+      const backupPaths = ['/tmp/analysis-log.txt', './analysis-backup.txt'];
+      for (const backupPath of backupPaths) {
+        try {
+          fs.writeFileSync(backupPath, reportContent);
+          logInfo(`Backup analysis saved to: ${backupPath}`);
+        } catch (err) {
+          // Continue to next path
+        }
+      }
+    } catch (error) {
+      // Ignore backup errors
+    }
   } catch (error) {
     handleError(error);
   }
