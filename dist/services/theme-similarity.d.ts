@@ -1,4 +1,14 @@
 import { Theme } from './theme-service';
+export interface AISimilarityResult {
+    nameScore: number;
+    descriptionScore: number;
+    patternScore: number;
+    businessScore: number;
+    semanticScore: number;
+    shouldMerge: boolean;
+    confidence: number;
+    reasoning: string;
+}
 export interface SimilarityMetrics {
     nameScore: number;
     descriptionScore: number;
@@ -38,10 +48,15 @@ export interface MergeDecision {
 }
 export declare class ThemeSimilarityService {
     private config;
-    constructor(config?: Partial<ConsolidationConfig>);
-    calculateSimilarity(theme1: Theme, theme2: Theme): SimilarityMetrics;
+    private anthropicApiKey;
+    constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>);
+    calculateSimilarity(theme1: Theme, theme2: Theme): Promise<SimilarityMetrics>;
+    private calculateAISimilarity;
+    private buildSimilarityPrompt;
+    private parseAISimilarityResponse;
+    private createFallbackSimilarity;
     shouldMerge(similarity: SimilarityMetrics): MergeDecision;
-    consolidateThemes(themes: Theme[]): ConsolidatedTheme[];
+    consolidateThemes(themes: Theme[]): Promise<ConsolidatedTheme[]>;
     private findMergeGroups;
     private createConsolidatedThemes;
     private buildHierarchies;

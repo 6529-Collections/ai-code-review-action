@@ -30523,7 +30523,7 @@ class ThemeContextManager {
 class ThemeService {
     constructor(anthropicApiKey, consolidationConfig) {
         this.anthropicApiKey = anthropicApiKey;
-        this.similarityService = new theme_similarity_1.ThemeSimilarityService(consolidationConfig);
+        this.similarityService = new theme_similarity_1.ThemeSimilarityService(anthropicApiKey, consolidationConfig);
     }
     async analyzeThemes(changedFiles) {
         const startTime = Date.now();
@@ -30563,7 +30563,7 @@ class ThemeService {
             const originalThemes = contextManager.getRootThemes();
             const consolidationStartTime = Date.now();
             // Apply theme consolidation
-            const consolidatedThemes = this.similarityService.consolidateThemes(originalThemes);
+            const consolidatedThemes = await this.similarityService.consolidateThemes(originalThemes);
             const consolidationTime = Date.now() - consolidationStartTime;
             // Calculate consolidation stats
             const mergedThemes = consolidatedThemes.filter((t) => t.consolidationMethod === 'merge').length;
@@ -30635,14 +30635,52 @@ exports.ThemeService = ThemeService;
 /***/ }),
 
 /***/ 4189:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeSimilarityService = void 0;
+const exec = __importStar(__nccwpck_require__(5236));
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const os = __importStar(__nccwpck_require__(857));
 class ThemeSimilarityService {
-    constructor(config) {
+    constructor(anthropicApiKey, config) {
+        this.anthropicApiKey = anthropicApiKey;
         this.config = {
             similarityThreshold: 0.6, // Lowered from 0.8 to 0.6 for better consolidation
             maxThemesPerParent: 5,
@@ -30653,25 +30691,126 @@ class ThemeSimilarityService {
         };
         console.log(`[CONFIG] Consolidation config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
     }
-    calculateSimilarity(theme1, theme2) {
-        const nameScore = this.calculateNameSimilarity(theme1.name, theme2.name);
-        const descriptionScore = this.calculateDescriptionSimilarity(theme1.description, theme2.description);
+    async calculateSimilarity(theme1, theme2) {
+        // Use AI for semantic similarity
+        const aiSimilarity = await this.calculateAISimilarity(theme1, theme2);
+        // Still calculate file overlap (factual)
         const fileOverlap = this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
-        const patternScore = this.calculatePatternSimilarity(theme1, theme2);
-        const businessScore = this.calculateBusinessSimilarity(theme1, theme2);
-        // Weighted combination - give more weight to name and business similarity
-        const combinedScore = nameScore * 0.4 + // Increased from 0.25
-            descriptionScore * 0.2 + // Decreased from 0.25
-            fileOverlap * 0.15 + // Decreased from 0.2
-            patternScore * 0.1 + // Decreased from 0.15
-            businessScore * 0.15; // Same
+        // Combined score: 80% AI semantic understanding + 20% file overlap
+        const combinedScore = aiSimilarity.semanticScore * 0.8 + fileOverlap * 0.2;
+        return {
+            nameScore: aiSimilarity.nameScore,
+            descriptionScore: aiSimilarity.descriptionScore,
+            fileOverlap,
+            patternScore: aiSimilarity.patternScore,
+            businessScore: aiSimilarity.businessScore,
+            combinedScore,
+        };
+    }
+    async calculateAISimilarity(theme1, theme2) {
+        const prompt = this.buildSimilarityPrompt(theme1, theme2);
+        try {
+            const tempFile = path.join(os.tmpdir(), `claude-similarity-${Date.now()}.txt`);
+            fs.writeFileSync(tempFile, prompt);
+            let output = '';
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+                listeners: {
+                    stdout: (data) => {
+                        output += data.toString();
+                    },
+                },
+            });
+            fs.unlinkSync(tempFile);
+            const result = this.parseAISimilarityResponse(output);
+            console.log(`[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.semanticScore.toFixed(2)} (${result.shouldMerge ? 'MERGE' : 'SEPARATE'})`);
+            console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
+            return result;
+        }
+        catch (error) {
+            console.warn(`AI similarity failed for "${theme1.name}" vs "${theme2.name}":`, error);
+            // Fallback to basic string matching
+            return this.createFallbackSimilarity(theme1, theme2);
+        }
+    }
+    buildSimilarityPrompt(theme1, theme2) {
+        return `You are an expert code reviewer analyzing theme similarity for consolidation.
+
+Compare these two code change themes and determine if they should be merged:
+
+**Theme 1:**
+Name: "${theme1.name}"
+Description: "${theme1.description}"
+Files: ${theme1.affectedFiles.join(', ')}
+Confidence: ${theme1.confidence}
+
+**Theme 2:**
+Name: "${theme2.name}"  
+Description: "${theme2.description}"
+Files: ${theme2.affectedFiles.join(', ')}
+Confidence: ${theme2.confidence}
+
+Analyze semantic similarity considering:
+- Are they the same logical change/feature?
+- Do they serve the same business purpose?
+- Are they part of the same refactoring effort?
+- Would a developer naturally group them together?
+
+Respond in this exact JSON format (no other text):
+{
+  "nameScore": 0.85,
+  "descriptionScore": 0.72,
+  "patternScore": 0.68,
+  "businessScore": 0.91,
+  "semanticScore": 0.79,
+  "shouldMerge": true,
+  "confidence": 0.88,
+  "reasoning": "Both themes relate to removing authentication scaffolding - semantically identical despite different wording"
+}`;
+    }
+    parseAISimilarityResponse(output) {
+        try {
+            const jsonMatch = output.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                return {
+                    nameScore: parsed.nameScore || 0,
+                    descriptionScore: parsed.descriptionScore || 0,
+                    patternScore: parsed.patternScore || 0,
+                    businessScore: parsed.businessScore || 0,
+                    semanticScore: parsed.semanticScore || 0,
+                    shouldMerge: parsed.shouldMerge || false,
+                    confidence: parsed.confidence || 0,
+                    reasoning: parsed.reasoning || 'No reasoning provided',
+                };
+            }
+        }
+        catch (error) {
+            console.warn('Failed to parse AI similarity response:', error);
+        }
+        return {
+            nameScore: 0,
+            descriptionScore: 0,
+            patternScore: 0,
+            businessScore: 0,
+            semanticScore: 0,
+            shouldMerge: false,
+            confidence: 0,
+            reasoning: 'Failed to parse AI response',
+        };
+    }
+    createFallbackSimilarity(theme1, theme2) {
+        // Fallback to basic string matching when AI fails
+        const nameScore = this.calculateNameSimilarity(theme1.name, theme2.name);
+        const descScore = this.calculateDescriptionSimilarity(theme1.description, theme2.description);
         return {
             nameScore,
-            descriptionScore,
-            fileOverlap,
-            patternScore,
-            businessScore,
-            combinedScore,
+            descriptionScore: descScore,
+            patternScore: 0.3,
+            businessScore: 0.3,
+            semanticScore: (nameScore + descScore) / 2,
+            shouldMerge: nameScore > 0.7,
+            confidence: 0.4,
+            reasoning: 'AI analysis failed, used basic string matching fallback',
         };
     }
     shouldMerge(similarity) {
@@ -30713,13 +30852,13 @@ class ThemeSimilarityService {
             reason: `Insufficient similarity: combined=${similarity.combinedScore.toFixed(2)}, name=${similarity.nameScore.toFixed(2)}, business=${similarity.businessScore.toFixed(2)}`,
         };
     }
-    consolidateThemes(themes) {
+    async consolidateThemes(themes) {
         console.log(`[CONSOLIDATION] Starting with ${themes.length} themes`);
         if (themes.length === 0)
             return [];
         // Step 1: Find merge candidates
         console.log(`[CONSOLIDATION] Step 1: Finding merge candidates`);
-        const mergeGroups = this.findMergeGroups(themes);
+        const mergeGroups = await this.findMergeGroups(themes);
         console.log(`[CONSOLIDATION] Found ${mergeGroups.size} merge groups`);
         // Step 2: Create consolidated themes
         console.log(`[CONSOLIDATION] Step 2: Creating consolidated themes`);
@@ -30731,7 +30870,7 @@ class ThemeSimilarityService {
         console.log(`[CONSOLIDATION] Final result: ${hierarchical.length} themes (${(((themes.length - hierarchical.length) / themes.length) * 100).toFixed(1)}% reduction)`);
         return hierarchical;
     }
-    findMergeGroups(themes) {
+    async findMergeGroups(themes) {
         const mergeGroups = new Map();
         const processed = new Set();
         for (let i = 0; i < themes.length; i++) {
@@ -30744,7 +30883,7 @@ class ThemeSimilarityService {
                 const theme2 = themes[j];
                 if (processed.has(theme2.id))
                     continue;
-                const similarity = this.calculateSimilarity(theme1, theme2);
+                const similarity = await this.calculateSimilarity(theme1, theme2);
                 const decision = this.shouldMerge(similarity);
                 console.log(`[MERGE] Comparing "${theme1.name}" vs "${theme2.name}"`);
                 console.log(`[MERGE] Similarity: name=${similarity.nameScore.toFixed(2)}, desc=${similarity.descriptionScore.toFixed(2)}, files=${similarity.fileOverlap.toFixed(2)}, combined=${similarity.combinedScore.toFixed(2)}`);

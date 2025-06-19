@@ -313,7 +313,10 @@ export class ThemeService {
     private readonly anthropicApiKey: string,
     consolidationConfig?: Partial<ConsolidationConfig>
   ) {
-    this.similarityService = new ThemeSimilarityService(consolidationConfig);
+    this.similarityService = new ThemeSimilarityService(
+      anthropicApiKey,
+      consolidationConfig
+    );
   }
 
   async analyzeThemes(
@@ -366,7 +369,7 @@ export class ThemeService {
 
       // Apply theme consolidation
       const consolidatedThemes =
-        this.similarityService.consolidateThemes(originalThemes);
+        await this.similarityService.consolidateThemes(originalThemes);
       const consolidationTime = Date.now() - consolidationStartTime;
 
       // Calculate consolidation stats
