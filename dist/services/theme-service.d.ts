@@ -1,5 +1,4 @@
 import { ChangedFile } from './git-service';
-import { AnalysisLogger } from '../utils/analysis-logger';
 import { ConsolidatedTheme, ConsolidationConfig } from './theme-similarity';
 export interface Theme {
     id: string;
@@ -63,9 +62,8 @@ export interface ThemeAnalysisResult {
 }
 export declare class ThemeService {
     private readonly anthropicApiKey;
-    private readonly logger?;
     private similarityService;
-    constructor(anthropicApiKey: string, logger?: AnalysisLogger | undefined, consolidationConfig?: Partial<ConsolidationConfig>);
+    constructor(anthropicApiKey: string, consolidationConfig?: Partial<ConsolidationConfig>);
     analyzeThemes(changedFiles: ChangedFile[]): Promise<ThemeAnalysisResult>;
     private createFallbackThemes;
 }

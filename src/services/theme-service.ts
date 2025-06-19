@@ -3,7 +3,6 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { AnalysisLogger } from '../utils/analysis-logger';
 import {
   ThemeSimilarityService,
   ConsolidatedTheme,
@@ -79,10 +78,7 @@ export interface ThemeAnalysisResult {
 }
 
 class ClaudeService {
-  constructor(
-    private readonly apiKey: string,
-    private readonly logger?: AnalysisLogger
-  ) {}
+  constructor(private readonly apiKey: string) {}
 
   async analyzeChunk(
     chunk: CodeChunk,
@@ -113,33 +109,12 @@ class ClaudeService {
 
       const result = this.parseClaudeResponse(output);
 
-      // Log the Claude interaction
-      if (this.logger) {
-        this.logger.logClaudeCall({
-          filename: chunk.filename,
-          prompt,
-          response: output,
-          success: true,
-        });
-      }
-
       return result;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
       console.warn('Claude analysis failed, using fallback:', error);
 
       const fallback = this.createFallbackAnalysis(chunk);
-
-      // Log the failed Claude interaction
-      if (this.logger) {
-        this.logger.logClaudeCall({
-          filename: chunk.filename,
-          prompt,
-          response: output,
-          success: false,
-          error,
-        });
-      }
 
       return fallback;
     }
@@ -217,14 +192,14 @@ class ThemeContextManager {
   private context: LiveContext;
   private claudeService: ClaudeService;
 
-  constructor(apiKey: string, logger?: AnalysisLogger) {
+  constructor(apiKey: string) {
     this.context = {
       themes: new Map(),
       rootThemeIds: [],
       globalInsights: [],
       processingState: 'idle',
     };
-    this.claudeService = new ClaudeService(apiKey, logger);
+    this.claudeService = new ClaudeService(apiKey);
   }
 
   async processChunk(chunk: CodeChunk): Promise<void> {
@@ -336,7 +311,6 @@ export class ThemeService {
 
   constructor(
     private readonly anthropicApiKey: string,
-    private readonly logger?: AnalysisLogger,
     consolidationConfig?: Partial<ConsolidationConfig>
   ) {
     this.similarityService = new ThemeSimilarityService(consolidationConfig);
@@ -374,10 +348,7 @@ export class ThemeService {
     }
 
     try {
-      const contextManager = new ThemeContextManager(
-        this.anthropicApiKey,
-        this.logger
-      );
+      const contextManager = new ThemeContextManager(this.anthropicApiKey);
       const chunkProcessor = new ChunkProcessor();
 
       contextManager.setProcessingState('processing');
@@ -422,12 +393,6 @@ export class ThemeService {
         hierarchicalThemes,
         consolidationRatio,
       };
-
-      // Log final results (use consolidated themes for main output)
-      if (this.logger) {
-        this.logger.logResult(originalThemes); // Log original themes for analysis
-        this.logger.logConsolidatedResult(consolidatedThemes); // Log consolidated themes
-      }
 
       if (consolidatedThemes.length > 0) {
         const hasHierarchy = consolidatedThemes.some(

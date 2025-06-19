@@ -29957,12 +29957,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
 const validation_1 = __nccwpck_require__(4344);
 const utils_1 = __nccwpck_require__(1798);
 const git_service_1 = __nccwpck_require__(5902);
 const theme_service_1 = __nccwpck_require__(1599);
-const analysis_logger_1 = __nccwpck_require__(5348);
 async function run() {
     try {
         const inputs = (0, validation_1.validateInputs)();
@@ -29973,10 +29971,9 @@ async function run() {
         await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
         (0, utils_1.logInfo)('Claude Code CLI installed successfully');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
-        // Initialize logger and services
-        const logger = new analysis_logger_1.AnalysisLogger();
-        const gitService = new git_service_1.GitService(inputs.githubToken || '', logger);
-        const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey, logger);
+        // Initialize services
+        const gitService = new git_service_1.GitService(inputs.githubToken || '');
+        const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
         // Get PR context and changed files
         const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
@@ -30005,33 +30002,6 @@ async function run() {
         if (themeAnalysis.themes.length > 0) {
             const themeNames = themeAnalysis.themes.map((t) => t.name).join(', ');
             (0, utils_1.logInfo)(`Themes: ${themeNames}`);
-        }
-        // Generate analysis report and save to multiple locations
-        const reportContent = logger.getReportContent();
-        // Try multiple locations - act should mount at least one of these
-        const locations = [
-            './analysis-log.txt',
-            'analysis-log.txt',
-            '/github/workspace/analysis-log.txt',
-            '/tmp/analysis-log.txt'
-        ];
-        let savedSuccessfully = false;
-        for (const location of locations) {
-            try {
-                fs.writeFileSync(location, reportContent);
-                (0, utils_1.logInfo)(`Analysis report saved to: ${location}`);
-                if (fs.existsSync(location)) {
-                    const stats = fs.statSync(location);
-                    (0, utils_1.logInfo)(`File verified at ${location}: ${stats.size} bytes`);
-                    savedSuccessfully = true;
-                }
-            }
-            catch (error) {
-                (0, utils_1.logInfo)(`Failed to save to ${location}: ${error}`);
-            }
-        }
-        if (!savedSuccessfully) {
-            (0, utils_1.logInfo)('Could not save analysis file to any location');
         }
     }
     catch (error) {
@@ -30088,9 +30058,8 @@ exports.GitService = void 0;
 const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
 class GitService {
-    constructor(githubToken, logger) {
+    constructor(githubToken) {
         this.githubToken = githubToken;
-        this.logger = logger;
     }
     async getPullRequestContext() {
         // Check if we're in a GitHub Actions PR context
@@ -30205,10 +30174,6 @@ class GitService {
                 deletions: file.deletions,
                 patch: file.patch,
             }));
-            // Log diffs for analysis
-            if (this.logger) {
-                changedFiles.forEach((file) => this.logger.logDiff(file));
-            }
             return changedFiles;
         }
         catch (error) {
@@ -30262,10 +30227,6 @@ class GitService {
                     patch,
                 };
                 files.push(file);
-                // Log the diff for analysis
-                if (this.logger) {
-                    this.logger.logDiff(file);
-                }
             }
             return files;
         }
@@ -30356,9 +30317,8 @@ const path = __importStar(__nccwpck_require__(6928));
 const os = __importStar(__nccwpck_require__(857));
 const theme_similarity_1 = __nccwpck_require__(4189);
 class ClaudeService {
-    constructor(apiKey, logger) {
+    constructor(apiKey) {
         this.apiKey = apiKey;
-        this.logger = logger;
     }
     async analyzeChunk(chunk, context) {
         const prompt = this.buildAnalysisPrompt(chunk, context);
@@ -30378,31 +30338,12 @@ class ClaudeService {
             // Clean up temp file
             fs.unlinkSync(tempFile);
             const result = this.parseClaudeResponse(output);
-            // Log the Claude interaction
-            if (this.logger) {
-                this.logger.logClaudeCall({
-                    filename: chunk.filename,
-                    prompt,
-                    response: output,
-                    success: true,
-                });
-            }
             return result;
         }
         catch (err) {
             error = err instanceof Error ? err.message : String(err);
             console.warn('Claude analysis failed, using fallback:', error);
             const fallback = this.createFallbackAnalysis(chunk);
-            // Log the failed Claude interaction
-            if (this.logger) {
-                this.logger.logClaudeCall({
-                    filename: chunk.filename,
-                    prompt,
-                    response: output,
-                    success: false,
-                    error,
-                });
-            }
             return fallback;
         }
     }
@@ -30469,14 +30410,14 @@ class ChunkProcessor {
     }
 }
 class ThemeContextManager {
-    constructor(apiKey, logger) {
+    constructor(apiKey) {
         this.context = {
             themes: new Map(),
             rootThemeIds: [],
             globalInsights: [],
             processingState: 'idle',
         };
-        this.claudeService = new ClaudeService(apiKey, logger);
+        this.claudeService = new ClaudeService(apiKey);
     }
     async processChunk(chunk) {
         const contextString = this.buildContextForClaude();
@@ -30557,9 +30498,8 @@ class ThemeContextManager {
     }
 }
 class ThemeService {
-    constructor(anthropicApiKey, logger, consolidationConfig) {
+    constructor(anthropicApiKey, consolidationConfig) {
         this.anthropicApiKey = anthropicApiKey;
-        this.logger = logger;
         this.similarityService = new theme_similarity_1.ThemeSimilarityService(consolidationConfig);
     }
     async analyzeThemes(changedFiles) {
@@ -30589,7 +30529,7 @@ class ThemeService {
             return analysisResult;
         }
         try {
-            const contextManager = new ThemeContextManager(this.anthropicApiKey, this.logger);
+            const contextManager = new ThemeContextManager(this.anthropicApiKey);
             const chunkProcessor = new ChunkProcessor();
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
@@ -30620,11 +30560,6 @@ class ThemeService {
                 hierarchicalThemes,
                 consolidationRatio,
             };
-            // Log final results (use consolidated themes for main output)
-            if (this.logger) {
-                this.logger.logResult(originalThemes); // Log original themes for analysis
-                this.logger.logConsolidatedResult(consolidatedThemes); // Log consolidated themes
-            }
             if (consolidatedThemes.length > 0) {
                 const hasHierarchy = consolidatedThemes.some((t) => t.childThemes.length > 0);
                 analysisResult.summary =
@@ -31094,185 +31029,6 @@ function logInfo(message) {
 function setOutput(name, value) {
     core.setOutput(name, value);
 }
-
-
-/***/ }),
-
-/***/ 5348:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.AnalysisLogger = void 0;
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-class AnalysisLogger {
-    constructor() {
-        this.diffs = [];
-        this.claudeCalls = [];
-        this.themes = [];
-        this.consolidatedThemes = [];
-        this.startTime = Date.now();
-    }
-    logDiff(file) {
-        this.diffs.push(file);
-    }
-    logClaudeCall(call) {
-        this.claudeCalls.push(call);
-    }
-    logResult(themes) {
-        this.themes = themes;
-    }
-    logConsolidatedResult(themes) {
-        this.consolidatedThemes = themes;
-    }
-    generateReport() {
-        const processingTime = Date.now() - this.startTime;
-        const report = this.buildReport(processingTime);
-        // Try multiple possible locations to ensure the file is accessible on host
-        const possiblePaths = [
-            process.env.GITHUB_WORKSPACE,
-            process.env.RUNNER_WORKSPACE,
-            '/github/workspace',
-            process.cwd(),
-            '.',
-        ].filter(Boolean);
-        // Try each path until one works
-        let logPath = '';
-        for (const basePath of possiblePaths) {
-            try {
-                logPath = path.join(basePath, 'analysis-log.txt');
-                fs.writeFileSync(logPath, report);
-                console.log(`Analysis log saved to: ${logPath}`);
-                break;
-            }
-            catch (error) {
-                console.warn(`Failed to write to ${logPath}:`, error);
-                continue;
-            }
-        }
-    }
-    getReportContent() {
-        const processingTime = Date.now() - this.startTime;
-        return this.buildReport(processingTime);
-    }
-    buildReport(processingTime) {
-        const timestamp = new Date().toISOString();
-        const fileCount = this.diffs.length;
-        let report = `=== AI Code Review Analysis ===\n`;
-        report += `Date: ${timestamp}\n`;
-        report += `Files: ${fileCount} changed, Time: ${processingTime}ms\n\n`;
-        // Diffs section (limited to prevent truncation)
-        report += `=== DIFFS ===\n`;
-        for (const file of this.diffs.slice(0, 5)) {
-            // Limit to first 5 files
-            report += `${file.filename}: +${file.additions}/-${file.deletions} lines\n`;
-            if (file.patch) {
-                // Limit patch size to prevent huge logs
-                const patch = file.patch.length > 500
-                    ? file.patch.substring(0, 500) + '...\n[TRUNCATED]'
-                    : file.patch;
-                report += `${patch}\n\n`;
-            }
-        }
-        if (this.diffs.length > 5) {
-            report += `... and ${this.diffs.length - 5} more files\n\n`;
-        }
-        // Claude interactions section (limited to prevent truncation)
-        report += `=== CLAUDE INTERACTIONS ===\n`;
-        const limitedCalls = this.claudeCalls.slice(0, 10); // Limit to first 10 calls
-        limitedCalls.forEach((call, index) => {
-            report += `Call ${index + 1} (${call.filename}):\n`;
-            report += `PROMPT: ${call.prompt.substring(0, 200)}...\n`;
-            // Limit response size
-            const response = call.response.length > 300
-                ? call.response.substring(0, 300) + '...\n[TRUNCATED]'
-                : call.response;
-            report += `RESPONSE: ${response}\n`;
-            report += `STATUS: ${call.success ? '✅ Success' : '❌ Failed'}\n`;
-            if (call.error) {
-                report += `ERROR: ${call.error}\n`;
-            }
-            report += `\n`;
-        });
-        if (this.claudeCalls.length > 10) {
-            report += `... and ${this.claudeCalls.length - 10} more interactions\n\n`;
-        }
-        // Results section
-        report += `=== RESULTS ===\n`;
-        if (this.consolidatedThemes.length > 0) {
-            report += `Original Themes: ${this.themes.length} detected\n`;
-            report += `Consolidated Themes: ${this.consolidatedThemes.length} final\n`;
-            const consolidationRatio = this.themes.length > 0
-                ? (((this.themes.length - this.consolidatedThemes.length) /
-                    this.themes.length) *
-                    100).toFixed(1)
-                : '0';
-            report += `Consolidation: ${consolidationRatio}% reduction\n\n`;
-            for (const theme of this.consolidatedThemes) {
-                const indent = '  '.repeat(theme.level);
-                report += `${indent}- ${theme.name} (${theme.confidence.toFixed(2)})`;
-                if (theme.consolidationMethod === 'merge') {
-                    report += ` [MERGED from ${theme.sourceThemes.length} themes]`;
-                }
-                else if (theme.childThemes.length > 0) {
-                    report += ` [PARENT of ${theme.childThemes.length} themes]`;
-                }
-                report += `\n`;
-                // Add child themes
-                for (const child of theme.childThemes) {
-                    const childIndent = '  '.repeat(child.level);
-                    report += `${childIndent}- ${child.name} (${child.confidence.toFixed(2)})\n`;
-                }
-            }
-        }
-        else {
-            report += `Themes: ${this.themes.length} detected\n`;
-            for (const theme of this.themes) {
-                report += `- ${theme.name} (${theme.confidence})\n`;
-            }
-        }
-        const successful = this.claudeCalls.filter((c) => c.success).length;
-        const total = this.claudeCalls.length;
-        report += `\nAPI: ${successful}/${total} successful\n`;
-        return report;
-    }
-}
-exports.AnalysisLogger = AnalysisLogger;
 
 
 /***/ }),

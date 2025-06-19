@@ -1,4 +1,3 @@
-import { AnalysisLogger } from '../utils/analysis-logger';
 export interface ChangedFile {
     filename: string;
     status: 'added' | 'modified' | 'removed' | 'renamed';
@@ -17,8 +16,7 @@ export interface PullRequestContext {
 }
 export declare class GitService {
     private readonly githubToken;
-    private readonly logger?;
-    constructor(githubToken: string, logger?: AnalysisLogger | undefined);
+    constructor(githubToken: string);
     getPullRequestContext(): Promise<PullRequestContext | null>;
     private createDevModeContext;
     private getCurrentBranch;

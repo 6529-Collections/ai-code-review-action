@@ -1,11 +1,9 @@
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
 import { validateInputs } from './validation';
 import { handleError, logInfo } from './utils';
 import { GitService } from './services/git-service';
 import { ThemeService } from './services/theme-service';
-import { AnalysisLogger } from './utils/analysis-logger';
 
 export async function run(): Promise<void> {
   try {
@@ -21,10 +19,9 @@ export async function run(): Promise<void> {
 
     logInfo('Starting AI code review analysis...');
 
-    // Initialize logger and services
-    const logger = new AnalysisLogger();
-    const gitService = new GitService(inputs.githubToken || '', logger);
-    const themeService = new ThemeService(inputs.anthropicApiKey, logger);
+    // Initialize services
+    const gitService = new GitService(inputs.githubToken || '');
+    const themeService = new ThemeService(inputs.anthropicApiKey);
 
     // Get PR context and changed files
     const prContext = await gitService.getPullRequestContext();
@@ -63,37 +60,6 @@ export async function run(): Promise<void> {
     if (themeAnalysis.themes.length > 0) {
       const themeNames = themeAnalysis.themes.map((t) => t.name).join(', ');
       logInfo(`Themes: ${themeNames}`);
-    }
-
-    // Generate analysis report and save to multiple locations
-    const reportContent = logger.getReportContent();
-    
-    // Try multiple locations - act should mount at least one of these
-    const locations = [
-      './analysis-log.txt',
-      'analysis-log.txt', 
-      '/github/workspace/analysis-log.txt',
-      '/tmp/analysis-log.txt'
-    ];
-    
-    let savedSuccessfully = false;
-    for (const location of locations) {
-      try {
-        fs.writeFileSync(location, reportContent);
-        logInfo(`Analysis report saved to: ${location}`);
-        
-        if (fs.existsSync(location)) {
-          const stats = fs.statSync(location);
-          logInfo(`File verified at ${location}: ${stats.size} bytes`);
-          savedSuccessfully = true;
-        }
-      } catch (error) {
-        logInfo(`Failed to save to ${location}: ${error}`);
-      }
-    }
-    
-    if (!savedSuccessfully) {
-      logInfo('Could not save analysis file to any location');
     }
   } catch (error) {
     handleError(error);

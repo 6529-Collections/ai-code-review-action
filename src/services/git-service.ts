@@ -1,6 +1,5 @@
 import * as github from '@actions/github';
 import * as exec from '@actions/exec';
-import { AnalysisLogger } from '../utils/analysis-logger';
 
 export interface ChangedFile {
   filename: string;
@@ -21,10 +20,7 @@ export interface PullRequestContext {
 }
 
 export class GitService {
-  constructor(
-    private readonly githubToken: string,
-    private readonly logger?: AnalysisLogger
-  ) {}
+  constructor(private readonly githubToken: string) {}
 
   async getPullRequestContext(): Promise<PullRequestContext | null> {
     // Check if we're in a GitHub Actions PR context
@@ -156,11 +152,6 @@ export class GitService {
         patch: file.patch,
       }));
 
-      // Log diffs for analysis
-      if (this.logger) {
-        changedFiles.forEach((file) => this.logger!.logDiff(file));
-      }
-
       return changedFiles;
     } catch (error) {
       console.error('Failed to get changed files from GitHub:', error);
@@ -230,11 +221,6 @@ export class GitService {
         };
 
         files.push(file);
-
-        // Log the diff for analysis
-        if (this.logger) {
-          this.logger.logDiff(file);
-        }
       }
 
       return files;
