@@ -90,7 +90,7 @@ describe('Action', () => {
     );
     expect(mockCore.setOutput).toHaveBeenCalledWith(
       'summary',
-      expect.stringMatching(/Discovered \d+ themes:|Analysis of \d+ changed files/)
+      expect.stringMatching(/Discovered \d+ consolidated themes|Analysis of \d+ changed files/)
     );
   });
 

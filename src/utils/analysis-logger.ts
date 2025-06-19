@@ -80,27 +80,45 @@ export class AnalysisLogger {
     report += `Date: ${timestamp}\n`;
     report += `Files: ${fileCount} changed, Time: ${processingTime}ms\n\n`;
 
-    // Diffs section
+    // Diffs section (limited to prevent truncation)
     report += `=== DIFFS ===\n`;
-    for (const file of this.diffs) {
+    for (const file of this.diffs.slice(0, 5)) {
+      // Limit to first 5 files
       report += `${file.filename}: +${file.additions}/-${file.deletions} lines\n`;
       if (file.patch) {
-        report += `${file.patch}\n\n`;
+        // Limit patch size to prevent huge logs
+        const patch =
+          file.patch.length > 500
+            ? file.patch.substring(0, 500) + '...\n[TRUNCATED]'
+            : file.patch;
+        report += `${patch}\n\n`;
       }
     }
+    if (this.diffs.length > 5) {
+      report += `... and ${this.diffs.length - 5} more files\n\n`;
+    }
 
-    // Claude interactions section
+    // Claude interactions section (limited to prevent truncation)
     report += `=== CLAUDE INTERACTIONS ===\n`;
-    this.claudeCalls.forEach((call, index) => {
+    const limitedCalls = this.claudeCalls.slice(0, 10); // Limit to first 10 calls
+    limitedCalls.forEach((call, index) => {
       report += `Call ${index + 1} (${call.filename}):\n`;
       report += `PROMPT: ${call.prompt.substring(0, 200)}...\n`;
-      report += `RESPONSE: ${call.response}\n`;
+      // Limit response size
+      const response =
+        call.response.length > 300
+          ? call.response.substring(0, 300) + '...\n[TRUNCATED]'
+          : call.response;
+      report += `RESPONSE: ${response}\n`;
       report += `STATUS: ${call.success ? '✅ Success' : '❌ Failed'}\n`;
       if (call.error) {
         report += `ERROR: ${call.error}\n`;
       }
       report += `\n`;
     });
+    if (this.claudeCalls.length > 10) {
+      report += `... and ${this.claudeCalls.length - 10} more interactions\n\n`;
+    }
 
     // Results section
     report += `=== RESULTS ===\n`;

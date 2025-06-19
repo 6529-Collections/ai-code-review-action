@@ -3,7 +3,7 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { AnalysisLogger, ClaudeCall } from '../utils/analysis-logger';
+import { AnalysisLogger } from '../utils/analysis-logger';
 import {
   ThemeSimilarityService,
   ConsolidatedTheme,

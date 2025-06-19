@@ -50,13 +50,16 @@ export class ThemeSimilarityService {
 
   constructor(config?: Partial<ConsolidationConfig>) {
     this.config = {
-      similarityThreshold: 0.8,
+      similarityThreshold: 0.6, // Lowered from 0.8 to 0.6 for better consolidation
       maxThemesPerParent: 5,
       minThemesForParent: 2,
       confidenceWeight: 0.3,
       businessDomainWeight: 0.4,
       ...config,
     };
+    console.log(
+      `[CONFIG] Consolidation config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`
+    );
   }
 
   calculateSimilarity(theme1: Theme, theme2: Theme): SimilarityMetrics {
@@ -72,13 +75,13 @@ export class ThemeSimilarityService {
     const patternScore = this.calculatePatternSimilarity(theme1, theme2);
     const businessScore = this.calculateBusinessSimilarity(theme1, theme2);
 
-    // Weighted combination
+    // Weighted combination - give more weight to name and business similarity
     const combinedScore =
-      nameScore * 0.25 +
-      descriptionScore * 0.25 +
-      fileOverlap * 0.2 +
-      patternScore * 0.15 +
-      businessScore * 0.15;
+      nameScore * 0.4 + // Increased from 0.25
+      descriptionScore * 0.2 + // Decreased from 0.25
+      fileOverlap * 0.15 + // Decreased from 0.2
+      patternScore * 0.1 + // Decreased from 0.15
+      businessScore * 0.15; // Same
 
     return {
       nameScore,
@@ -90,12 +93,17 @@ export class ThemeSimilarityService {
     };
   }
 
-  shouldMerge(
-    similarity: SimilarityMetrics,
-    theme1: Theme,
-    theme2: Theme
-  ): MergeDecision {
-    // High similarity themes
+  shouldMerge(similarity: SimilarityMetrics): MergeDecision {
+    // Exact or near-exact name matches should always merge
+    if (similarity.nameScore >= 0.9) {
+      return {
+        action: 'merge',
+        confidence: similarity.nameScore,
+        reason: `Near-identical names: ${similarity.nameScore.toFixed(2)}`,
+      };
+    }
+
+    // High overall similarity themes
     if (similarity.combinedScore >= this.config.similarityThreshold) {
       return {
         action: 'merge',
@@ -104,50 +112,53 @@ export class ThemeSimilarityService {
       };
     }
 
-    // Business domain similarity with file overlap
-    if (
-      similarity.businessScore > 0.7 &&
-      similarity.fileOverlap > 0.3 &&
-      similarity.nameScore > 0.5
-    ) {
+    // Strong business domain similarity (even with different files)
+    if (similarity.businessScore >= 0.7 && similarity.nameScore >= 0.4) {
       return {
-        action: 'group_under_parent',
-        confidence:
-          (similarity.businessScore +
-            similarity.fileOverlap +
-            similarity.nameScore) /
-          3,
-        reason: 'Related business domain with file overlap',
+        action: 'merge',
+        confidence: (similarity.businessScore + similarity.nameScore) / 2,
+        reason: `Strong business domain similarity: business=${similarity.businessScore.toFixed(2)}, name=${similarity.nameScore.toFixed(2)}`,
       };
     }
 
-    // Exact name matches (different files)
-    if (similarity.nameScore > 0.9 && similarity.fileOverlap < 0.5) {
+    // Similar names with some business relation
+    if (similarity.nameScore >= 0.6 && similarity.businessScore >= 0.5) {
       return {
-        action: 'group_under_parent',
-        confidence: similarity.nameScore,
-        reason: 'Same operation on different files',
+        action: 'merge',
+        confidence: (similarity.nameScore + similarity.businessScore) / 2,
+        reason: `Related themes: name=${similarity.nameScore.toFixed(2)}, business=${similarity.businessScore.toFixed(2)}`,
       };
     }
 
     return {
       action: 'keep_separate',
       confidence: similarity.combinedScore,
-      reason: 'Insufficient similarity for consolidation',
+      reason: `Insufficient similarity: combined=${similarity.combinedScore.toFixed(2)}, name=${similarity.nameScore.toFixed(2)}, business=${similarity.businessScore.toFixed(2)}`,
     };
   }
 
   consolidateThemes(themes: Theme[]): ConsolidatedTheme[] {
+    console.log(`[CONSOLIDATION] Starting with ${themes.length} themes`);
     if (themes.length === 0) return [];
 
     // Step 1: Find merge candidates
+    console.log(`[CONSOLIDATION] Step 1: Finding merge candidates`);
     const mergeGroups = this.findMergeGroups(themes);
+    console.log(`[CONSOLIDATION] Found ${mergeGroups.size} merge groups`);
 
     // Step 2: Create consolidated themes
+    console.log(`[CONSOLIDATION] Step 2: Creating consolidated themes`);
     const consolidated = this.createConsolidatedThemes(mergeGroups, themes);
+    console.log(
+      `[CONSOLIDATION] Created ${consolidated.length} consolidated themes`
+    );
 
     // Step 3: Build hierarchies
+    console.log(`[CONSOLIDATION] Step 3: Building hierarchies`);
     const hierarchical = this.buildHierarchies(consolidated);
+    console.log(
+      `[CONSOLIDATION] Final result: ${hierarchical.length} themes (${(((themes.length - hierarchical.length) / themes.length) * 100).toFixed(1)}% reduction)`
+    );
 
     return hierarchical;
   }
@@ -170,11 +181,22 @@ export class ThemeSimilarityService {
         if (processed.has(theme2.id)) continue;
 
         const similarity = this.calculateSimilarity(theme1, theme2);
-        const decision = this.shouldMerge(similarity, theme1, theme2);
+        const decision = this.shouldMerge(similarity);
+
+        console.log(`[MERGE] Comparing "${theme1.name}" vs "${theme2.name}"`);
+        console.log(
+          `[MERGE] Similarity: name=${similarity.nameScore.toFixed(2)}, desc=${similarity.descriptionScore.toFixed(2)}, files=${similarity.fileOverlap.toFixed(2)}, combined=${similarity.combinedScore.toFixed(2)}`
+        );
+        console.log(
+          `[MERGE] Decision: ${decision.action} (${decision.reason})`
+        );
 
         if (decision.action === 'merge') {
           group.push(theme2.id);
           processed.add(theme2.id);
+          console.log(
+            `[MERGE] ✅ MERGED: Added "${theme2.name}" to group with "${theme1.name}"`
+          );
         }
       }
 
@@ -193,7 +215,7 @@ export class ThemeSimilarityService {
 
     const consolidated: ConsolidatedTheme[] = [];
 
-    for (const [leadId, groupIds] of mergeGroups) {
+    for (const [, groupIds] of mergeGroups) {
       const groupThemes = groupIds.map((id) => themeMap.get(id)!);
 
       if (groupThemes.length === 1) {
@@ -214,9 +236,15 @@ export class ThemeSimilarityService {
     const domainGroups = this.groupByBusinessDomain(themes);
     const result: ConsolidatedTheme[] = [];
 
+    console.log(`[HIERARCHY] Found ${domainGroups.size} business domains:`);
     for (const [domain, domainThemes] of domainGroups) {
+      console.log(
+        `[HIERARCHY] Domain "${domain}": ${domainThemes.length} themes (min required: ${this.config.minThemesForParent})`
+      );
+
       if (domainThemes.length >= this.config.minThemesForParent) {
         // Create parent theme
+        console.log(`[HIERARCHY] ✅ Creating parent theme for "${domain}"`);
         const parentTheme = this.createParentTheme(domain, domainThemes);
 
         // Set children
@@ -229,6 +257,9 @@ export class ThemeSimilarityService {
         result.push(parentTheme);
       } else {
         // Keep as root themes
+        console.log(
+          `[HIERARCHY] ⚠️ Keeping "${domain}" themes as individual (below threshold)`
+        );
         result.push(...domainThemes);
       }
     }
@@ -243,6 +274,7 @@ export class ThemeSimilarityService {
 
     for (const theme of themes) {
       const domain = this.extractBusinessDomain(theme.name, theme.description);
+      console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
 
       if (!domains.has(domain)) {
         domains.set(domain, []);

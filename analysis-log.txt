@@ -1,8 +1,24 @@
 === AI Code Review Analysis ===
-Date: 2025-06-19T10:56:01.196Z
-Files: 14 changed, Time: 103489ms
+Date: 2025-06-19T11:40:17.795Z
+Files: 20 changed, Time: 148868ms
 
 === DIFFS ===
+.github/workflows/local-test.yml: +14/-2 lines
+diff --git a/.github/workflows/local-test.yml b/.github/workflows/local-test.yml
+index 3904ba9..d74b19b 100644
+--- a/.github/workflows/local-test.yml
++++ b/.github/workflows/local-test.yml
+@@ -33,6 +33,18 @@ jobs:
+     - name: Test the action
+       uses: ./
+       with:
+-        greeting: "Hello from local test!"
+         github-token: ${{ secrets.GITHUB_TOKEN }}
+-        anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+\ No newline at end of file
++        anthropic-api-key: ${{ secrets.ANTH...
+[TRUNCATED]
+
 .github/workflows/test.yml: +0/-6 lines
 diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
 index 1ac9b1c..3606c6d 100644
@@ -24,27 +40,11 @@ index 1ac9b1c..3606c6d 100644
      - name: Test the action
        uses: ./
        with:
--        greeting: ${{ github.event.inputs.greeting || 'Hello from GitHub Actions!!!' }}
-         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-\ No newline at end of file
-
+-        greetin...
+[TRUNCATED]
 
 action.yml: +0/-8 lines
 diff --git a/action.yml b/action.yml
 index ebe7d2c..b7625aa 100644
 --- a/action.yml
 +++ b/action.yml
-@@ -3,10 +3,6 @@ description: 'AI-powered code review GitHub Action that provides automated code
- author: '6529 Collections'
- 
- inputs:
--  greeting:
--    description: 'Custom greeting message for the code review'
--    required: false
--    default: 'Hello'
-   github-token:
-     description: 'GitHub token for API access'
-     required: false
-@@ -15,10 +11,6 @@ inputs:
-     description: 'Anthropic API key for Claude access'
-     required: true

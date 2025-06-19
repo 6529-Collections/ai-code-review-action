@@ -29957,10 +29957,12 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const exec = __importStar(__nccwpck_require__(5236));
+const fs = __importStar(__nccwpck_require__(9896));
 const validation_1 = __nccwpck_require__(4344);
 const utils_1 = __nccwpck_require__(1798);
 const git_service_1 = __nccwpck_require__(5902);
 const theme_service_1 = __nccwpck_require__(1599);
+const analysis_logger_1 = __nccwpck_require__(5348);
 async function run() {
     try {
         const inputs = (0, validation_1.validateInputs)();
@@ -29971,9 +29973,10 @@ async function run() {
         await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
         (0, utils_1.logInfo)('Claude Code CLI installed successfully');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
-        // Initialize services
-        const gitService = new git_service_1.GitService(inputs.githubToken || '');
-        const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
+        // Initialize logger and services
+        const logger = new analysis_logger_1.AnalysisLogger();
+        const gitService = new git_service_1.GitService(inputs.githubToken || '', logger);
+        const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey, logger);
         // Get PR context and changed files
         const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
@@ -30000,8 +30003,35 @@ async function run() {
         (0, utils_1.logInfo)(`Processing time: ${themeAnalysis.processingTime}ms`);
         // Log theme names only (not full JSON)
         if (themeAnalysis.themes.length > 0) {
-            const themeNames = themeAnalysis.themes.map(t => t.name).join(', ');
+            const themeNames = themeAnalysis.themes.map((t) => t.name).join(', ');
             (0, utils_1.logInfo)(`Themes: ${themeNames}`);
+        }
+        // Generate analysis report and save to multiple locations
+        const reportContent = logger.getReportContent();
+        // Try multiple locations - act should mount at least one of these
+        const locations = [
+            './analysis-log.txt',
+            'analysis-log.txt',
+            '/github/workspace/analysis-log.txt',
+            '/tmp/analysis-log.txt'
+        ];
+        let savedSuccessfully = false;
+        for (const location of locations) {
+            try {
+                fs.writeFileSync(location, reportContent);
+                (0, utils_1.logInfo)(`Analysis report saved to: ${location}`);
+                if (fs.existsSync(location)) {
+                    const stats = fs.statSync(location);
+                    (0, utils_1.logInfo)(`File verified at ${location}: ${stats.size} bytes`);
+                    savedSuccessfully = true;
+                }
+            }
+            catch (error) {
+                (0, utils_1.logInfo)(`Failed to save to ${location}: ${error}`);
+            }
+        }
+        if (!savedSuccessfully) {
+            (0, utils_1.logInfo)('Could not save analysis file to any location');
         }
     }
     catch (error) {
@@ -30058,8 +30088,9 @@ exports.GitService = void 0;
 const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
 class GitService {
-    constructor(githubToken) {
+    constructor(githubToken, logger) {
         this.githubToken = githubToken;
+        this.logger = logger;
     }
     async getPullRequestContext() {
         // Check if we're in a GitHub Actions PR context
@@ -30167,13 +30198,18 @@ class GitService {
                 ...github.context.repo,
                 pull_number: prNumber,
             });
-            return files.map((file) => ({
+            const changedFiles = files.map((file) => ({
                 filename: file.filename,
                 status: file.status,
                 additions: file.additions,
                 deletions: file.deletions,
                 patch: file.patch,
             }));
+            // Log diffs for analysis
+            if (this.logger) {
+                changedFiles.forEach((file) => this.logger.logDiff(file));
+            }
+            return changedFiles;
         }
         catch (error) {
             console.error('Failed to get changed files from GitHub:', error);
@@ -30218,13 +30254,18 @@ class GitService {
                 // Count additions/deletions from patch
                 const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
                 const deletions = (patch.match(/^-(?!-)/gm) || []).length;
-                files.push({
+                const file = {
                     filename,
                     status: this.mapGitStatusToChangedFileStatus(status),
                     additions,
                     deletions,
                     patch,
-                });
+                };
+                files.push(file);
+                // Log the diff for analysis
+                if (this.logger) {
+                    this.logger.logDiff(file);
+                }
             }
             return files;
         }
@@ -30313,17 +30354,20 @@ const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
 const os = __importStar(__nccwpck_require__(857));
+const theme_similarity_1 = __nccwpck_require__(4189);
 class ClaudeService {
-    constructor(apiKey) {
+    constructor(apiKey, logger) {
         this.apiKey = apiKey;
+        this.logger = logger;
     }
     async analyzeChunk(chunk, context) {
+        const prompt = this.buildAnalysisPrompt(chunk, context);
+        let output = '';
+        let error;
         try {
-            const prompt = this.buildAnalysisPrompt(chunk, context);
             // Use a temporary file approach instead of echo to avoid shell escaping issues
             const tempFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}.txt`);
             fs.writeFileSync(tempFile, prompt);
-            let output = '';
             await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
                 listeners: {
                     stdout: (data) => {
@@ -30333,11 +30377,33 @@ class ClaudeService {
             });
             // Clean up temp file
             fs.unlinkSync(tempFile);
-            return this.parseClaudeResponse(output);
+            const result = this.parseClaudeResponse(output);
+            // Log the Claude interaction
+            if (this.logger) {
+                this.logger.logClaudeCall({
+                    filename: chunk.filename,
+                    prompt,
+                    response: output,
+                    success: true,
+                });
+            }
+            return result;
         }
-        catch (error) {
+        catch (err) {
+            error = err instanceof Error ? err.message : String(err);
             console.warn('Claude analysis failed, using fallback:', error);
-            return this.createFallbackAnalysis(chunk);
+            const fallback = this.createFallbackAnalysis(chunk);
+            // Log the failed Claude interaction
+            if (this.logger) {
+                this.logger.logClaudeCall({
+                    filename: chunk.filename,
+                    prompt,
+                    response: output,
+                    success: false,
+                    error,
+                });
+            }
+            return fallback;
         }
     }
     buildAnalysisPrompt(chunk, context) {
@@ -30403,14 +30469,14 @@ class ChunkProcessor {
     }
 }
 class ThemeContextManager {
-    constructor(apiKey) {
+    constructor(apiKey, logger) {
         this.context = {
             themes: new Map(),
             rootThemeIds: [],
             globalInsights: [],
             processingState: 'idle',
         };
-        this.claudeService = new ClaudeService(apiKey);
+        this.claudeService = new ClaudeService(apiKey, logger);
     }
     async processChunk(chunk) {
         const contextString = this.buildContextForClaude();
@@ -30491,21 +30557,31 @@ class ThemeContextManager {
     }
 }
 class ThemeService {
-    constructor(anthropicApiKey) {
+    constructor(anthropicApiKey, logger, consolidationConfig) {
         this.anthropicApiKey = anthropicApiKey;
+        this.logger = logger;
+        this.similarityService = new theme_similarity_1.ThemeSimilarityService(consolidationConfig);
     }
     async analyzeThemes(changedFiles) {
         const startTime = Date.now();
         const analysisResult = {
             themes: [],
+            originalThemes: [],
             summary: `Analysis of ${changedFiles.length} changed files`,
             changedFilesCount: changedFiles.length,
             analysisTimestamp: new Date(),
             totalThemes: 0,
+            originalThemeCount: 0,
             processingTime: 0,
+            consolidationTime: 0,
             expandable: {
                 hasChildThemes: false,
                 canDrillDown: false,
+            },
+            consolidationStats: {
+                mergedThemes: 0,
+                hierarchicalThemes: 0,
+                consolidationRatio: 0,
             },
         };
         if (changedFiles.length === 0) {
@@ -30513,7 +30589,7 @@ class ThemeService {
             return analysisResult;
         }
         try {
-            const contextManager = new ThemeContextManager(this.anthropicApiKey);
+            const contextManager = new ThemeContextManager(this.anthropicApiKey, this.logger);
             const chunkProcessor = new ChunkProcessor();
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
@@ -30521,21 +30597,58 @@ class ThemeService {
                 await contextManager.processChunk(chunk);
             }
             contextManager.setProcessingState('complete');
-            const themes = contextManager.getRootThemes();
-            analysisResult.themes = themes;
-            analysisResult.totalThemes = themes.length;
+            const originalThemes = contextManager.getRootThemes();
+            const consolidationStartTime = Date.now();
+            // Apply theme consolidation
+            const consolidatedThemes = this.similarityService.consolidateThemes(originalThemes);
+            const consolidationTime = Date.now() - consolidationStartTime;
+            // Calculate consolidation stats
+            const mergedThemes = consolidatedThemes.filter((t) => t.consolidationMethod === 'merge').length;
+            const hierarchicalThemes = consolidatedThemes.filter((t) => t.childThemes.length > 0).length;
+            const consolidationRatio = originalThemes.length > 0
+                ? (originalThemes.length - consolidatedThemes.length) /
+                    originalThemes.length
+                : 0;
+            analysisResult.originalThemes = originalThemes;
+            analysisResult.themes = consolidatedThemes;
+            analysisResult.totalThemes = consolidatedThemes.length;
+            analysisResult.originalThemeCount = originalThemes.length;
             analysisResult.processingTime = Date.now() - startTime;
-            if (themes.length > 0) {
-                analysisResult.summary = `Discovered ${themes.length} themes: ${themes
-                    .map((t) => t.name)
-                    .join(', ')}`;
+            analysisResult.consolidationTime = consolidationTime;
+            analysisResult.consolidationStats = {
+                mergedThemes,
+                hierarchicalThemes,
+                consolidationRatio,
+            };
+            // Log final results (use consolidated themes for main output)
+            if (this.logger) {
+                this.logger.logResult(originalThemes); // Log original themes for analysis
+                this.logger.logConsolidatedResult(consolidatedThemes); // Log consolidated themes
+            }
+            if (consolidatedThemes.length > 0) {
+                const hasHierarchy = consolidatedThemes.some((t) => t.childThemes.length > 0);
+                analysisResult.summary =
+                    `Discovered ${consolidatedThemes.length} consolidated themes` +
+                        (originalThemes.length !== consolidatedThemes.length
+                            ? ` (consolidated from ${originalThemes.length} original themes)`
+                            : '') +
+                        `: ${consolidatedThemes.map((t) => t.name).join(', ')}`;
                 analysisResult.expandable.canDrillDown = true;
+                analysisResult.expandable.hasChildThemes = hasHierarchy;
             }
         }
         catch (error) {
             console.error('Theme analysis failed:', error);
             analysisResult.summary = 'Theme analysis failed - using fallback';
-            analysisResult.themes = this.createFallbackThemes(changedFiles);
+            const fallbackThemes = this.createFallbackThemes(changedFiles);
+            analysisResult.themes = fallbackThemes.map((theme) => ({
+                ...theme,
+                level: 0,
+                childThemes: [],
+                businessImpact: theme.description,
+                sourceThemes: [theme.id],
+                consolidationMethod: 'single',
+            }));
             analysisResult.totalThemes = analysisResult.themes.length;
         }
         analysisResult.processingTime = Date.now() - startTime;
@@ -30559,6 +30672,370 @@ class ThemeService {
     }
 }
 exports.ThemeService = ThemeService;
+
+
+/***/ }),
+
+/***/ 4189:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ThemeSimilarityService = void 0;
+class ThemeSimilarityService {
+    constructor(config) {
+        this.config = {
+            similarityThreshold: 0.6, // Lowered from 0.8 to 0.6 for better consolidation
+            maxThemesPerParent: 5,
+            minThemesForParent: 2,
+            confidenceWeight: 0.3,
+            businessDomainWeight: 0.4,
+            ...config,
+        };
+        console.log(`[CONFIG] Consolidation config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
+    }
+    calculateSimilarity(theme1, theme2) {
+        const nameScore = this.calculateNameSimilarity(theme1.name, theme2.name);
+        const descriptionScore = this.calculateDescriptionSimilarity(theme1.description, theme2.description);
+        const fileOverlap = this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
+        const patternScore = this.calculatePatternSimilarity(theme1, theme2);
+        const businessScore = this.calculateBusinessSimilarity(theme1, theme2);
+        // Weighted combination - give more weight to name and business similarity
+        const combinedScore = nameScore * 0.4 + // Increased from 0.25
+            descriptionScore * 0.2 + // Decreased from 0.25
+            fileOverlap * 0.15 + // Decreased from 0.2
+            patternScore * 0.1 + // Decreased from 0.15
+            businessScore * 0.15; // Same
+        return {
+            nameScore,
+            descriptionScore,
+            fileOverlap,
+            patternScore,
+            businessScore,
+            combinedScore,
+        };
+    }
+    shouldMerge(similarity) {
+        // Exact or near-exact name matches should always merge
+        if (similarity.nameScore >= 0.9) {
+            return {
+                action: 'merge',
+                confidence: similarity.nameScore,
+                reason: `Near-identical names: ${similarity.nameScore.toFixed(2)}`,
+            };
+        }
+        // High overall similarity themes
+        if (similarity.combinedScore >= this.config.similarityThreshold) {
+            return {
+                action: 'merge',
+                confidence: similarity.combinedScore,
+                reason: `High similarity score: ${similarity.combinedScore.toFixed(2)}`,
+            };
+        }
+        // Strong business domain similarity (even with different files)
+        if (similarity.businessScore >= 0.7 && similarity.nameScore >= 0.4) {
+            return {
+                action: 'merge',
+                confidence: (similarity.businessScore + similarity.nameScore) / 2,
+                reason: `Strong business domain similarity: business=${similarity.businessScore.toFixed(2)}, name=${similarity.nameScore.toFixed(2)}`,
+            };
+        }
+        // Similar names with some business relation
+        if (similarity.nameScore >= 0.6 && similarity.businessScore >= 0.5) {
+            return {
+                action: 'merge',
+                confidence: (similarity.nameScore + similarity.businessScore) / 2,
+                reason: `Related themes: name=${similarity.nameScore.toFixed(2)}, business=${similarity.businessScore.toFixed(2)}`,
+            };
+        }
+        return {
+            action: 'keep_separate',
+            confidence: similarity.combinedScore,
+            reason: `Insufficient similarity: combined=${similarity.combinedScore.toFixed(2)}, name=${similarity.nameScore.toFixed(2)}, business=${similarity.businessScore.toFixed(2)}`,
+        };
+    }
+    consolidateThemes(themes) {
+        console.log(`[CONSOLIDATION] Starting with ${themes.length} themes`);
+        if (themes.length === 0)
+            return [];
+        // Step 1: Find merge candidates
+        console.log(`[CONSOLIDATION] Step 1: Finding merge candidates`);
+        const mergeGroups = this.findMergeGroups(themes);
+        console.log(`[CONSOLIDATION] Found ${mergeGroups.size} merge groups`);
+        // Step 2: Create consolidated themes
+        console.log(`[CONSOLIDATION] Step 2: Creating consolidated themes`);
+        const consolidated = this.createConsolidatedThemes(mergeGroups, themes);
+        console.log(`[CONSOLIDATION] Created ${consolidated.length} consolidated themes`);
+        // Step 3: Build hierarchies
+        console.log(`[CONSOLIDATION] Step 3: Building hierarchies`);
+        const hierarchical = this.buildHierarchies(consolidated);
+        console.log(`[CONSOLIDATION] Final result: ${hierarchical.length} themes (${(((themes.length - hierarchical.length) / themes.length) * 100).toFixed(1)}% reduction)`);
+        return hierarchical;
+    }
+    findMergeGroups(themes) {
+        const mergeGroups = new Map();
+        const processed = new Set();
+        for (let i = 0; i < themes.length; i++) {
+            const theme1 = themes[i];
+            if (processed.has(theme1.id))
+                continue;
+            const group = [theme1.id];
+            processed.add(theme1.id);
+            for (let j = i + 1; j < themes.length; j++) {
+                const theme2 = themes[j];
+                if (processed.has(theme2.id))
+                    continue;
+                const similarity = this.calculateSimilarity(theme1, theme2);
+                const decision = this.shouldMerge(similarity);
+                console.log(`[MERGE] Comparing "${theme1.name}" vs "${theme2.name}"`);
+                console.log(`[MERGE] Similarity: name=${similarity.nameScore.toFixed(2)}, desc=${similarity.descriptionScore.toFixed(2)}, files=${similarity.fileOverlap.toFixed(2)}, combined=${similarity.combinedScore.toFixed(2)}`);
+                console.log(`[MERGE] Decision: ${decision.action} (${decision.reason})`);
+                if (decision.action === 'merge') {
+                    group.push(theme2.id);
+                    processed.add(theme2.id);
+                    console.log(`[MERGE] ✅ MERGED: Added "${theme2.name}" to group with "${theme1.name}"`);
+                }
+            }
+            mergeGroups.set(theme1.id, group);
+        }
+        return mergeGroups;
+    }
+    createConsolidatedThemes(mergeGroups, themes) {
+        const themeMap = new Map();
+        themes.forEach((theme) => themeMap.set(theme.id, theme));
+        const consolidated = [];
+        for (const [, groupIds] of mergeGroups) {
+            const groupThemes = groupIds.map((id) => themeMap.get(id));
+            if (groupThemes.length === 1) {
+                // Single theme - convert to consolidated format
+                const theme = groupThemes[0];
+                consolidated.push(this.themeToConsolidated(theme));
+            }
+            else {
+                // Multiple themes - merge them
+                consolidated.push(this.mergeThemes(groupThemes));
+            }
+        }
+        return consolidated;
+    }
+    buildHierarchies(themes) {
+        // Group themes by business domain
+        const domainGroups = this.groupByBusinessDomain(themes);
+        const result = [];
+        console.log(`[HIERARCHY] Found ${domainGroups.size} business domains:`);
+        for (const [domain, domainThemes] of domainGroups) {
+            console.log(`[HIERARCHY] Domain "${domain}": ${domainThemes.length} themes (min required: ${this.config.minThemesForParent})`);
+            if (domainThemes.length >= this.config.minThemesForParent) {
+                // Create parent theme
+                console.log(`[HIERARCHY] ✅ Creating parent theme for "${domain}"`);
+                const parentTheme = this.createParentTheme(domain, domainThemes);
+                // Set children
+                domainThemes.forEach((child) => {
+                    child.level = 1;
+                    child.parentId = parentTheme.id;
+                });
+                parentTheme.childThemes = domainThemes;
+                result.push(parentTheme);
+            }
+            else {
+                // Keep as root themes
+                console.log(`[HIERARCHY] ⚠️ Keeping "${domain}" themes as individual (below threshold)`);
+                result.push(...domainThemes);
+            }
+        }
+        return result;
+    }
+    groupByBusinessDomain(themes) {
+        const domains = new Map();
+        for (const theme of themes) {
+            const domain = this.extractBusinessDomain(theme.name, theme.description);
+            console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
+            if (!domains.has(domain)) {
+                domains.set(domain, []);
+            }
+            domains.get(domain).push(theme);
+        }
+        return domains;
+    }
+    extractBusinessDomain(name, description) {
+        const text = (name + ' ' + description).toLowerCase();
+        // Business domain keywords
+        if (text.includes('greeting') || text.includes('demo')) {
+            return 'Remove Demo Functionality';
+        }
+        if (text.includes('service') || text.includes('architecture')) {
+            return 'Service Architecture';
+        }
+        if (text.includes('git') || text.includes('repository')) {
+            return 'Git Integration';
+        }
+        if (text.includes('theme') || text.includes('analysis')) {
+            return 'Theme Analysis';
+        }
+        if (text.includes('test') || text.includes('validation')) {
+            return 'Testing & Validation';
+        }
+        if (text.includes('interface') || text.includes('type')) {
+            return 'Interface Changes';
+        }
+        if (text.includes('workflow') || text.includes('action')) {
+            return 'Workflow Configuration';
+        }
+        return 'General Changes';
+    }
+    createParentTheme(domain, children) {
+        const allFiles = new Set();
+        const allSnippets = [];
+        let totalConfidence = 0;
+        const sourceThemes = [];
+        children.forEach((child) => {
+            child.affectedFiles.forEach((file) => allFiles.add(file));
+            allSnippets.push(...child.codeSnippets);
+            totalConfidence += child.confidence;
+            sourceThemes.push(...child.sourceThemes);
+        });
+        return {
+            id: `parent-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            name: domain,
+            description: `Consolidated theme for ${children.length} related changes: ${children.map((c) => c.name).join(', ')}`,
+            level: 0,
+            childThemes: [],
+            affectedFiles: Array.from(allFiles),
+            confidence: totalConfidence / children.length,
+            businessImpact: `Umbrella theme covering ${children.length} related changes in ${domain.toLowerCase()}`,
+            codeSnippets: allSnippets.slice(0, 10), // Limit snippets
+            context: children.map((c) => c.context).join('\n'),
+            lastAnalysis: new Date(),
+            sourceThemes,
+            consolidationMethod: 'hierarchy',
+        };
+    }
+    themeToConsolidated(theme) {
+        return {
+            id: theme.id,
+            name: theme.name,
+            description: theme.description,
+            level: 0,
+            childThemes: [],
+            affectedFiles: theme.affectedFiles,
+            confidence: theme.confidence,
+            businessImpact: theme.description,
+            codeSnippets: theme.codeSnippets,
+            context: theme.context,
+            lastAnalysis: theme.lastAnalysis,
+            sourceThemes: [theme.id],
+            consolidationMethod: 'single',
+        };
+    }
+    mergeThemes(themes) {
+        const allFiles = new Set();
+        const allSnippets = [];
+        let totalConfidence = 0;
+        themes.forEach((theme) => {
+            theme.affectedFiles.forEach((file) => allFiles.add(file));
+            allSnippets.push(...theme.codeSnippets);
+            totalConfidence += theme.confidence;
+        });
+        const leadTheme = themes[0];
+        return {
+            id: `merged-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            name: leadTheme.name,
+            description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
+            level: 0,
+            childThemes: [],
+            affectedFiles: Array.from(allFiles),
+            confidence: totalConfidence / themes.length,
+            businessImpact: themes.map((t) => t.description).join('; '),
+            codeSnippets: allSnippets,
+            context: themes.map((t) => t.context).join('\n'),
+            lastAnalysis: new Date(),
+            sourceThemes: themes.map((t) => t.id),
+            consolidationMethod: 'merge',
+        };
+    }
+    calculateNameSimilarity(name1, name2) {
+        const words1 = name1.toLowerCase().split(/\s+/);
+        const words2 = name2.toLowerCase().split(/\s+/);
+        const intersection = words1.filter((word) => words2.includes(word));
+        const union = new Set([...words1, ...words2]);
+        return intersection.length / union.size;
+    }
+    calculateDescriptionSimilarity(desc1, desc2) {
+        const words1 = desc1.toLowerCase().split(/\s+/);
+        const words2 = desc2.toLowerCase().split(/\s+/);
+        const intersection = words1.filter((word) => words2.includes(word));
+        const union = new Set([...words1, ...words2]);
+        return intersection.length / union.size;
+    }
+    calculateFileOverlap(files1, files2) {
+        const set1 = new Set(files1);
+        const set2 = new Set(files2);
+        const intersection = new Set([...set1].filter((file) => set2.has(file)));
+        const union = new Set([...set1, ...set2]);
+        return union.size === 0 ? 0 : intersection.size / union.size;
+    }
+    calculatePatternSimilarity(theme1, theme2) {
+        // Extract patterns from context
+        const patterns1 = this.extractPatterns(theme1.context);
+        const patterns2 = this.extractPatterns(theme2.context);
+        const intersection = patterns1.filter((p) => patterns2.includes(p));
+        const union = new Set([...patterns1, ...patterns2]);
+        return union.size === 0 ? 0 : intersection.length / union.size;
+    }
+    calculateBusinessSimilarity(theme1, theme2) {
+        const business1 = this.extractBusinessKeywords(theme1.description);
+        const business2 = this.extractBusinessKeywords(theme2.description);
+        const intersection = business1.filter((k) => business2.includes(k));
+        const union = new Set([...business1, ...business2]);
+        return union.size === 0 ? 0 : intersection.length / union.size;
+    }
+    extractPatterns(context) {
+        const patterns = [];
+        const text = context.toLowerCase();
+        if (text.includes('add') || text.includes('implement'))
+            patterns.push('addition');
+        if (text.includes('remove') || text.includes('delete'))
+            patterns.push('removal');
+        if (text.includes('update') || text.includes('modify'))
+            patterns.push('modification');
+        if (text.includes('refactor'))
+            patterns.push('refactoring');
+        if (text.includes('interface') || text.includes('type'))
+            patterns.push('type_definition');
+        if (text.includes('service') || text.includes('class'))
+            patterns.push('service_implementation');
+        if (text.includes('test'))
+            patterns.push('testing');
+        if (text.includes('configuration') || text.includes('config'))
+            patterns.push('configuration');
+        return patterns;
+    }
+    extractBusinessKeywords(description) {
+        const keywords = [];
+        const text = description.toLowerCase();
+        if (text.includes('greeting'))
+            keywords.push('greeting');
+        if (text.includes('authentication') || text.includes('auth'))
+            keywords.push('authentication');
+        if (text.includes('user') || text.includes('customer'))
+            keywords.push('user_experience');
+        if (text.includes('api') || text.includes('service'))
+            keywords.push('api_service');
+        if (text.includes('data') || text.includes('storage'))
+            keywords.push('data_management');
+        if (text.includes('security'))
+            keywords.push('security');
+        if (text.includes('performance'))
+            keywords.push('performance');
+        if (text.includes('integration'))
+            keywords.push('integration');
+        if (text.includes('workflow') || text.includes('process'))
+            keywords.push('workflow');
+        return keywords;
+    }
+}
+exports.ThemeSimilarityService = ThemeSimilarityService;
 
 
 /***/ }),
@@ -30617,6 +31094,180 @@ function logInfo(message) {
 function setOutput(name, value) {
     core.setOutput(name, value);
 }
+
+
+/***/ }),
+
+/***/ 5348:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AnalysisLogger = void 0;
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+class AnalysisLogger {
+    constructor() {
+        this.diffs = [];
+        this.claudeCalls = [];
+        this.themes = [];
+        this.consolidatedThemes = [];
+        this.startTime = Date.now();
+    }
+    logDiff(file) {
+        this.diffs.push(file);
+    }
+    logClaudeCall(call) {
+        this.claudeCalls.push(call);
+    }
+    logResult(themes) {
+        this.themes = themes;
+    }
+    logConsolidatedResult(themes) {
+        this.consolidatedThemes = themes;
+    }
+    generateReport() {
+        const processingTime = Date.now() - this.startTime;
+        const report = this.buildReport(processingTime);
+        // Try multiple possible locations to ensure the file is accessible on host
+        const possiblePaths = [
+            process.env.GITHUB_WORKSPACE,
+            process.env.RUNNER_WORKSPACE,
+            '/github/workspace',
+            process.cwd(),
+            '.',
+        ].filter(Boolean);
+        // Try each path until one works
+        let logPath = '';
+        for (const basePath of possiblePaths) {
+            try {
+                logPath = path.join(basePath, 'analysis-log.txt');
+                fs.writeFileSync(logPath, report);
+                console.log(`Analysis log saved to: ${logPath}`);
+                break;
+            }
+            catch (error) {
+                console.warn(`Failed to write to ${logPath}:`, error);
+                continue;
+            }
+        }
+    }
+    getReportContent() {
+        const processingTime = Date.now() - this.startTime;
+        return this.buildReport(processingTime);
+    }
+    buildReport(processingTime) {
+        const timestamp = new Date().toISOString();
+        const fileCount = this.diffs.length;
+        let report = `=== AI Code Review Analysis ===\n`;
+        report += `Date: ${timestamp}\n`;
+        report += `Files: ${fileCount} changed, Time: ${processingTime}ms\n\n`;
+        // Diffs section (limited to prevent truncation)
+        report += `=== DIFFS ===\n`;
+        for (const file of this.diffs.slice(0, 5)) { // Limit to first 5 files
+            report += `${file.filename}: +${file.additions}/-${file.deletions} lines\n`;
+            if (file.patch) {
+                // Limit patch size to prevent huge logs
+                const patch = file.patch.length > 500 ? file.patch.substring(0, 500) + '...\n[TRUNCATED]' : file.patch;
+                report += `${patch}\n\n`;
+            }
+        }
+        if (this.diffs.length > 5) {
+            report += `... and ${this.diffs.length - 5} more files\n\n`;
+        }
+        // Claude interactions section (limited to prevent truncation)
+        report += `=== CLAUDE INTERACTIONS ===\n`;
+        const limitedCalls = this.claudeCalls.slice(0, 10); // Limit to first 10 calls
+        limitedCalls.forEach((call, index) => {
+            report += `Call ${index + 1} (${call.filename}):\n`;
+            report += `PROMPT: ${call.prompt.substring(0, 200)}...\n`;
+            // Limit response size
+            const response = call.response.length > 300 ? call.response.substring(0, 300) + '...\n[TRUNCATED]' : call.response;
+            report += `RESPONSE: ${response}\n`;
+            report += `STATUS: ${call.success ? '✅ Success' : '❌ Failed'}\n`;
+            if (call.error) {
+                report += `ERROR: ${call.error}\n`;
+            }
+            report += `\n`;
+        });
+        if (this.claudeCalls.length > 10) {
+            report += `... and ${this.claudeCalls.length - 10} more interactions\n\n`;
+        }
+        // Results section
+        report += `=== RESULTS ===\n`;
+        if (this.consolidatedThemes.length > 0) {
+            report += `Original Themes: ${this.themes.length} detected\n`;
+            report += `Consolidated Themes: ${this.consolidatedThemes.length} final\n`;
+            const consolidationRatio = this.themes.length > 0
+                ? (((this.themes.length - this.consolidatedThemes.length) /
+                    this.themes.length) *
+                    100).toFixed(1)
+                : '0';
+            report += `Consolidation: ${consolidationRatio}% reduction\n\n`;
+            for (const theme of this.consolidatedThemes) {
+                const indent = '  '.repeat(theme.level);
+                report += `${indent}- ${theme.name} (${theme.confidence.toFixed(2)})`;
+                if (theme.consolidationMethod === 'merge') {
+                    report += ` [MERGED from ${theme.sourceThemes.length} themes]`;
+                }
+                else if (theme.childThemes.length > 0) {
+                    report += ` [PARENT of ${theme.childThemes.length} themes]`;
+                }
+                report += `\n`;
+                // Add child themes
+                for (const child of theme.childThemes) {
+                    const childIndent = '  '.repeat(child.level);
+                    report += `${childIndent}- ${child.name} (${child.confidence.toFixed(2)})\n`;
+                }
+            }
+        }
+        else {
+            report += `Themes: ${this.themes.length} detected\n`;
+            for (const theme of this.themes) {
+                report += `- ${theme.name} (${theme.confidence})\n`;
+            }
+        }
+        const successful = this.claudeCalls.filter((c) => c.success).length;
+        const total = this.claudeCalls.length;
+        report += `\nAPI: ${successful}/${total} successful\n`;
+        return report;
+    }
+}
+exports.AnalysisLogger = AnalysisLogger;
 
 
 /***/ }),

@@ -1,4 +1,6 @@
 import { ChangedFile } from './git-service';
+import { AnalysisLogger } from '../utils/analysis-logger';
+import { ConsolidatedTheme, ConsolidationConfig } from './theme-similarity';
 export interface Theme {
     id: string;
     name: string;
@@ -40,20 +42,30 @@ export interface LiveContext {
     processingState: 'idle' | 'processing' | 'complete';
 }
 export interface ThemeAnalysisResult {
-    themes: Theme[];
+    themes: ConsolidatedTheme[];
+    originalThemes: Theme[];
     summary: string;
     changedFilesCount: number;
     analysisTimestamp: Date;
     totalThemes: number;
+    originalThemeCount: number;
     processingTime: number;
+    consolidationTime: number;
     expandable: {
         hasChildThemes: boolean;
         canDrillDown: boolean;
     };
+    consolidationStats: {
+        mergedThemes: number;
+        hierarchicalThemes: number;
+        consolidationRatio: number;
+    };
 }
 export declare class ThemeService {
     private readonly anthropicApiKey;
-    constructor(anthropicApiKey: string);
+    private readonly logger?;
+    private similarityService;
+    constructor(anthropicApiKey: string, logger?: AnalysisLogger | undefined, consolidationConfig?: Partial<ConsolidationConfig>);
     analyzeThemes(changedFiles: ChangedFile[]): Promise<ThemeAnalysisResult>;
     private createFallbackThemes;
 }
