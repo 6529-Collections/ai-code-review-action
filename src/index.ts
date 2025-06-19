@@ -47,12 +47,18 @@ export async function run(): Promise<void> {
     logInfo('Analyzing code themes...');
     const themeAnalysis = await themeService.analyzeThemes(changedFiles);
 
-    // Output results
+    // Output results (GitHub Actions will log these)
     core.setOutput('themes', JSON.stringify(themeAnalysis.themes));
     core.setOutput('summary', themeAnalysis.summary);
 
     logInfo(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
     logInfo(`Processing time: ${themeAnalysis.processingTime}ms`);
+    
+    // Log theme names only (not full JSON)
+    if (themeAnalysis.themes.length > 0) {
+      const themeNames = themeAnalysis.themes.map(t => t.name).join(', ');
+      logInfo(`Themes: ${themeNames}`);
+    }
 
   } catch (error) {
     handleError(error);

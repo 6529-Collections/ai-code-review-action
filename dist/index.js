@@ -29993,11 +29993,16 @@ async function run() {
         // Analyze themes
         (0, utils_1.logInfo)('Analyzing code themes...');
         const themeAnalysis = await themeService.analyzeThemes(changedFiles);
-        // Output results
+        // Output results (GitHub Actions will log these)
         core.setOutput('themes', JSON.stringify(themeAnalysis.themes));
         core.setOutput('summary', themeAnalysis.summary);
         (0, utils_1.logInfo)(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
         (0, utils_1.logInfo)(`Processing time: ${themeAnalysis.processingTime}ms`);
+        // Log theme names only (not full JSON)
+        if (themeAnalysis.themes.length > 0) {
+            const themeNames = themeAnalysis.themes.map(t => t.name).join(', ');
+            (0, utils_1.logInfo)(`Themes: ${themeNames}`);
+        }
     }
     catch (error) {
         (0, utils_1.handleError)(error);
