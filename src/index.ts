@@ -45,7 +45,7 @@ export async function run(): Promise<void> {
     core.setOutput('summary', themeAnalysis.summary);
 
     logInfo(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
-    logInfo(`Themes by scope: ${JSON.stringify(themeAnalysis.themesByScope)}`);
+    logInfo(`Processing time: ${themeAnalysis.processingTime}ms`);
 
   } catch (error) {
     handleError(error);

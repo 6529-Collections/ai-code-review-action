@@ -2,44 +2,42 @@ import { ChangedFile } from './git-service';
 export interface Theme {
     id: string;
     name: string;
-    scope: 'flow' | 'feature' | 'module' | 'class' | 'function' | 'component';
     description: string;
-    impactLevel: 'high' | 'medium' | 'low';
+    level: number;
+    parentId?: string;
+    childIds: string[];
     affectedFiles: string[];
-    codeLocations?: Array<{
-        file: string;
-        startLine?: number;
-        endLine?: number;
-        functions?: string[];
-        classes?: string[];
-    }>;
-    parent?: string;
-    children: Theme[];
-    relatedThemes: string[];
+    codeSnippets: string[];
     confidence: number;
-    analysis?: ThemeAnalysis;
+    context: string;
+    lastAnalysis: Date;
 }
-export interface ThemeAnalysis {
-    summary: string;
-    codeQuality: {
-        score: number;
-        issues: string[];
-        suggestions: string[];
-    };
-    testCoverage: {
-        hasTests: boolean;
-        missingTests: string[];
-        testQuality: number;
-    };
-    potentialBugs: {
-        risks: string[];
-        unhandledCases: string[];
-    };
-    businessImpact: {
-        userFacing: boolean;
-        criticalPath: boolean;
-        breakingChange: boolean;
-    };
+export interface CodeChunk {
+    id: string;
+    content: string;
+    filename: string;
+    startLine?: number;
+    endLine?: number;
+    type: 'function' | 'class' | 'file' | 'block';
+}
+export interface ChunkAnalysis {
+    themeName: string;
+    description: string;
+    businessImpact: string;
+    suggestedParent?: string | null;
+    confidence: number;
+    codePattern: string;
+}
+export interface ThemePlacement {
+    action: 'merge' | 'create';
+    targetThemeId?: string;
+    level?: number;
+}
+export interface LiveContext {
+    themes: Map<string, Theme>;
+    rootThemeIds: string[];
+    globalInsights: string[];
+    processingState: 'idle' | 'processing' | 'complete';
 }
 export interface ThemeAnalysisResult {
     themes: Theme[];
@@ -47,11 +45,15 @@ export interface ThemeAnalysisResult {
     changedFilesCount: number;
     analysisTimestamp: Date;
     totalThemes: number;
-    themesByScope: Record<Theme['scope'], number>;
+    processingTime: number;
+    expandable: {
+        hasChildThemes: boolean;
+        canDrillDown: boolean;
+    };
 }
 export declare class ThemeService {
     private readonly anthropicApiKey;
     constructor(anthropicApiKey: string);
     analyzeThemes(changedFiles: ChangedFile[]): Promise<ThemeAnalysisResult>;
-    private detectThemes;
+    private createFallbackThemes;
 }

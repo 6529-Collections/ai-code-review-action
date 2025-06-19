@@ -86,11 +86,11 @@ describe('Action', () => {
 
     expect(mockCore.setOutput).toHaveBeenCalledWith(
       'themes',
-      expect.stringContaining('placeholder-1')
+      expect.stringMatching(/\[.*"name".*\]/)
     );
     expect(mockCore.setOutput).toHaveBeenCalledWith(
       'summary',
-      'Analysis of 1 changed files'
+      expect.stringMatching(/Discovered \d+ themes:|Analysis of \d+ changed files/)
     );
   });
 

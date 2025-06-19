@@ -29991,7 +29991,7 @@ async function run() {
         core.setOutput('themes', JSON.stringify(themeAnalysis.themes));
         core.setOutput('summary', themeAnalysis.summary);
         (0, utils_1.logInfo)(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
-        (0, utils_1.logInfo)(`Themes by scope: ${JSON.stringify(themeAnalysis.themesByScope)}`);
+        (0, utils_1.logInfo)(`Processing time: ${themeAnalysis.processingTime}ms`);
     }
     catch (error) {
         (0, utils_1.handleError)(error);
@@ -30118,67 +30118,281 @@ exports.GitService = GitService;
 /***/ }),
 
 /***/ 1599:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeService = void 0;
+const exec = __importStar(__nccwpck_require__(5236));
+class ClaudeService {
+    constructor(apiKey) {
+        this.apiKey = apiKey;
+    }
+    async analyzeChunk(chunk, context) {
+        try {
+            const prompt = this.buildAnalysisPrompt(chunk, context);
+            const command = `echo "${this.escapeForShell(prompt)}" | claude --files ${chunk.filename}`;
+            let output = '';
+            await exec.exec('bash', ['-c', command], {
+                listeners: {
+                    stdout: (data) => {
+                        output += data.toString();
+                    },
+                },
+            });
+            return this.parseClaudeResponse(output);
+        }
+        catch (error) {
+            console.warn('Claude analysis failed, using fallback:', error);
+            return this.createFallbackAnalysis(chunk);
+        }
+    }
+    buildAnalysisPrompt(chunk, context) {
+        return `${context}
+
+Analyze this code change in ${chunk.filename}:
+${chunk.content}
+
+With full repository context, provide analysis in this JSON format:
+{
+  "themeName": "descriptive name for what this change does",
+  "description": "detailed explanation of the change and its purpose",
+  "businessImpact": "what business functionality this affects",
+  "suggestedParent": "name of existing theme this might belong to (or null for new root theme)",
+  "confidence": 0.85,
+  "codePattern": "what coding pattern or architecture this represents"
+}
+
+Focus on business logic and functionality, not technical file types.`;
+    }
+    escapeForShell(text) {
+        return text.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    }
+    parseClaudeResponse(output) {
+        try {
+            const jsonMatch = output.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+        }
+        catch (error) {
+            console.warn('Failed to parse Claude response:', error);
+        }
+        return {
+            themeName: 'Parse Error',
+            description: 'Failed to parse Claude response',
+            businessImpact: 'Unknown',
+            confidence: 0.1,
+            codePattern: 'Unknown',
+        };
+    }
+    createFallbackAnalysis(chunk) {
+        return {
+            themeName: `Changes in ${chunk.filename}`,
+            description: 'Analysis unavailable - using fallback',
+            businessImpact: 'Unknown impact',
+            confidence: 0.3,
+            codePattern: 'File modification',
+            suggestedParent: undefined,
+        };
+    }
+}
+class ChunkProcessor {
+    splitChangedFiles(files) {
+        return files.map((file, index) => ({
+            id: `chunk-${index}`,
+            content: file.patch || '',
+            filename: file.filename,
+            type: 'file',
+        }));
+    }
+}
+class ThemeContextManager {
+    constructor(apiKey) {
+        this.context = {
+            themes: new Map(),
+            rootThemeIds: [],
+            globalInsights: [],
+            processingState: 'idle',
+        };
+        this.claudeService = new ClaudeService(apiKey);
+    }
+    async processChunk(chunk) {
+        const contextString = this.buildContextForClaude();
+        const analysis = await this.claudeService.analyzeChunk(chunk, contextString);
+        const placement = this.determineThemePlacement(analysis);
+        this.updateContext(placement, analysis, chunk);
+    }
+    buildContextForClaude() {
+        const existingThemes = Array.from(this.context.themes.values())
+            .filter((t) => t.level === 0)
+            .map((t) => `${t.name}: ${t.description}`)
+            .join('\n');
+        return existingThemes.length > 0
+            ? `Current root themes:\n${existingThemes}`
+            : 'No existing themes yet.';
+    }
+    determineThemePlacement(analysis) {
+        if (analysis.suggestedParent) {
+            const parentTheme = this.findThemeByName(analysis.suggestedParent);
+            if (parentTheme && this.shouldMergeWithParent(analysis, parentTheme)) {
+                return { action: 'merge', targetThemeId: parentTheme.id };
+            }
+        }
+        return { action: 'create', level: 0 };
+    }
+    findThemeByName(name) {
+        return Array.from(this.context.themes.values()).find((theme) => theme.name.toLowerCase() === name.toLowerCase());
+    }
+    shouldMergeWithParent(analysis, parent) {
+        return (analysis.confidence > 0.7 &&
+            this.similarityScore(analysis.description, parent.description) > 0.6);
+    }
+    similarityScore(desc1, desc2) {
+        const words1 = desc1.toLowerCase().split(' ');
+        const words2 = desc2.toLowerCase().split(' ');
+        const commonWords = words1.filter((word) => words2.includes(word));
+        return commonWords.length / Math.max(words1.length, words2.length);
+    }
+    updateContext(placement, analysis, chunk) {
+        if (placement.action === 'merge' && placement.targetThemeId) {
+            const existingTheme = this.context.themes.get(placement.targetThemeId);
+            if (existingTheme) {
+                existingTheme.affectedFiles.push(chunk.filename);
+                existingTheme.codeSnippets.push(chunk.content);
+                existingTheme.context += `\n${analysis.description}`;
+                existingTheme.lastAnalysis = new Date();
+            }
+        }
+        else {
+            const newTheme = {
+                id: `theme-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                name: analysis.themeName,
+                description: analysis.description,
+                level: placement.level || 0,
+                childIds: [],
+                affectedFiles: [chunk.filename],
+                codeSnippets: [chunk.content],
+                confidence: analysis.confidence,
+                context: analysis.description,
+                lastAnalysis: new Date(),
+            };
+            this.context.themes.set(newTheme.id, newTheme);
+            if (newTheme.level === 0) {
+                this.context.rootThemeIds.push(newTheme.id);
+            }
+        }
+    }
+    getRootThemes() {
+        return this.context.rootThemeIds
+            .map((id) => this.context.themes.get(id))
+            .filter((theme) => theme !== undefined);
+    }
+    getProcessingState() {
+        return this.context.processingState;
+    }
+    setProcessingState(state) {
+        this.context.processingState = state;
+    }
+}
 class ThemeService {
     constructor(anthropicApiKey) {
         this.anthropicApiKey = anthropicApiKey;
     }
     async analyzeThemes(changedFiles) {
+        const startTime = Date.now();
         const analysisResult = {
             themes: [],
             summary: `Analysis of ${changedFiles.length} changed files`,
             changedFilesCount: changedFiles.length,
             analysisTimestamp: new Date(),
             totalThemes: 0,
-            themesByScope: {
-                flow: 0,
-                feature: 0,
-                module: 0,
-                class: 0,
-                function: 0,
-                component: 0,
+            processingTime: 0,
+            expandable: {
+                hasChildThemes: false,
+                canDrillDown: false,
             },
         };
         if (changedFiles.length === 0) {
             analysisResult.summary = 'No files changed in this PR';
             return analysisResult;
         }
-        // TODO: Implement adaptive theme detection
-        // This will analyze code changes to automatically determine optimal theme granularity:
-        // 1. Detect cross-file flows (authentication, checkout, etc.)
-        // 2. Identify feature-level changes (password reset, filtering, etc.)
-        // 3. Find module-level updates (entire service refactor)
-        // 4. Pinpoint class/function/component specific changes
-        // 5. Build hierarchical relationships between themes
-        // 6. Determine impact levels and confidence scores
-        const themes = await this.detectThemes(changedFiles);
-        analysisResult.themes = themes;
-        analysisResult.totalThemes = themes.length;
-        // Count themes by scope
-        themes.forEach((theme) => {
-            analysisResult.themesByScope[theme.scope]++;
-        });
+        try {
+            const contextManager = new ThemeContextManager(this.anthropicApiKey);
+            const chunkProcessor = new ChunkProcessor();
+            contextManager.setProcessingState('processing');
+            const chunks = chunkProcessor.splitChangedFiles(changedFiles);
+            for (const chunk of chunks) {
+                await contextManager.processChunk(chunk);
+            }
+            contextManager.setProcessingState('complete');
+            const themes = contextManager.getRootThemes();
+            analysisResult.themes = themes;
+            analysisResult.totalThemes = themes.length;
+            analysisResult.processingTime = Date.now() - startTime;
+            if (themes.length > 0) {
+                analysisResult.summary = `Discovered ${themes.length} themes: ${themes
+                    .map((t) => t.name)
+                    .join(', ')}`;
+                analysisResult.expandable.canDrillDown = true;
+            }
+        }
+        catch (error) {
+            console.error('Theme analysis failed:', error);
+            analysisResult.summary = 'Theme analysis failed - using fallback';
+            analysisResult.themes = this.createFallbackThemes(changedFiles);
+            analysisResult.totalThemes = analysisResult.themes.length;
+        }
+        analysisResult.processingTime = Date.now() - startTime;
         return analysisResult;
     }
-    async detectThemes(changedFiles) {
-        // TODO: Implement theme detection logic
-        // For now, return placeholder theme
+    createFallbackThemes(changedFiles) {
         return [
             {
-                id: 'placeholder-1',
-                name: 'Code Changes Detected',
-                scope: 'feature',
-                description: 'Placeholder theme until detection is implemented',
-                impactLevel: 'medium',
+                id: 'fallback-theme',
+                name: 'Code Changes',
+                description: 'Fallback theme when analysis fails',
+                level: 0,
+                childIds: [],
                 affectedFiles: changedFiles.map((f) => f.filename),
-                children: [],
-                relatedThemes: [],
-                confidence: 0.5,
+                codeSnippets: [],
+                confidence: 0.3,
+                context: 'Analysis failed, manual review recommended',
+                lastAnalysis: new Date(),
             },
         ];
     }
