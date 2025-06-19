@@ -29995,17 +29995,28 @@ async function run() {
         const themeAnalysis = await themeService.analyzeThemes(changedFiles);
         // Output results (GitHub Actions will log these)
         try {
-            // Simplified outputs to avoid delimiter issues
+            // Create detailed theme output
             const themeCount = themeAnalysis.themes.length;
-            const themeNames = themeAnalysis.themes.map(t => t.name).slice(0, 5).join(', ');
+            let detailedThemes = `Found ${themeCount} themes:\\n`;
+            themeAnalysis.themes.forEach((theme, index) => {
+                const confidence = (theme.confidence * 100).toFixed(0);
+                const files = theme.affectedFiles.slice(0, 3).join(', ');
+                const moreFiles = theme.affectedFiles.length > 3 ? ` (+${theme.affectedFiles.length - 3} more)` : '';
+                detailedThemes += `\\n${index + 1}. **${theme.name}** (${confidence}% confidence)`;
+                detailedThemes += `\\n   - Files: ${files}${moreFiles}`;
+                detailedThemes += `\\n   - ${theme.description.replace(/[\r\n]/g, ' ').trim()}`;
+                if (theme.childThemes && theme.childThemes.length > 0) {
+                    detailedThemes += `\\n   - Contains ${theme.childThemes.length} sub-themes`;
+                }
+            });
             const safeSummary = themeAnalysis.summary.replace(/[\r\n]/g, ' ').trim();
-            core.setOutput('themes', `${themeCount} themes: ${themeNames}`);
+            core.setOutput('themes', detailedThemes);
             core.setOutput('summary', safeSummary);
-            (0, utils_1.logInfo)(`Set outputs - themes: ${themeCount}, summary length: ${safeSummary.length}`);
+            (0, utils_1.logInfo)(`Set outputs - ${themeCount} themes with details`);
         }
         catch (error) {
             (0, utils_1.logInfo)(`Failed to set outputs: ${error}`);
-            core.setOutput('themes', '0 themes');
+            core.setOutput('themes', 'No themes found');
             core.setOutput('summary', 'Output generation failed');
         }
         (0, utils_1.logInfo)(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
