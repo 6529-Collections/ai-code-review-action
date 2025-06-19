@@ -1,0 +1,460 @@
+import { Theme } from './theme-service';
+
+export interface SimilarityMetrics {
+  nameScore: number; // 0-1 based on theme name similarity
+  descriptionScore: number; // 0-1 based on description similarity
+  fileOverlap: number; // 0-1 based on affected files overlap
+  patternScore: number; // 0-1 based on code pattern similarity
+  businessScore: number; // 0-1 based on business impact similarity
+  combinedScore: number; // Weighted combination
+}
+
+export interface ConsolidatedTheme {
+  id: string;
+  name: string;
+  description: string;
+  level: number; // 0=root, 1=child, 2=grandchild
+  parentId?: string;
+  childThemes: ConsolidatedTheme[];
+
+  // Consolidated data from child themes
+  affectedFiles: string[];
+  confidence: number; // Average of child confidences
+  businessImpact: string; // Combined business impact
+  codeSnippets: string[];
+  context: string;
+  lastAnalysis: Date;
+
+  // Consolidation metadata
+  sourceThemes: string[]; // IDs of original themes
+  consolidationMethod: 'merge' | 'hierarchy' | 'single';
+}
+
+export interface ConsolidationConfig {
+  similarityThreshold: number; // 0.8 - threshold for merging
+  maxThemesPerParent: number; // 5 - max child themes
+  minThemesForParent: number; // 2 - min themes to create parent
+  confidenceWeight: number; // 0.3 - how much confidence affects merging
+  businessDomainWeight: number; // 0.4 - importance of business similarity
+}
+
+export interface MergeDecision {
+  action: 'merge' | 'group_under_parent' | 'keep_separate';
+  confidence: number;
+  reason: string;
+  targetThemeId?: string;
+}
+
+export class ThemeSimilarityService {
+  private config: ConsolidationConfig;
+
+  constructor(config?: Partial<ConsolidationConfig>) {
+    this.config = {
+      similarityThreshold: 0.8,
+      maxThemesPerParent: 5,
+      minThemesForParent: 2,
+      confidenceWeight: 0.3,
+      businessDomainWeight: 0.4,
+      ...config,
+    };
+  }
+
+  calculateSimilarity(theme1: Theme, theme2: Theme): SimilarityMetrics {
+    const nameScore = this.calculateNameSimilarity(theme1.name, theme2.name);
+    const descriptionScore = this.calculateDescriptionSimilarity(
+      theme1.description,
+      theme2.description
+    );
+    const fileOverlap = this.calculateFileOverlap(
+      theme1.affectedFiles,
+      theme2.affectedFiles
+    );
+    const patternScore = this.calculatePatternSimilarity(theme1, theme2);
+    const businessScore = this.calculateBusinessSimilarity(theme1, theme2);
+
+    // Weighted combination
+    const combinedScore =
+      nameScore * 0.25 +
+      descriptionScore * 0.25 +
+      fileOverlap * 0.2 +
+      patternScore * 0.15 +
+      businessScore * 0.15;
+
+    return {
+      nameScore,
+      descriptionScore,
+      fileOverlap,
+      patternScore,
+      businessScore,
+      combinedScore,
+    };
+  }
+
+  shouldMerge(
+    similarity: SimilarityMetrics,
+    theme1: Theme,
+    theme2: Theme
+  ): MergeDecision {
+    // High similarity themes
+    if (similarity.combinedScore >= this.config.similarityThreshold) {
+      return {
+        action: 'merge',
+        confidence: similarity.combinedScore,
+        reason: `High similarity score: ${similarity.combinedScore.toFixed(2)}`,
+      };
+    }
+
+    // Business domain similarity with file overlap
+    if (
+      similarity.businessScore > 0.7 &&
+      similarity.fileOverlap > 0.3 &&
+      similarity.nameScore > 0.5
+    ) {
+      return {
+        action: 'group_under_parent',
+        confidence:
+          (similarity.businessScore +
+            similarity.fileOverlap +
+            similarity.nameScore) /
+          3,
+        reason: 'Related business domain with file overlap',
+      };
+    }
+
+    // Exact name matches (different files)
+    if (similarity.nameScore > 0.9 && similarity.fileOverlap < 0.5) {
+      return {
+        action: 'group_under_parent',
+        confidence: similarity.nameScore,
+        reason: 'Same operation on different files',
+      };
+    }
+
+    return {
+      action: 'keep_separate',
+      confidence: similarity.combinedScore,
+      reason: 'Insufficient similarity for consolidation',
+    };
+  }
+
+  consolidateThemes(themes: Theme[]): ConsolidatedTheme[] {
+    if (themes.length === 0) return [];
+
+    // Step 1: Find merge candidates
+    const mergeGroups = this.findMergeGroups(themes);
+
+    // Step 2: Create consolidated themes
+    const consolidated = this.createConsolidatedThemes(mergeGroups, themes);
+
+    // Step 3: Build hierarchies
+    const hierarchical = this.buildHierarchies(consolidated);
+
+    return hierarchical;
+  }
+
+  private findMergeGroups(themes: Theme[]): Map<string, string[]> {
+    const mergeGroups = new Map<string, string[]>();
+    const processed = new Set<string>();
+
+    for (let i = 0; i < themes.length; i++) {
+      const theme1 = themes[i];
+
+      if (processed.has(theme1.id)) continue;
+
+      const group = [theme1.id];
+      processed.add(theme1.id);
+
+      for (let j = i + 1; j < themes.length; j++) {
+        const theme2 = themes[j];
+
+        if (processed.has(theme2.id)) continue;
+
+        const similarity = this.calculateSimilarity(theme1, theme2);
+        const decision = this.shouldMerge(similarity, theme1, theme2);
+
+        if (decision.action === 'merge') {
+          group.push(theme2.id);
+          processed.add(theme2.id);
+        }
+      }
+
+      mergeGroups.set(theme1.id, group);
+    }
+
+    return mergeGroups;
+  }
+
+  private createConsolidatedThemes(
+    mergeGroups: Map<string, string[]>,
+    themes: Theme[]
+  ): ConsolidatedTheme[] {
+    const themeMap = new Map<string, Theme>();
+    themes.forEach((theme) => themeMap.set(theme.id, theme));
+
+    const consolidated: ConsolidatedTheme[] = [];
+
+    for (const [leadId, groupIds] of mergeGroups) {
+      const groupThemes = groupIds.map((id) => themeMap.get(id)!);
+
+      if (groupThemes.length === 1) {
+        // Single theme - convert to consolidated format
+        const theme = groupThemes[0];
+        consolidated.push(this.themeToConsolidated(theme));
+      } else {
+        // Multiple themes - merge them
+        consolidated.push(this.mergeThemes(groupThemes));
+      }
+    }
+
+    return consolidated;
+  }
+
+  private buildHierarchies(themes: ConsolidatedTheme[]): ConsolidatedTheme[] {
+    // Group themes by business domain
+    const domainGroups = this.groupByBusinessDomain(themes);
+    const result: ConsolidatedTheme[] = [];
+
+    for (const [domain, domainThemes] of domainGroups) {
+      if (domainThemes.length >= this.config.minThemesForParent) {
+        // Create parent theme
+        const parentTheme = this.createParentTheme(domain, domainThemes);
+
+        // Set children
+        domainThemes.forEach((child) => {
+          child.level = 1;
+          child.parentId = parentTheme.id;
+        });
+
+        parentTheme.childThemes = domainThemes;
+        result.push(parentTheme);
+      } else {
+        // Keep as root themes
+        result.push(...domainThemes);
+      }
+    }
+
+    return result;
+  }
+
+  private groupByBusinessDomain(
+    themes: ConsolidatedTheme[]
+  ): Map<string, ConsolidatedTheme[]> {
+    const domains = new Map<string, ConsolidatedTheme[]>();
+
+    for (const theme of themes) {
+      const domain = this.extractBusinessDomain(theme.name, theme.description);
+
+      if (!domains.has(domain)) {
+        domains.set(domain, []);
+      }
+      domains.get(domain)!.push(theme);
+    }
+
+    return domains;
+  }
+
+  private extractBusinessDomain(name: string, description: string): string {
+    const text = (name + ' ' + description).toLowerCase();
+
+    // Business domain keywords
+    if (text.includes('greeting') || text.includes('demo')) {
+      return 'Remove Demo Functionality';
+    }
+    if (text.includes('service') || text.includes('architecture')) {
+      return 'Service Architecture';
+    }
+    if (text.includes('git') || text.includes('repository')) {
+      return 'Git Integration';
+    }
+    if (text.includes('theme') || text.includes('analysis')) {
+      return 'Theme Analysis';
+    }
+    if (text.includes('test') || text.includes('validation')) {
+      return 'Testing & Validation';
+    }
+    if (text.includes('interface') || text.includes('type')) {
+      return 'Interface Changes';
+    }
+    if (text.includes('workflow') || text.includes('action')) {
+      return 'Workflow Configuration';
+    }
+
+    return 'General Changes';
+  }
+
+  private createParentTheme(
+    domain: string,
+    children: ConsolidatedTheme[]
+  ): ConsolidatedTheme {
+    const allFiles = new Set<string>();
+    const allSnippets: string[] = [];
+    let totalConfidence = 0;
+    const sourceThemes: string[] = [];
+
+    children.forEach((child) => {
+      child.affectedFiles.forEach((file) => allFiles.add(file));
+      allSnippets.push(...child.codeSnippets);
+      totalConfidence += child.confidence;
+      sourceThemes.push(...child.sourceThemes);
+    });
+
+    return {
+      id: `parent-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      name: domain,
+      description: `Consolidated theme for ${children.length} related changes: ${children.map((c) => c.name).join(', ')}`,
+      level: 0,
+      childThemes: [],
+      affectedFiles: Array.from(allFiles),
+      confidence: totalConfidence / children.length,
+      businessImpact: `Umbrella theme covering ${children.length} related changes in ${domain.toLowerCase()}`,
+      codeSnippets: allSnippets.slice(0, 10), // Limit snippets
+      context: children.map((c) => c.context).join('\n'),
+      lastAnalysis: new Date(),
+      sourceThemes,
+      consolidationMethod: 'hierarchy',
+    };
+  }
+
+  private themeToConsolidated(theme: Theme): ConsolidatedTheme {
+    return {
+      id: theme.id,
+      name: theme.name,
+      description: theme.description,
+      level: 0,
+      childThemes: [],
+      affectedFiles: theme.affectedFiles,
+      confidence: theme.confidence,
+      businessImpact: theme.description,
+      codeSnippets: theme.codeSnippets,
+      context: theme.context,
+      lastAnalysis: theme.lastAnalysis,
+      sourceThemes: [theme.id],
+      consolidationMethod: 'single',
+    };
+  }
+
+  private mergeThemes(themes: Theme[]): ConsolidatedTheme {
+    const allFiles = new Set<string>();
+    const allSnippets: string[] = [];
+    let totalConfidence = 0;
+
+    themes.forEach((theme) => {
+      theme.affectedFiles.forEach((file) => allFiles.add(file));
+      allSnippets.push(...theme.codeSnippets);
+      totalConfidence += theme.confidence;
+    });
+
+    const leadTheme = themes[0];
+
+    return {
+      id: `merged-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      name: leadTheme.name,
+      description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
+      level: 0,
+      childThemes: [],
+      affectedFiles: Array.from(allFiles),
+      confidence: totalConfidence / themes.length,
+      businessImpact: themes.map((t) => t.description).join('; '),
+      codeSnippets: allSnippets,
+      context: themes.map((t) => t.context).join('\n'),
+      lastAnalysis: new Date(),
+      sourceThemes: themes.map((t) => t.id),
+      consolidationMethod: 'merge',
+    };
+  }
+
+  private calculateNameSimilarity(name1: string, name2: string): number {
+    const words1 = name1.toLowerCase().split(/\s+/);
+    const words2 = name2.toLowerCase().split(/\s+/);
+
+    const intersection = words1.filter((word) => words2.includes(word));
+    const union = new Set([...words1, ...words2]);
+
+    return intersection.length / union.size;
+  }
+
+  private calculateDescriptionSimilarity(desc1: string, desc2: string): number {
+    const words1 = desc1.toLowerCase().split(/\s+/);
+    const words2 = desc2.toLowerCase().split(/\s+/);
+
+    const intersection = words1.filter((word) => words2.includes(word));
+    const union = new Set([...words1, ...words2]);
+
+    return intersection.length / union.size;
+  }
+
+  private calculateFileOverlap(files1: string[], files2: string[]): number {
+    const set1 = new Set(files1);
+    const set2 = new Set(files2);
+
+    const intersection = new Set([...set1].filter((file) => set2.has(file)));
+    const union = new Set([...set1, ...set2]);
+
+    return union.size === 0 ? 0 : intersection.size / union.size;
+  }
+
+  private calculatePatternSimilarity(theme1: Theme, theme2: Theme): number {
+    // Extract patterns from context
+    const patterns1 = this.extractPatterns(theme1.context);
+    const patterns2 = this.extractPatterns(theme2.context);
+
+    const intersection = patterns1.filter((p) => patterns2.includes(p));
+    const union = new Set([...patterns1, ...patterns2]);
+
+    return union.size === 0 ? 0 : intersection.length / union.size;
+  }
+
+  private calculateBusinessSimilarity(theme1: Theme, theme2: Theme): number {
+    const business1 = this.extractBusinessKeywords(theme1.description);
+    const business2 = this.extractBusinessKeywords(theme2.description);
+
+    const intersection = business1.filter((k) => business2.includes(k));
+    const union = new Set([...business1, ...business2]);
+
+    return union.size === 0 ? 0 : intersection.length / union.size;
+  }
+
+  private extractPatterns(context: string): string[] {
+    const patterns: string[] = [];
+    const text = context.toLowerCase();
+
+    if (text.includes('add') || text.includes('implement'))
+      patterns.push('addition');
+    if (text.includes('remove') || text.includes('delete'))
+      patterns.push('removal');
+    if (text.includes('update') || text.includes('modify'))
+      patterns.push('modification');
+    if (text.includes('refactor')) patterns.push('refactoring');
+    if (text.includes('interface') || text.includes('type'))
+      patterns.push('type_definition');
+    if (text.includes('service') || text.includes('class'))
+      patterns.push('service_implementation');
+    if (text.includes('test')) patterns.push('testing');
+    if (text.includes('configuration') || text.includes('config'))
+      patterns.push('configuration');
+
+    return patterns;
+  }
+
+  private extractBusinessKeywords(description: string): string[] {
+    const keywords: string[] = [];
+    const text = description.toLowerCase();
+
+    if (text.includes('greeting')) keywords.push('greeting');
+    if (text.includes('authentication') || text.includes('auth'))
+      keywords.push('authentication');
+    if (text.includes('user') || text.includes('customer'))
+      keywords.push('user_experience');
+    if (text.includes('api') || text.includes('service'))
+      keywords.push('api_service');
+    if (text.includes('data') || text.includes('storage'))
+      keywords.push('data_management');
+    if (text.includes('security')) keywords.push('security');
+    if (text.includes('performance')) keywords.push('performance');
+    if (text.includes('integration')) keywords.push('integration');
+    if (text.includes('workflow') || text.includes('process'))
+      keywords.push('workflow');
+
+    return keywords;
+  }
+}

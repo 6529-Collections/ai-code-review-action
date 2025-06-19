@@ -3,7 +3,12 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { AnalysisLogger } from '../utils/analysis-logger';
+import { AnalysisLogger, ClaudeCall } from '../utils/analysis-logger';
+import {
+  ThemeSimilarityService,
+  ConsolidatedTheme,
+  ConsolidationConfig,
+} from './theme-similarity';
 
 export interface Theme {
   id: string;
@@ -53,15 +58,23 @@ export interface LiveContext {
 }
 
 export interface ThemeAnalysisResult {
-  themes: Theme[];
+  themes: ConsolidatedTheme[];
+  originalThemes: Theme[];
   summary: string;
   changedFilesCount: number;
   analysisTimestamp: Date;
   totalThemes: number;
+  originalThemeCount: number;
   processingTime: number;
+  consolidationTime: number;
   expandable: {
     hasChildThemes: boolean;
     canDrillDown: boolean;
+  };
+  consolidationStats: {
+    mergedThemes: number;
+    hierarchicalThemes: number;
+    consolidationRatio: number;
   };
 }
 
@@ -319,10 +332,15 @@ class ThemeContextManager {
 }
 
 export class ThemeService {
+  private similarityService: ThemeSimilarityService;
+
   constructor(
     private readonly anthropicApiKey: string,
-    private readonly logger?: AnalysisLogger
-  ) {}
+    private readonly logger?: AnalysisLogger,
+    consolidationConfig?: Partial<ConsolidationConfig>
+  ) {
+    this.similarityService = new ThemeSimilarityService(consolidationConfig);
+  }
 
   async analyzeThemes(
     changedFiles: ChangedFile[]
@@ -331,14 +349,22 @@ export class ThemeService {
 
     const analysisResult: ThemeAnalysisResult = {
       themes: [],
+      originalThemes: [],
       summary: `Analysis of ${changedFiles.length} changed files`,
       changedFilesCount: changedFiles.length,
       analysisTimestamp: new Date(),
       totalThemes: 0,
+      originalThemeCount: 0,
       processingTime: 0,
+      consolidationTime: 0,
       expandable: {
         hasChildThemes: false,
         canDrillDown: false,
+      },
+      consolidationStats: {
+        mergedThemes: 0,
+        hierarchicalThemes: 0,
+        consolidationRatio: 0,
       },
     };
 
@@ -364,26 +390,70 @@ export class ThemeService {
 
       contextManager.setProcessingState('complete');
 
-      const themes = contextManager.getRootThemes();
-      analysisResult.themes = themes;
-      analysisResult.totalThemes = themes.length;
-      analysisResult.processingTime = Date.now() - startTime;
+      const originalThemes = contextManager.getRootThemes();
+      const consolidationStartTime = Date.now();
 
-      // Log final results
+      // Apply theme consolidation
+      const consolidatedThemes =
+        this.similarityService.consolidateThemes(originalThemes);
+      const consolidationTime = Date.now() - consolidationStartTime;
+
+      // Calculate consolidation stats
+      const mergedThemes = consolidatedThemes.filter(
+        (t) => t.consolidationMethod === 'merge'
+      ).length;
+      const hierarchicalThemes = consolidatedThemes.filter(
+        (t) => t.childThemes.length > 0
+      ).length;
+      const consolidationRatio =
+        originalThemes.length > 0
+          ? (originalThemes.length - consolidatedThemes.length) /
+            originalThemes.length
+          : 0;
+
+      analysisResult.originalThemes = originalThemes;
+      analysisResult.themes = consolidatedThemes;
+      analysisResult.totalThemes = consolidatedThemes.length;
+      analysisResult.originalThemeCount = originalThemes.length;
+      analysisResult.processingTime = Date.now() - startTime;
+      analysisResult.consolidationTime = consolidationTime;
+      analysisResult.consolidationStats = {
+        mergedThemes,
+        hierarchicalThemes,
+        consolidationRatio,
+      };
+
+      // Log final results (use consolidated themes for main output)
       if (this.logger) {
-        this.logger.logResult(themes);
+        this.logger.logResult(originalThemes); // Log original themes for analysis
+        this.logger.logConsolidatedResult(consolidatedThemes); // Log consolidated themes
       }
 
-      if (themes.length > 0) {
-        analysisResult.summary = `Discovered ${themes.length} themes: ${themes
-          .map((t) => t.name)
-          .join(', ')}`;
+      if (consolidatedThemes.length > 0) {
+        const hasHierarchy = consolidatedThemes.some(
+          (t) => t.childThemes.length > 0
+        );
+        analysisResult.summary =
+          `Discovered ${consolidatedThemes.length} consolidated themes` +
+          (originalThemes.length !== consolidatedThemes.length
+            ? ` (consolidated from ${originalThemes.length} original themes)`
+            : '') +
+          `: ${consolidatedThemes.map((t) => t.name).join(', ')}`;
         analysisResult.expandable.canDrillDown = true;
+        analysisResult.expandable.hasChildThemes = hasHierarchy;
       }
     } catch (error) {
       console.error('Theme analysis failed:', error);
       analysisResult.summary = 'Theme analysis failed - using fallback';
-      analysisResult.themes = this.createFallbackThemes(changedFiles);
+      const fallbackThemes = this.createFallbackThemes(changedFiles);
+      analysisResult.themes = fallbackThemes.map((theme) => ({
+        ...theme,
+        level: 0,
+        childThemes: [],
+        businessImpact: theme.description,
+        sourceThemes: [theme.id],
+        consolidationMethod: 'single' as const,
+      }));
       analysisResult.totalThemes = analysisResult.themes.length;
     }
 

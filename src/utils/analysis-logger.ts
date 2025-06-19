@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ChangedFile } from '../services/git-service';
 import { Theme } from '../services/theme-service';
+import { ConsolidatedTheme } from '../services/theme-similarity';
 
 export interface ClaudeCall {
   filename: string;
@@ -15,6 +16,7 @@ export class AnalysisLogger {
   private diffs: ChangedFile[] = [];
   private claudeCalls: ClaudeCall[] = [];
   private themes: Theme[] = [];
+  private consolidatedThemes: ConsolidatedTheme[] = [];
   private startTime: number;
 
   constructor() {
@@ -31,6 +33,10 @@ export class AnalysisLogger {
 
   logResult(themes: Theme[]): void {
     this.themes = themes;
+  }
+
+  logConsolidatedResult(themes: ConsolidatedTheme[]): void {
+    this.consolidatedThemes = themes;
   }
 
   generateReport(): void {
@@ -98,14 +104,47 @@ export class AnalysisLogger {
 
     // Results section
     report += `=== RESULTS ===\n`;
-    report += `Themes: ${this.themes.length} detected\n`;
-    for (const theme of this.themes) {
-      report += `- ${theme.name} (${theme.confidence})\n`;
+
+    if (this.consolidatedThemes.length > 0) {
+      report += `Original Themes: ${this.themes.length} detected\n`;
+      report += `Consolidated Themes: ${this.consolidatedThemes.length} final\n`;
+
+      const consolidationRatio =
+        this.themes.length > 0
+          ? (
+              ((this.themes.length - this.consolidatedThemes.length) /
+                this.themes.length) *
+              100
+            ).toFixed(1)
+          : '0';
+      report += `Consolidation: ${consolidationRatio}% reduction\n\n`;
+
+      for (const theme of this.consolidatedThemes) {
+        const indent = '  '.repeat(theme.level);
+        report += `${indent}- ${theme.name} (${theme.confidence.toFixed(2)})`;
+        if (theme.consolidationMethod === 'merge') {
+          report += ` [MERGED from ${theme.sourceThemes.length} themes]`;
+        } else if (theme.childThemes.length > 0) {
+          report += ` [PARENT of ${theme.childThemes.length} themes]`;
+        }
+        report += `\n`;
+
+        // Add child themes
+        for (const child of theme.childThemes) {
+          const childIndent = '  '.repeat(child.level);
+          report += `${childIndent}- ${child.name} (${child.confidence.toFixed(2)})\n`;
+        }
+      }
+    } else {
+      report += `Themes: ${this.themes.length} detected\n`;
+      for (const theme of this.themes) {
+        report += `- ${theme.name} (${theme.confidence})\n`;
+      }
     }
 
     const successful = this.claudeCalls.filter((c) => c.success).length;
     const total = this.claudeCalls.length;
-    report += `API: ${successful}/${total} successful\n`;
+    report += `\nAPI: ${successful}/${total} successful\n`;
 
     return report;
   }
