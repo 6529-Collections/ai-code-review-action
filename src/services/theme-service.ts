@@ -1,5 +1,8 @@
 import { ChangedFile } from './git-service';
 import * as exec from '@actions/exec';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 export interface Theme {
   id: string;
@@ -70,16 +73,26 @@ class ClaudeService {
   ): Promise<ChunkAnalysis> {
     try {
       const prompt = this.buildAnalysisPrompt(chunk, context);
-      const command = `echo "${this.escapeForShell(prompt)}" | claude --files ${chunk.filename}`;
+
+      // Use a temporary file approach instead of echo to avoid shell escaping issues
+
+      const tempFile = path.join(
+        os.tmpdir(),
+        `claude-prompt-${Date.now()}.txt`
+      );
+      fs.writeFileSync(tempFile, prompt);
 
       let output = '';
-      await exec.exec('bash', ['-c', command], {
+      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
         listeners: {
           stdout: (data: Buffer) => {
             output += data.toString();
           },
         },
       });
+
+      // Clean up temp file
+      fs.unlinkSync(tempFile);
 
       return this.parseClaudeResponse(output);
     } catch (error) {
@@ -89,26 +102,29 @@ class ClaudeService {
   }
 
   private buildAnalysisPrompt(chunk: CodeChunk, context: string): string {
+    // Limit content length to avoid overwhelming Claude
+    const maxContentLength = 2000;
+    const truncatedContent =
+      chunk.content.length > maxContentLength
+        ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
+        : chunk.content;
+
     return `${context}
 
-Analyze this code change in ${chunk.filename}:
-${chunk.content}
+Analyze this code change in file: ${chunk.filename}
 
-With full repository context, provide analysis in this JSON format:
+Code changes:
+${truncatedContent}
+
+Please provide analysis in this exact JSON format (no other text):
 {
-  "themeName": "descriptive name for what this change does",
-  "description": "detailed explanation of the change and its purpose",
+  "themeName": "brief name for what this change does",
+  "description": "explanation of the change purpose",
   "businessImpact": "what business functionality this affects",
-  "suggestedParent": "name of existing theme this might belong to (or null for new root theme)",
-  "confidence": 0.85,
-  "codePattern": "what coding pattern or architecture this represents"
-}
-
-Focus on business logic and functionality, not technical file types.`;
-  }
-
-  private escapeForShell(text: string): string {
-    return text.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  "suggestedParent": null,
+  "confidence": 0.8,
+  "codePattern": "what pattern this represents"
+}`;
   }
 
   private parseClaudeResponse(output: string): ChunkAnalysis {

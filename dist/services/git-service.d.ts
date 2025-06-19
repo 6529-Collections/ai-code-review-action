@@ -18,6 +18,13 @@ export declare class GitService {
     private readonly githubToken;
     constructor(githubToken: string);
     getPullRequestContext(): Promise<PullRequestContext | null>;
+    private createDevModeContext;
+    private getCurrentBranch;
+    private getCurrentCommitSha;
+    private getBranchCommitSha;
     getChangedFiles(): Promise<ChangedFile[]>;
+    private getChangedFilesFromGitHub;
+    private getChangedFilesFromGit;
+    private mapGitStatusToChangedFileStatus;
     getDiffContent(baseSha: string, headSha: string): Promise<string>;
 }

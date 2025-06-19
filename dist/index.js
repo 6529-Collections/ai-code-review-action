@@ -29975,8 +29975,14 @@ async function run() {
         const gitService = new git_service_1.GitService(inputs.githubToken || '');
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
         // Get PR context and changed files
-        await gitService.getPullRequestContext();
+        const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
+        // Log dev mode info
+        if (prContext && prContext.number === 0) {
+            (0, utils_1.logInfo)(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
+            (0, utils_1.logInfo)(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
+            (0, utils_1.logInfo)(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
+        }
         (0, utils_1.logInfo)(`Found ${changedFiles.length} changed files`);
         if (changedFiles.length === 0) {
             (0, utils_1.logInfo)('No files changed, skipping analysis');
@@ -30051,36 +30057,110 @@ class GitService {
         this.githubToken = githubToken;
     }
     async getPullRequestContext() {
-        if (github.context.eventName !== 'pull_request') {
+        // Check if we're in a GitHub Actions PR context
+        if (github.context.eventName === 'pull_request') {
+            const pr = github.context.payload.pull_request;
+            if (pr) {
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+        }
+        // Dev mode: create synthetic PR context from local git
+        return await this.createDevModeContext();
+    }
+    async createDevModeContext() {
+        try {
+            const currentBranch = await this.getCurrentBranch();
+            const baseBranch = 'main'; // Default comparison branch
+            const headSha = await this.getCurrentCommitSha();
+            const baseSha = await this.getBranchCommitSha(baseBranch);
+            return {
+                number: 0, // Synthetic PR number
+                title: `Local changes on ${currentBranch}`,
+                body: 'Development mode - comparing local changes against main branch',
+                baseBranch,
+                headBranch: currentBranch,
+                baseSha,
+                headSha,
+            };
+        }
+        catch (error) {
+            console.warn('Failed to create dev mode context:', error);
             return null;
         }
-        const pr = github.context.payload.pull_request;
-        if (!pr) {
-            return null;
+    }
+    async getCurrentBranch() {
+        let branch = '';
+        await exec.exec('git', ['branch', '--show-current'], {
+            listeners: {
+                stdout: (data) => {
+                    branch += data.toString().trim();
+                },
+            },
+        });
+        return branch || 'unknown';
+    }
+    async getCurrentCommitSha() {
+        let sha = '';
+        await exec.exec('git', ['rev-parse', 'HEAD'], {
+            listeners: {
+                stdout: (data) => {
+                    sha += data.toString().trim();
+                },
+            },
+        });
+        return sha;
+    }
+    async getBranchCommitSha(branch) {
+        let sha = '';
+        try {
+            await exec.exec('git', ['rev-parse', `origin/${branch}`], {
+                listeners: {
+                    stdout: (data) => {
+                        sha += data.toString().trim();
+                    },
+                },
+            });
         }
-        return {
-            number: pr.number,
-            title: pr.title,
-            body: pr.body || '',
-            baseBranch: pr.base.ref,
-            headBranch: pr.head.ref,
-            baseSha: pr.base.sha,
-            headSha: pr.head.sha,
-        };
+        catch (error) {
+            // Fallback to local branch if remote doesn't exist
+            await exec.exec('git', ['rev-parse', branch], {
+                listeners: {
+                    stdout: (data) => {
+                        sha += data.toString().trim();
+                    },
+                },
+            });
+        }
+        return sha;
     }
     async getChangedFiles() {
         const prContext = await this.getPullRequestContext();
         if (!prContext) {
             return [];
         }
-        if (!this.githubToken) {
-            return [];
+        // GitHub Actions PR mode - use GitHub API
+        if (github.context.eventName === 'pull_request' &&
+            this.githubToken &&
+            prContext.number > 0) {
+            return await this.getChangedFilesFromGitHub(prContext.number);
         }
-        const octokit = github.getOctokit(this.githubToken);
+        // Dev mode - use git commands
+        return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
+    }
+    async getChangedFilesFromGitHub(prNumber) {
         try {
+            const octokit = github.getOctokit(this.githubToken);
             const { data: files } = await octokit.rest.pulls.listFiles({
                 ...github.context.repo,
-                pull_number: prContext.number,
+                pull_number: prNumber,
             });
             return files.map((file) => ({
                 filename: file.filename,
@@ -30091,8 +30171,75 @@ class GitService {
             }));
         }
         catch (error) {
-            console.error('Failed to get changed files:', error);
+            console.error('Failed to get changed files from GitHub:', error);
             return [];
+        }
+    }
+    async getChangedFilesFromGit(baseSha, headSha) {
+        try {
+            const files = [];
+            // Get list of changed files with status
+            let fileList = '';
+            await exec.exec('git', ['diff', '--name-status', `${baseSha}...${headSha}`], {
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+            // Parse file status
+            const fileLines = fileList
+                .trim()
+                .split('\n')
+                .filter((line) => line.trim());
+            for (const line of fileLines) {
+                const [status, filename] = line.split('\t');
+                if (!filename)
+                    continue;
+                // Get diff patch for this file
+                let patch = '';
+                try {
+                    await exec.exec('git', ['diff', `${baseSha}...${headSha}`, '--', filename], {
+                        listeners: {
+                            stdout: (data) => {
+                                patch += data.toString();
+                            },
+                        },
+                    });
+                }
+                catch (error) {
+                    console.warn(`Failed to get patch for ${filename}:`, error);
+                }
+                // Count additions/deletions from patch
+                const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
+                const deletions = (patch.match(/^-(?!-)/gm) || []).length;
+                files.push({
+                    filename,
+                    status: this.mapGitStatusToChangedFileStatus(status),
+                    additions,
+                    deletions,
+                    patch,
+                });
+            }
+            return files;
+        }
+        catch (error) {
+            console.error('Failed to get changed files from git:', error);
+            return [];
+        }
+    }
+    mapGitStatusToChangedFileStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'D':
+                return 'removed';
+            case 'M':
+                return 'modified';
+            case 'R':
+                return 'renamed';
+            default:
+                return 'modified';
         }
     }
     async getDiffContent(baseSha, headSha) {
@@ -30158,6 +30305,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const os = __importStar(__nccwpck_require__(857));
 class ClaudeService {
     constructor(apiKey) {
         this.apiKey = apiKey;
@@ -30165,15 +30315,19 @@ class ClaudeService {
     async analyzeChunk(chunk, context) {
         try {
             const prompt = this.buildAnalysisPrompt(chunk, context);
-            const command = `echo "${this.escapeForShell(prompt)}" | claude --files ${chunk.filename}`;
+            // Use a temporary file approach instead of echo to avoid shell escaping issues
+            const tempFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}.txt`);
+            fs.writeFileSync(tempFile, prompt);
             let output = '';
-            await exec.exec('bash', ['-c', command], {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
                 listeners: {
                     stdout: (data) => {
                         output += data.toString();
                     },
                 },
             });
+            // Clean up temp file
+            fs.unlinkSync(tempFile);
             return this.parseClaudeResponse(output);
         }
         catch (error) {
@@ -30182,25 +30336,27 @@ class ClaudeService {
         }
     }
     buildAnalysisPrompt(chunk, context) {
+        // Limit content length to avoid overwhelming Claude
+        const maxContentLength = 2000;
+        const truncatedContent = chunk.content.length > maxContentLength
+            ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
+            : chunk.content;
         return `${context}
 
-Analyze this code change in ${chunk.filename}:
-${chunk.content}
+Analyze this code change in file: ${chunk.filename}
 
-With full repository context, provide analysis in this JSON format:
+Code changes:
+${truncatedContent}
+
+Please provide analysis in this exact JSON format (no other text):
 {
-  "themeName": "descriptive name for what this change does",
-  "description": "detailed explanation of the change and its purpose",
+  "themeName": "brief name for what this change does",
+  "description": "explanation of the change purpose",
   "businessImpact": "what business functionality this affects",
-  "suggestedParent": "name of existing theme this might belong to (or null for new root theme)",
-  "confidence": 0.85,
-  "codePattern": "what coding pattern or architecture this represents"
-}
-
-Focus on business logic and functionality, not technical file types.`;
-    }
-    escapeForShell(text) {
-        return text.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  "suggestedParent": null,
+  "confidence": 0.8,
+  "codePattern": "what pattern this represents"
+}`;
     }
     parseClaudeResponse(output) {
         try {

@@ -24,8 +24,15 @@ export async function run(): Promise<void> {
     const themeService = new ThemeService(inputs.anthropicApiKey);
 
     // Get PR context and changed files
-    await gitService.getPullRequestContext();
+    const prContext = await gitService.getPullRequestContext();
     const changedFiles = await gitService.getChangedFiles();
+    
+    // Log dev mode info
+    if (prContext && prContext.number === 0) {
+      logInfo(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
+      logInfo(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
+      logInfo(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
+    }
     
     logInfo(`Found ${changedFiles.length} changed files`);
 
