@@ -50,8 +50,21 @@ export async function run(): Promise<void> {
     const themeAnalysis = await themeService.analyzeThemes(changedFiles);
 
     // Output results (GitHub Actions will log these)
-    core.setOutput('themes', JSON.stringify(themeAnalysis.themes));
-    core.setOutput('summary', themeAnalysis.summary);
+    try {
+      // Simplified outputs to avoid delimiter issues
+      const themeCount = themeAnalysis.themes.length;
+      const themeNames = themeAnalysis.themes.map(t => t.name).slice(0, 5).join(', ');
+      const safeSummary = themeAnalysis.summary.replace(/[\r\n]/g, ' ').trim();
+      
+      core.setOutput('themes', `${themeCount} themes: ${themeNames}`);
+      core.setOutput('summary', safeSummary);
+      
+      logInfo(`Set outputs - themes: ${themeCount}, summary length: ${safeSummary.length}`);
+    } catch (error) {
+      logInfo(`Failed to set outputs: ${error}`);
+      core.setOutput('themes', '0 themes');
+      core.setOutput('summary', 'Output generation failed');
+    }
 
     logInfo(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
     logInfo(`Processing time: ${themeAnalysis.processingTime}ms`);

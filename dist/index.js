@@ -29994,8 +29994,20 @@ async function run() {
         (0, utils_1.logInfo)('Analyzing code themes...');
         const themeAnalysis = await themeService.analyzeThemes(changedFiles);
         // Output results (GitHub Actions will log these)
-        core.setOutput('themes', JSON.stringify(themeAnalysis.themes));
-        core.setOutput('summary', themeAnalysis.summary);
+        try {
+            // Simplified outputs to avoid delimiter issues
+            const themeCount = themeAnalysis.themes.length;
+            const themeNames = themeAnalysis.themes.map(t => t.name).slice(0, 5).join(', ');
+            const safeSummary = themeAnalysis.summary.replace(/[\r\n]/g, ' ').trim();
+            core.setOutput('themes', `${themeCount} themes: ${themeNames}`);
+            core.setOutput('summary', safeSummary);
+            (0, utils_1.logInfo)(`Set outputs - themes: ${themeCount}, summary length: ${safeSummary.length}`);
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Failed to set outputs: ${error}`);
+            core.setOutput('themes', '0 themes');
+            core.setOutput('summary', 'Output generation failed');
+        }
         (0, utils_1.logInfo)(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
         (0, utils_1.logInfo)(`Processing time: ${themeAnalysis.processingTime}ms`);
         // Log theme names only (not full JSON)
