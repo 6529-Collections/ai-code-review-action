@@ -6,11 +6,6 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      greeting:
-        description: 'Custom greeting message'
-        required: false
-        default: 'Hello World'
 
 jobs:
   test:
@@ -29,5 +24,4 @@ jobs:
     - name: Test the action
       uses: ./
       with:
-        greeting: ${{ github.event.inputs.greeting || 'Hello from GitHub Actions!!!' }}
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
