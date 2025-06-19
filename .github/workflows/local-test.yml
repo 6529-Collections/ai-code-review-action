@@ -33,6 +33,18 @@ jobs:
     - name: Test the action
       uses: ./
       with:
-        greeting: "Hello from local test!"
         github-token: ${{ secrets.GITHUB_TOKEN }}
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    
+    - name: Upload analysis log
+      if: always()
+      run: |
+        if [ -f analysis-log.txt ]; then
+          echo "Found analysis-log.txt, copying to host"
+          cp analysis-log.txt /tmp/analysis-log-host.txt || true
+          ls -la analysis-log.txt
+          cat analysis-log.txt | head -50
+        else
+          echo "analysis-log.txt not found"
+          find . -name "*analysis*" -type f 2>/dev/null || true
+        fi

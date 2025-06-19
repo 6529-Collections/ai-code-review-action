@@ -1,0 +1,50 @@
+=== AI Code Review Analysis ===
+Date: 2025-06-19T10:56:01.196Z
+Files: 14 changed, Time: 103489ms
+
+=== DIFFS ===
+.github/workflows/test.yml: +0/-6 lines
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+index 1ac9b1c..3606c6d 100644
+--- a/.github/workflows/test.yml
++++ b/.github/workflows/test.yml
+@@ -6,11 +6,6 @@ on:
+   pull_request:
+     branches: [ main ]
+   workflow_dispatch:
+-    inputs:
+-      greeting:
+-        description: 'Custom greeting message'
+-        required: false
+-        default: 'Hello World'
+ 
+ jobs:
+   test:
+@@ -29,5 +24,4 @@ jobs:
+     - name: Test the action
+       uses: ./
+       with:
+-        greeting: ${{ github.event.inputs.greeting || 'Hello from GitHub Actions!!!' }}
+         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+\ No newline at end of file
+
+
+action.yml: +0/-8 lines
+diff --git a/action.yml b/action.yml
+index ebe7d2c..b7625aa 100644
+--- a/action.yml
++++ b/action.yml
+@@ -3,10 +3,6 @@ description: 'AI-powered code review GitHub Action that provides automated code
+ author: '6529 Collections'
+ 
+ inputs:
+-  greeting:
+-    description: 'Custom greeting message for the code review'
+-    required: false
+-    default: 'Hello'
+   github-token:
+     description: 'GitHub token for API access'
+     required: false
+@@ -15,10 +11,6 @@ inputs:
+     description: 'Anthropic API key for Claude access'
+     required: true

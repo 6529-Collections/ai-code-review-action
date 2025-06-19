@@ -65,27 +65,35 @@ export async function run(): Promise<void> {
       logInfo(`Themes: ${themeNames}`);
     }
 
-    // Generate analysis report
-    logger.generateReport();
-    logInfo('Analysis report saved to analysis-log.txt');
-
-    // Also output the report content as GitHub Actions artifact
+    // Generate analysis report and save to multiple locations
     const reportContent = logger.getReportContent();
-    core.setOutput('analysis_report', reportContent);
-
-    // Try to write to multiple locations as backup
-    try {
-      const backupPaths = ['/tmp/analysis-log.txt', './analysis-backup.txt'];
-      for (const backupPath of backupPaths) {
-        try {
-          fs.writeFileSync(backupPath, reportContent);
-          logInfo(`Backup analysis saved to: ${backupPath}`);
-        } catch (err) {
-          // Continue to next path
+    
+    // Try multiple locations - act should mount at least one of these
+    const locations = [
+      './analysis-log.txt',
+      'analysis-log.txt', 
+      '/github/workspace/analysis-log.txt',
+      '/tmp/analysis-log.txt'
+    ];
+    
+    let savedSuccessfully = false;
+    for (const location of locations) {
+      try {
+        fs.writeFileSync(location, reportContent);
+        logInfo(`Analysis report saved to: ${location}`);
+        
+        if (fs.existsSync(location)) {
+          const stats = fs.statSync(location);
+          logInfo(`File verified at ${location}: ${stats.size} bytes`);
+          savedSuccessfully = true;
         }
+      } catch (error) {
+        logInfo(`Failed to save to ${location}: ${error}`);
       }
-    } catch (error) {
-      // Ignore backup errors
+    }
+    
+    if (!savedSuccessfully) {
+      logInfo('Could not save analysis file to any location');
     }
   } catch (error) {
     handleError(error);
