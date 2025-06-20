@@ -71,6 +71,7 @@ export declare class ThemeSimilarityService {
     private similarityCache;
     private cacheExpireMinutes;
     private batchSize;
+    private batchFailures;
     constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>);
     calculateSimilarity(theme1: Theme, theme2: Theme): Promise<SimilarityMetrics>;
     private getCacheKey;
@@ -82,6 +83,7 @@ export declare class ThemeSimilarityService {
     private processBatchSimilarity;
     private buildBatchSimilarityPrompt;
     private parseBatchSimilarityResponse;
+    private clampScore;
     private aiSimilarityToMetrics;
     private calculateAISimilarity;
     private buildSimilarityPrompt;

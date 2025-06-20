@@ -89,6 +89,7 @@ export class ThemeSimilarityService {
   private similarityCache: Map<string, CachedSimilarity> = new Map();
   private cacheExpireMinutes = 60; // Cache expires after 1 hour
   private batchSize = 8; // Process 8 theme pairs per AI batch call
+  private batchFailures = 0; // Track consecutive batch failures
 
   constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>) {
     this.anthropicApiKey = anthropicApiKey;
@@ -312,77 +313,146 @@ export class ThemeSimilarityService {
     const pairDescriptions = pairs
       .map(
         (pair, index) =>
-          `**Pair ${index + 1} (ID: ${pair.id}):**
-Theme A: "${pair.theme1.name}" - ${pair.theme1.description} (files: ${pair.theme1.affectedFiles.join(', ')})
-Theme B: "${pair.theme2.name}" - ${pair.theme2.description} (files: ${pair.theme2.affectedFiles.join(', ')})`
+          `Pair ${index + 1}: ID="${pair.id}"
+- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
+- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
+- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
+- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`
       )
       .join('\n\n');
 
-    return `You are an expert code reviewer analyzing multiple theme pairs for similarity. 
+    return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
 
-For each pair below, determine semantic similarity considering:
-- Are they the same logical change/feature?
-- Do they serve the same business purpose?
-- Are they part of the same refactoring effort?
-- Would a developer naturally group them together?
-
-Theme pairs to analyze:
-
+THEME PAIRS:
 ${pairDescriptions}
 
-For each pair, respond with a JSON object. Respond with a JSON array containing exactly ${pairs.length} objects in order:
-
+RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
 [
-  {
-    "pairId": "${pairs[0].id}",
-    "nameScore": 0.85,
-    "descriptionScore": 0.72,
-    "patternScore": 0.68,
-    "businessScore": 0.91,
-    "semanticScore": 0.79,
-    "shouldMerge": true,
-    "confidence": 0.88,
-    "reasoning": "Both themes relate to removing authentication scaffolding"
-  },
-  ... (continue for all ${pairs.length} pairs)
-]`;
+${pairs
+  .map(
+    (pair, index) => `  {
+    "pairId": "${pair.id}",
+    "nameScore": 0.5,
+    "descriptionScore": 0.5,
+    "patternScore": 0.5,
+    "businessScore": 0.5,
+    "semanticScore": 0.5,
+    "shouldMerge": false,
+    "confidence": 0.5,
+    "reasoning": "analysis for pair ${index + 1}"
+  }${index < pairs.length - 1 ? ',' : ''}`
+  )
+  .join('\n')}
+]
+
+Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
   }
 
   private parseBatchSimilarityResponse(
     output: string,
     pairs: ThemePair[]
   ): BatchSimilarityResult[] {
-    try {
-      const jsonMatch = output.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
+    console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
+    console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
 
-        if (Array.isArray(parsed) && parsed.length === pairs.length) {
-          return parsed.map((item, index) => ({
-            pairId: item.pairId || pairs[index].id,
-            similarity: {
-              nameScore: item.nameScore || 0,
-              descriptionScore: item.descriptionScore || 0,
-              patternScore: item.patternScore || 0,
-              businessScore: item.businessScore || 0,
-              semanticScore: item.semanticScore || 0,
-              shouldMerge: item.shouldMerge || false,
-              confidence: item.confidence || 0,
-              reasoning: item.reasoning || 'No reasoning provided',
-            },
-          }));
+    try {
+      // Try to find JSON array in the output
+      let jsonMatch = output.match(/\[[\s\S]*\]/);
+
+      // If no match, try to extract from code blocks
+      if (!jsonMatch) {
+        const codeBlockMatch = output.match(
+          /```(?:json)?\s*(\[[\s\S]*?\])\s*```/
+        );
+        if (codeBlockMatch) {
+          jsonMatch = [codeBlockMatch[1]];
+        }
+      }
+
+      // If still no match, try to find any array-like structure
+      if (!jsonMatch) {
+        const arrayStart = output.indexOf('[');
+        const arrayEnd = output.lastIndexOf(']');
+        if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+          jsonMatch = [output.substring(arrayStart, arrayEnd + 1)];
+        }
+      }
+
+      if (jsonMatch) {
+        console.log(
+          `[BATCH-DEBUG] Extracted JSON:`,
+          jsonMatch[0].substring(0, 300)
+        );
+
+        const parsed = JSON.parse(jsonMatch[0]);
+        console.log(
+          `[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`
+        );
+
+        if (Array.isArray(parsed)) {
+          // Handle case where AI returns fewer results than expected
+          const results: BatchSimilarityResult[] = [];
+
+          for (let i = 0; i < pairs.length; i++) {
+            const item = parsed[i];
+            const pair = pairs[i];
+
+            if (item && typeof item === 'object') {
+              results.push({
+                pairId: item.pairId || pair.id,
+                similarity: {
+                  nameScore: this.clampScore(item.nameScore),
+                  descriptionScore: this.clampScore(item.descriptionScore),
+                  patternScore: this.clampScore(item.patternScore),
+                  businessScore: this.clampScore(item.businessScore),
+                  semanticScore: this.clampScore(item.semanticScore),
+                  shouldMerge: Boolean(item.shouldMerge),
+                  confidence: this.clampScore(item.confidence),
+                  reasoning: String(item.reasoning || 'No reasoning provided'),
+                },
+              });
+            } else {
+              // Missing or invalid item - create fallback
+              console.warn(
+                `[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`
+              );
+              results.push({
+                pairId: pair.id,
+                similarity: this.createFallbackSimilarity(
+                  pair.theme1,
+                  pair.theme2
+                ),
+                error: `Missing AI response for pair ${i + 1}`,
+              });
+            }
+          }
+
+          console.log(
+            `[BATCH-DEBUG] Successfully parsed ${results.length} results`
+          );
+          return results;
         }
       }
     } catch (error) {
-      console.warn('Failed to parse batch similarity response:', error);
+      console.error('[BATCH-DEBUG] JSON parsing failed:', error);
+      console.log(
+        '[BATCH-DEBUG] Full output for debugging:',
+        output.substring(0, 1000)
+      );
     }
 
+    console.warn('[BATCH-DEBUG] Using fallback for all pairs');
     // Fallback: create error results for all pairs
     return pairs.map((pair) => ({
       pairId: pair.id,
       similarity: this.createFallbackSimilarity(pair.theme1, pair.theme2),
       error: 'Failed to parse batch AI response',
     }));
+  }
+
+  private clampScore(value: unknown): number {
+    const num = Number(value);
+    return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
   }
 
   private aiSimilarityToMetrics(
@@ -676,7 +746,16 @@ Respond in this exact JSON format (no other text):
 
     // Second pass: Process remaining pairs with AI in batches
     if (needsAI.length > 0) {
-      const batches = this.chunkArray(needsAI, this.batchSize);
+      // Adapt batch size based on previous failures
+      const adaptiveBatchSize = Math.max(
+        2,
+        this.batchSize - Math.floor(this.batchFailures / 2)
+      );
+      console.log(
+        `[BATCH] Using adaptive batch size: ${adaptiveBatchSize} (failures: ${this.batchFailures})`
+      );
+
+      const batches = this.chunkArray(needsAI, adaptiveBatchSize);
 
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
@@ -688,58 +767,110 @@ Respond in this exact JSON format (no other text):
           const batchResults = await this.processBatchSimilarity(batch);
           aiCallsMade++;
 
+          // Check if we got valid results
+          const validResults = batchResults.filter((r) => !r.error);
+          if (validResults.length === 0) {
+            throw new Error('No valid results in batch response');
+          }
+
+          // Reset failure counter on success
+          this.batchFailures = Math.max(0, this.batchFailures - 1);
+
           for (const result of batchResults) {
             if (result.error) {
               console.warn(
                 `[BATCH] Error for pair ${result.pairId}: ${result.error}`
               );
               // Use fallback similarity for errored pairs
-              const pair = batch.find((p) => p.id === result.pairId)!;
-              const fallback = this.createFallbackSimilarity(
-                pair.theme1,
-                pair.theme2
-              );
-              similarities.set(
-                result.pairId,
-                this.aiSimilarityToMetrics(fallback, pair.theme1, pair.theme2)
-              );
+              const pair = batch.find((p) => p.id === result.pairId);
+              if (pair) {
+                const fallback = this.createFallbackSimilarity(
+                  pair.theme1,
+                  pair.theme2
+                );
+                similarities.set(
+                  result.pairId,
+                  this.aiSimilarityToMetrics(fallback, pair.theme1, pair.theme2)
+                );
+              }
             } else {
-              const pair = batch.find((p) => p.id === result.pairId)!;
-              const metrics = this.aiSimilarityToMetrics(
-                result.similarity,
-                pair.theme1,
-                pair.theme2
-              );
-              similarities.set(result.pairId, metrics);
+              const pair = batch.find((p) => p.id === result.pairId);
+              if (pair) {
+                const metrics = this.aiSimilarityToMetrics(
+                  result.similarity,
+                  pair.theme1,
+                  pair.theme2
+                );
+                similarities.set(result.pairId, metrics);
 
-              // Cache the result
-              const cacheKey = this.getCacheKey(pair.theme1, pair.theme2);
-              this.cacheSimilarity(cacheKey, metrics);
+                // Cache the result
+                const cacheKey = this.getCacheKey(pair.theme1, pair.theme2);
+                this.cacheSimilarity(cacheKey, metrics);
+              }
             }
           }
         } catch (error) {
-          console.error(`[BATCH] Batch processing failed:`, error);
-          // Fallback to individual processing for this batch
-          for (const pair of batch) {
-            try {
-              const similarity = await this.calculateSimilarity(
-                pair.theme1,
-                pair.theme2
-              );
-              similarities.set(pair.id, similarity);
-            } catch (individualError) {
-              console.error(
-                `[FALLBACK] Individual processing failed for ${pair.id}:`,
-                individualError
-              );
-              const fallback = this.createFallbackSimilarity(
-                pair.theme1,
-                pair.theme2
-              );
-              similarities.set(
-                pair.id,
-                this.aiSimilarityToMetrics(fallback, pair.theme1, pair.theme2)
-              );
+          this.batchFailures++;
+          console.error(
+            `[BATCH] Batch processing failed (failures: ${this.batchFailures}):`,
+            error
+          );
+
+          // If too many failures, fall back to individual processing
+          if (this.batchFailures >= 3) {
+            console.warn(
+              `[BATCH] Too many failures, switching to individual processing for remaining batches`
+            );
+
+            // Process remaining pairs individually
+            for (const pair of batch) {
+              try {
+                const similarity = await this.calculateSimilarity(
+                  pair.theme1,
+                  pair.theme2
+                );
+                similarities.set(pair.id, similarity);
+              } catch (individualError) {
+                console.error(
+                  `[FALLBACK] Individual processing failed for ${pair.id}:`,
+                  individualError
+                );
+                const fallback = this.createFallbackSimilarity(
+                  pair.theme1,
+                  pair.theme2
+                );
+                similarities.set(
+                  pair.id,
+                  this.aiSimilarityToMetrics(fallback, pair.theme1, pair.theme2)
+                );
+              }
+            }
+          } else {
+            // Retry with smaller batch size
+            console.log(
+              `[BATCH] Retrying with individual processing for this batch`
+            );
+            for (const pair of batch) {
+              try {
+                const similarity = await this.calculateSimilarity(
+                  pair.theme1,
+                  pair.theme2
+                );
+                similarities.set(pair.id, similarity);
+              } catch (individualError) {
+                console.error(
+                  `[FALLBACK] Individual processing failed for ${pair.id}:`,
+                  individualError
+                );
+                const fallback = this.createFallbackSimilarity(
+                  pair.theme1,
+                  pair.theme2
+                );
+                similarities.set(
+                  pair.id,
+                  this.aiSimilarityToMetrics(fallback, pair.theme1, pair.theme2)
+                );
+              }
             }
           }
         }
