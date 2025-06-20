@@ -99,13 +99,13 @@ class ClaudeService {
   ): Promise<ChunkAnalysis> {
     const prompt = this.buildAnalysisPrompt(chunk, context);
     let output = '';
-    let error: string | undefined;
+    let tempFile: string | null = null;
 
     try {
-      // Use a temporary file approach instead of echo to avoid shell escaping issues
-      const tempFile = path.join(
+      // Use a unique temporary file for each concurrent request
+      tempFile = path.join(
         os.tmpdir(),
-        `claude-prompt-${Date.now()}.txt`
+        `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`
       );
       fs.writeFileSync(tempFile, prompt);
 
@@ -117,19 +117,26 @@ class ClaudeService {
         },
       });
 
-      // Clean up temp file
-      fs.unlinkSync(tempFile);
-
       const result = this.parseClaudeResponse(output);
-
       return result;
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      const error = err instanceof Error ? err.message : String(err);
       console.warn('Claude analysis failed, using fallback:', error);
-
-      const fallback = this.createFallbackAnalysis(chunk);
-
-      return fallback;
+      return this.createFallbackAnalysis(chunk);
+    } finally {
+      // Always attempt cleanup, but don't fail if file doesn't exist
+      if (tempFile) {
+        try {
+          if (fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+          }
+        } catch (cleanupError) {
+          console.warn(
+            `Failed to cleanup temp file ${tempFile}:`,
+            cleanupError
+          );
+        }
+      }
     }
   }
 

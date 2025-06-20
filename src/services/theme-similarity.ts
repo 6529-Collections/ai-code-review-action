@@ -292,14 +292,17 @@ Respond in this exact JSON format (no other text):
 
     // Step 2: Create consolidated themes
     console.log(`[CONSOLIDATION] Step 2: Creating consolidated themes`);
-    const consolidated = this.createConsolidatedThemes(mergeGroups, themes);
+    const consolidated = await this.createConsolidatedThemes(
+      mergeGroups,
+      themes
+    );
     console.log(
       `[CONSOLIDATION] Created ${consolidated.length} consolidated themes`
     );
 
     // Step 3: Build hierarchies
     console.log(`[CONSOLIDATION] Step 3: Building hierarchies`);
-    const hierarchical = this.buildHierarchies(consolidated);
+    const hierarchical = await this.buildHierarchies(consolidated);
     console.log(
       `[CONSOLIDATION] Final result: ${hierarchical.length} themes (${(((themes.length - hierarchical.length) / themes.length) * 100).toFixed(1)}% reduction)`
     );
@@ -352,10 +355,10 @@ Respond in this exact JSON format (no other text):
     return mergeGroups;
   }
 
-  private createConsolidatedThemes(
+  private async createConsolidatedThemes(
     mergeGroups: Map<string, string[]>,
     themes: Theme[]
-  ): ConsolidatedTheme[] {
+  ): Promise<ConsolidatedTheme[]> {
     const themeMap = new Map<string, Theme>();
     themes.forEach((theme) => themeMap.set(theme.id, theme));
 
@@ -370,16 +373,19 @@ Respond in this exact JSON format (no other text):
         consolidated.push(this.themeToConsolidated(theme));
       } else {
         // Multiple themes - merge them
-        consolidated.push(this.mergeThemes(groupThemes));
+        const mergedTheme = await this.mergeThemes(groupThemes);
+        consolidated.push(mergedTheme);
       }
     }
 
     return consolidated;
   }
 
-  private buildHierarchies(themes: ConsolidatedTheme[]): ConsolidatedTheme[] {
+  private async buildHierarchies(
+    themes: ConsolidatedTheme[]
+  ): Promise<ConsolidatedTheme[]> {
     // Group themes by business domain
-    const domainGroups = this.groupByBusinessDomain(themes);
+    const domainGroups = await this.groupByBusinessDomain(themes);
     const result: ConsolidatedTheme[] = [];
 
     console.log(`[HIERARCHY] Found ${domainGroups.size} business domains:`);
@@ -413,13 +419,16 @@ Respond in this exact JSON format (no other text):
     return result;
   }
 
-  private groupByBusinessDomain(
+  private async groupByBusinessDomain(
     themes: ConsolidatedTheme[]
-  ): Map<string, ConsolidatedTheme[]> {
+  ): Promise<Map<string, ConsolidatedTheme[]>> {
     const domains = new Map<string, ConsolidatedTheme[]>();
 
     for (const theme of themes) {
-      const domain = this.extractBusinessDomain(theme.name, theme.description);
+      const domain = await this.extractBusinessDomain(
+        theme.name,
+        theme.description
+      );
       console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
 
       if (!domains.has(domain)) {
@@ -431,12 +440,106 @@ Respond in this exact JSON format (no other text):
     return domains;
   }
 
-  private extractBusinessDomain(name: string, description: string): string {
+  private async extractBusinessDomain(
+    name: string,
+    description: string
+  ): Promise<string> {
+    const prompt = this.buildDomainExtractionPrompt(name, description);
+
+    try {
+      const tempFile = path.join(
+        os.tmpdir(),
+        `claude-domain-${Date.now()}.txt`
+      );
+      fs.writeFileSync(tempFile, prompt);
+
+      let output = '';
+      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+        listeners: {
+          stdout: (data: Buffer) => {
+            output += data.toString();
+          },
+        },
+      });
+
+      fs.unlinkSync(tempFile);
+
+      const domain = this.parseDomainExtractionResponse(output);
+      console.log(`[AI-DOMAIN] Generated domain for "${name}": "${domain}"`);
+
+      // Validate the generated domain
+      if (this.isValidDomainName(domain)) {
+        return domain;
+      } else {
+        console.warn(
+          `[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`
+        );
+        return this.extractBusinessDomainFallback(name, description);
+      }
+    } catch (error) {
+      console.warn('AI domain extraction failed:', error);
+      return this.extractBusinessDomainFallback(name, description);
+    }
+  }
+
+  private buildDomainExtractionPrompt(
+    name: string,
+    description: string
+  ): string {
+    return `You are an expert code reviewer analyzing code changes to determine their business domain category.
+
+Theme Name: "${name}"
+Description: "${description}"
+
+Based on this theme, determine what high-level business domain or functional area this change belongs to. Consider:
+- What business functionality is being affected?
+- What system or component is being modified?
+- What is the primary purpose of this change?
+
+Choose from these common domains or create a similar concise category:
+- Authentication & Security
+- User Interface
+- Data Management
+- API & Services
+- Testing & Validation
+- Configuration & Setup
+- Infrastructure
+- Documentation
+- Bug Fixes
+- Performance
+- Integration
+- Workflow & Automation
+
+Respond with just the domain name (2-4 words, no extra text):`;
+  }
+
+  private parseDomainExtractionResponse(output: string): string {
+    // Clean up the response - take first line, trim whitespace, remove quotes
+    const lines = output.trim().split('\n');
+    const domain = lines[0].trim().replace(/^["']|["']$/g, '');
+
+    return domain || 'General Changes';
+  }
+
+  private isValidDomainName(domain: string): boolean {
+    return (
+      domain.length >= 3 &&
+      domain.length <= 30 &&
+      !domain.toLowerCase().includes('error') &&
+      !domain.toLowerCase().includes('failed') &&
+      domain.trim() === domain
+    );
+  }
+
+  private extractBusinessDomainFallback(
+    name: string,
+    description: string
+  ): string {
     const text = (name + ' ' + description).toLowerCase();
 
-    // Business domain keywords
+    // Business domain keywords (fallback)
     if (text.includes('greeting') || text.includes('demo')) {
-      return 'Remove Demo Functionality';
+      return 'Demo & Examples';
     }
     if (text.includes('service') || text.includes('architecture')) {
       return 'Service Architecture';
@@ -445,7 +548,7 @@ Respond in this exact JSON format (no other text):
       return 'Git Integration';
     }
     if (text.includes('theme') || text.includes('analysis')) {
-      return 'Theme Analysis';
+      return 'Analysis & Processing';
     }
     if (text.includes('test') || text.includes('validation')) {
       return 'Testing & Validation';
@@ -454,7 +557,10 @@ Respond in this exact JSON format (no other text):
       return 'Interface Changes';
     }
     if (text.includes('workflow') || text.includes('action')) {
-      return 'Workflow Configuration';
+      return 'Workflow & Automation';
+    }
+    if (text.includes('auth') || text.includes('security')) {
+      return 'Authentication & Security';
     }
 
     return 'General Changes';
@@ -493,6 +599,118 @@ Respond in this exact JSON format (no other text):
     };
   }
 
+  private async generateMergedThemeNameAndDescription(
+    themes: Theme[]
+  ): Promise<{ name: string; description: string }> {
+    const prompt = this.buildMergedThemeNamingPrompt(themes);
+
+    try {
+      const tempFile = path.join(
+        os.tmpdir(),
+        `claude-naming-${Date.now()}.txt`
+      );
+      fs.writeFileSync(tempFile, prompt);
+
+      let output = '';
+      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+        listeners: {
+          stdout: (data: Buffer) => {
+            output += data.toString();
+          },
+        },
+      });
+
+      fs.unlinkSync(tempFile);
+
+      const result = this.parseMergedThemeNamingResponse(output);
+      console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
+
+      // Validate the generated name
+      if (this.isValidThemeName(result.name)) {
+        return result;
+      } else {
+        console.warn(
+          `[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`
+        );
+        return this.createFallbackMergedThemeName(themes);
+      }
+    } catch (error) {
+      console.warn('AI theme naming failed:', error);
+      return this.createFallbackMergedThemeName(themes);
+    }
+  }
+
+  private buildMergedThemeNamingPrompt(themes: Theme[]): string {
+    const themeDetails = themes
+      .map(
+        (theme) =>
+          `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles.join(', ')})`
+      )
+      .join('\n');
+
+    return `You are an expert code reviewer analyzing related code changes that should be merged into a single theme.
+
+These ${themes.length} themes have been identified as similar and will be consolidated:
+
+${themeDetails}
+
+Please create a unified theme name and description that best represents what these changes collectively accomplish. The name should be:
+- Concise (2-5 words)
+- Descriptive of the actual change being made
+- Not just a list of the individual themes
+- Focused on the business purpose rather than implementation details
+
+Respond in this exact JSON format (no other text):
+{
+  "name": "Remove Authentication Scaffolding",
+  "description": "Removes demo authentication components and related scaffolding code that are no longer needed"
+}`;
+  }
+
+  private parseMergedThemeNamingResponse(output: string): {
+    name: string;
+    description: string;
+  } {
+    try {
+      const jsonMatch = output.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          name: parsed.name || 'Merged Changes',
+          description: parsed.description || 'Consolidated related changes',
+        };
+      }
+    } catch (error) {
+      console.warn('Failed to parse AI naming response:', error);
+    }
+
+    return {
+      name: 'Merged Changes',
+      description: 'Consolidated related changes',
+    };
+  }
+
+  private isValidThemeName(name: string): boolean {
+    return (
+      name.length >= 3 &&
+      name.length <= 50 &&
+      !name.toLowerCase().includes('error') &&
+      !name.toLowerCase().includes('failed') &&
+      name.trim() === name
+    );
+  }
+
+  private createFallbackMergedThemeName(themes: Theme[]): {
+    name: string;
+    description: string;
+  } {
+    const leadTheme = themes[0];
+    return {
+      name: leadTheme.name,
+      description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
+    };
+  }
+
   private themeToConsolidated(theme: Theme): ConsolidatedTheme {
     return {
       id: theme.id,
@@ -511,7 +729,7 @@ Respond in this exact JSON format (no other text):
     };
   }
 
-  private mergeThemes(themes: Theme[]): ConsolidatedTheme {
+  private async mergeThemes(themes: Theme[]): Promise<ConsolidatedTheme> {
     const allFiles = new Set<string>();
     const allSnippets: string[] = [];
     let totalConfidence = 0;
@@ -522,12 +740,14 @@ Respond in this exact JSON format (no other text):
       totalConfidence += theme.confidence;
     });
 
-    const leadTheme = themes[0];
+    // Generate AI-powered name and description for merged themes
+    const { name, description } =
+      await this.generateMergedThemeNameAndDescription(themes);
 
     return {
       id: `merged-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-      name: leadTheme.name,
-      description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
+      name,
+      description,
       level: 0,
       childThemes: [],
       affectedFiles: Array.from(allFiles),

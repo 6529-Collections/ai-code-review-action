@@ -62,7 +62,16 @@ export declare class ThemeSimilarityService {
     private buildHierarchies;
     private groupByBusinessDomain;
     private extractBusinessDomain;
+    private buildDomainExtractionPrompt;
+    private parseDomainExtractionResponse;
+    private isValidDomainName;
+    private extractBusinessDomainFallback;
     private createParentTheme;
+    private generateMergedThemeNameAndDescription;
+    private buildMergedThemeNamingPrompt;
+    private parseMergedThemeNamingResponse;
+    private isValidThemeName;
+    private createFallbackMergedThemeName;
     private themeToConsolidated;
     private mergeThemes;
     private calculateNameSimilarity;
