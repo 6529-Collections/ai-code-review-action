@@ -76,7 +76,7 @@ export async function run(): Promise<void> {
         if (theme.childThemes && theme.childThemes.length > 0) {
           detailedThemes += `\\n   - 📁 Contains ${theme.childThemes.length} sub-themes:`;
 
-          theme.childThemes.forEach((child, childIndex) => {
+          theme.childThemes.forEach((child: typeof theme, childIndex: number) => {
             const childConfidence = (child.confidence * 100).toFixed(0);
             const childFiles = child.affectedFiles.slice(0, 2).join(', ');
             const moreChildFiles =

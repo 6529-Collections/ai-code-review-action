@@ -1,5 +1,5 @@
 import { ChangedFile } from './git-service';
-import { ConsolidatedTheme, ConsolidationConfig } from './theme-similarity';
+import { ConsolidatedTheme, ConsolidationConfig } from '../types/similarity-types';
 export interface Theme {
     id: string;
     name: string;

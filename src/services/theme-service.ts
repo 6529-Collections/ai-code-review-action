@@ -3,11 +3,11 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { ThemeSimilarityService } from './theme-similarity';
 import {
-  ThemeSimilarityService,
   ConsolidatedTheme,
   ConsolidationConfig,
-} from './theme-similarity';
+} from '../types/similarity-types';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
