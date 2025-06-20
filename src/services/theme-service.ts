@@ -9,6 +9,13 @@ import {
   ConsolidationConfig,
 } from './theme-similarity';
 
+// Concurrency configuration
+const PARALLEL_CONFIG = {
+  BATCH_SIZE: 10,
+  CHUNK_TIMEOUT: 120000, // 2 minutes
+  MAX_RETRIES: 3,
+} as const;
+
 export interface Theme {
   id: string;
   name: string;
@@ -54,6 +61,12 @@ export interface LiveContext {
   rootThemeIds: string[];
   globalInsights: string[];
   processingState: 'idle' | 'processing' | 'complete';
+}
+
+export interface ChunkAnalysisResult {
+  chunk: CodeChunk;
+  analysis: ChunkAnalysis;
+  error?: string;
 }
 
 export interface ThemeAnalysisResult {
@@ -212,6 +225,46 @@ class ThemeContextManager {
     this.updateContext(placement, analysis, chunk);
   }
 
+  async analyzeChunkOnly(chunk: CodeChunk): Promise<ChunkAnalysisResult> {
+    try {
+      const contextString = this.buildContextForClaude();
+      const analysis = await this.claudeService.analyzeChunk(
+        chunk,
+        contextString
+      );
+      return { chunk, analysis };
+    } catch (error) {
+      return {
+        chunk,
+        analysis: this.createFallbackAnalysis(chunk),
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  processBatchResults(results: ChunkAnalysisResult[]): void {
+    for (const result of results) {
+      if (result.error) {
+        console.warn(
+          `Chunk analysis failed for ${result.chunk.filename}: ${result.error}`
+        );
+      }
+      const placement = this.determineThemePlacement(result.analysis);
+      this.updateContext(placement, result.analysis, result.chunk);
+    }
+  }
+
+  private createFallbackAnalysis(chunk: CodeChunk): ChunkAnalysis {
+    return {
+      themeName: `Changes in ${chunk.filename}`,
+      description: 'Analysis unavailable - using fallback',
+      businessImpact: 'Unknown impact',
+      confidence: 0.3,
+      codePattern: 'File modification',
+      suggestedParent: undefined,
+    };
+  }
+
   private buildContextForClaude(): string {
     const existingThemes = Array.from(this.context.themes.values())
       .filter((t) => t.level === 0)
@@ -306,6 +359,43 @@ class ThemeContextManager {
   }
 }
 
+// Utility function for batch processing with concurrency control
+async function processBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  processor: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchPromises = batch.map((item) =>
+      Promise.race([
+        processor(item),
+        new Promise<R>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('Timeout')),
+            PARALLEL_CONFIG.CHUNK_TIMEOUT
+          )
+        ),
+      ])
+    );
+
+    const batchResults = await Promise.allSettled(batchPromises);
+    for (let j = 0; j < batchResults.length; j++) {
+      const result = batchResults[j];
+      if (result.status === 'fulfilled') {
+        results.push(result.value);
+      } else {
+        console.warn(`Batch item ${i + j} failed:`, result.reason);
+        // Add a fallback result or skip
+      }
+    }
+  }
+
+  return results;
+}
+
 export class ThemeService {
   private similarityService: ThemeSimilarityService;
 
@@ -358,9 +448,15 @@ export class ThemeService {
 
       const chunks = chunkProcessor.splitChangedFiles(changedFiles);
 
-      for (const chunk of chunks) {
-        await contextManager.processChunk(chunk);
-      }
+      // Parallel processing: analyze all chunks concurrently, then update context sequentially
+      const analysisResults = await processBatches(
+        chunks,
+        PARALLEL_CONFIG.BATCH_SIZE,
+        (chunk) => contextManager.analyzeChunkOnly(chunk)
+      );
+
+      // Sequential context updates to maintain thread safety
+      contextManager.processBatchResults(analysisResults);
 
       contextManager.setProcessingState('complete');
 

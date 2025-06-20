@@ -40,6 +40,11 @@ export interface LiveContext {
     globalInsights: string[];
     processingState: 'idle' | 'processing' | 'complete';
 }
+export interface ChunkAnalysisResult {
+    chunk: CodeChunk;
+    analysis: ChunkAnalysis;
+    error?: string;
+}
 export interface ThemeAnalysisResult {
     themes: ConsolidatedTheme[];
     originalThemes: Theme[];

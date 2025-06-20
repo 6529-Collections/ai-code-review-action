@@ -30001,7 +30001,9 @@ async function run() {
             themeAnalysis.themes.forEach((theme, index) => {
                 const confidence = (theme.confidence * 100).toFixed(0);
                 const files = theme.affectedFiles.slice(0, 3).join(', ');
-                const moreFiles = theme.affectedFiles.length > 3 ? ` (+${theme.affectedFiles.length - 3} more)` : '';
+                const moreFiles = theme.affectedFiles.length > 3
+                    ? ` (+${theme.affectedFiles.length - 3} more)`
+                    : '';
                 detailedThemes += `\\n${index + 1}. **${theme.name}** (${confidence}% confidence)`;
                 detailedThemes += `\\n   - Files: ${files}${moreFiles}`;
                 detailedThemes += `\\n   - ${theme.description.replace(/[\r\n]/g, ' ').trim()}`;
@@ -30015,7 +30017,9 @@ async function run() {
                     theme.childThemes.forEach((child, childIndex) => {
                         const childConfidence = (child.confidence * 100).toFixed(0);
                         const childFiles = child.affectedFiles.slice(0, 2).join(', ');
-                        const moreChildFiles = child.affectedFiles.length > 2 ? ` (+${child.affectedFiles.length - 2})` : '';
+                        const moreChildFiles = child.affectedFiles.length > 2
+                            ? ` (+${child.affectedFiles.length - 2})`
+                            : '';
                         detailedThemes += `\\n     ${childIndex + 1}. **${child.name}** (${childConfidence}%)`;
                         detailedThemes += `\\n        - Files: ${childFiles}${moreChildFiles}`;
                         detailedThemes += `\\n        - ${child.description.replace(/[\r\n]/g, ' ').trim()}`;
@@ -30355,6 +30359,12 @@ const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
 const os = __importStar(__nccwpck_require__(857));
 const theme_similarity_1 = __nccwpck_require__(4189);
+// Concurrency configuration
+const PARALLEL_CONFIG = {
+    BATCH_SIZE: 8,
+    CHUNK_TIMEOUT: 30000, // 30 seconds
+    MAX_RETRIES: 2,
+};
 class ClaudeService {
     constructor(apiKey) {
         this.apiKey = apiKey;
@@ -30464,6 +30474,39 @@ class ThemeContextManager {
         const placement = this.determineThemePlacement(analysis);
         this.updateContext(placement, analysis, chunk);
     }
+    async analyzeChunkOnly(chunk) {
+        try {
+            const contextString = this.buildContextForClaude();
+            const analysis = await this.claudeService.analyzeChunk(chunk, contextString);
+            return { chunk, analysis };
+        }
+        catch (error) {
+            return {
+                chunk,
+                analysis: this.createFallbackAnalysis(chunk),
+                error: error instanceof Error ? error.message : String(error),
+            };
+        }
+    }
+    processBatchResults(results) {
+        for (const result of results) {
+            if (result.error) {
+                console.warn(`Chunk analysis failed for ${result.chunk.filename}: ${result.error}`);
+            }
+            const placement = this.determineThemePlacement(result.analysis);
+            this.updateContext(placement, result.analysis, result.chunk);
+        }
+    }
+    createFallbackAnalysis(chunk) {
+        return {
+            themeName: `Changes in ${chunk.filename}`,
+            description: 'Analysis unavailable - using fallback',
+            businessImpact: 'Unknown impact',
+            confidence: 0.3,
+            codePattern: 'File modification',
+            suggestedParent: undefined,
+        };
+    }
     buildContextForClaude() {
         const existingThemes = Array.from(this.context.themes.values())
             .filter((t) => t.level === 0)
@@ -30536,6 +30579,29 @@ class ThemeContextManager {
         this.context.processingState = state;
     }
 }
+// Utility function for batch processing with concurrency control
+async function processBatches(items, batchSize, processor) {
+    const results = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchPromises = batch.map((item) => Promise.race([
+            processor(item),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PARALLEL_CONFIG.CHUNK_TIMEOUT)),
+        ]));
+        const batchResults = await Promise.allSettled(batchPromises);
+        for (let j = 0; j < batchResults.length; j++) {
+            const result = batchResults[j];
+            if (result.status === 'fulfilled') {
+                results.push(result.value);
+            }
+            else {
+                console.warn(`Batch item ${i + j} failed:`, result.reason);
+                // Add a fallback result or skip
+            }
+        }
+    }
+    return results;
+}
 class ThemeService {
     constructor(anthropicApiKey, consolidationConfig) {
         this.anthropicApiKey = anthropicApiKey;
@@ -30572,9 +30638,10 @@ class ThemeService {
             const chunkProcessor = new ChunkProcessor();
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
-            for (const chunk of chunks) {
-                await contextManager.processChunk(chunk);
-            }
+            // Parallel processing: analyze all chunks concurrently, then update context sequentially
+            const analysisResults = await processBatches(chunks, PARALLEL_CONFIG.BATCH_SIZE, (chunk) => contextManager.analyzeChunkOnly(chunk));
+            // Sequential context updates to maintain thread safety
+            contextManager.processBatchResults(analysisResults);
             contextManager.setProcessingState('complete');
             const originalThemes = contextManager.getRootThemes();
             const consolidationStartTime = Date.now();
