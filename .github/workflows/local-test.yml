@@ -33,6 +33,6 @@ jobs:
     - name: Test the action
       uses: ./
       with:
-        greeting: "Hello from local test!"
         github-token: ${{ secrets.GITHUB_TOKEN }}
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    

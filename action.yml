@@ -3,10 +3,6 @@ description: 'AI-powered code review GitHub Action that provides automated code 
 author: '6529 Collections'
 
 inputs:
-  greeting:
-    description: 'Custom greeting message for the code review'
-    required: false
-    default: 'Hello'
   github-token:
     description: 'GitHub token for API access'
     required: false
@@ -14,10 +10,6 @@ inputs:
   anthropic-api-key:
     description: 'Anthropic API key for Claude access'
     required: true
-
-outputs:
-  message:
-    description: 'The formatted code review message'
 
 branding:
   icon: 'eye'
