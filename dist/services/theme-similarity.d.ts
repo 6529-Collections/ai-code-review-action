@@ -46,11 +46,43 @@ export interface MergeDecision {
     reason: string;
     targetThemeId?: string;
 }
+export interface CachedSimilarity {
+    similarity: SimilarityMetrics;
+    timestamp: Date;
+}
+export interface QuickSimilarityResult {
+    shouldSkipAI: boolean;
+    similarity?: SimilarityMetrics;
+    reason: string;
+}
+export interface ThemePair {
+    theme1: Theme;
+    theme2: Theme;
+    id: string;
+}
+export interface BatchSimilarityResult {
+    pairId: string;
+    similarity: AISimilarityResult;
+    error?: string;
+}
 export declare class ThemeSimilarityService {
     private config;
     private anthropicApiKey;
+    private similarityCache;
+    private cacheExpireMinutes;
+    private batchSize;
     constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>);
     calculateSimilarity(theme1: Theme, theme2: Theme): Promise<SimilarityMetrics>;
+    private getCacheKey;
+    private getCachedSimilarity;
+    private cacheSimilarity;
+    private quickSimilarityCheck;
+    private hasDifferentFileTypes;
+    private chunkArray;
+    private processBatchSimilarity;
+    private buildBatchSimilarityPrompt;
+    private parseBatchSimilarityResponse;
+    private aiSimilarityToMetrics;
     private calculateAISimilarity;
     private buildSimilarityPrompt;
     private parseAISimilarityResponse;
@@ -58,6 +90,8 @@ export declare class ThemeSimilarityService {
     shouldMerge(similarity: SimilarityMetrics): MergeDecision;
     consolidateThemes(themes: Theme[]): Promise<ConsolidatedTheme[]>;
     private findMergeGroups;
+    private calculateBatchSimilarities;
+    private buildMergeGroupsFromSimilarities;
     private createConsolidatedThemes;
     private buildHierarchies;
     private groupByBusinessDomain;
