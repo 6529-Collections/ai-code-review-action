@@ -1,5 +1,6 @@
 import * as github from '@actions/github';
 import * as exec from '@actions/exec';
+import { CodeAnalyzer, CodeChange } from '../utils/code-analyzer';
 
 export interface ChangedFile {
   filename: string;
@@ -21,6 +22,45 @@ export interface PullRequestContext {
 
 export class GitService {
   constructor(private readonly githubToken: string) {}
+
+  async getEnhancedChangedFiles(): Promise<CodeChange[]> {
+    console.log(
+      '[GIT-SERVICE] Getting enhanced changed files with code analysis'
+    );
+
+    // Get basic changed files first
+    const changedFiles = await this.getChangedFiles();
+
+    // Convert to enhanced CodeChange objects
+    const codeChanges: CodeChange[] = [];
+
+    for (const file of changedFiles) {
+      console.log(
+        `[GIT-SERVICE] Processing ${file.filename} for enhanced analysis`
+      );
+
+      // Map GitHub status to our type system
+      const changeType =
+        file.status === 'removed'
+          ? 'deleted'
+          : (file.status as 'added' | 'modified' | 'renamed');
+
+      const codeChange = CodeAnalyzer.processChangedFile(
+        file.filename,
+        file.patch || '',
+        changeType,
+        file.additions,
+        file.deletions
+      );
+
+      codeChanges.push(codeChange);
+    }
+
+    console.log(
+      `[GIT-SERVICE] Processed ${codeChanges.length} files with enhanced context`
+    );
+    return codeChanges;
+  }
 
   async getPullRequestContext(): Promise<PullRequestContext | null> {
     // Check if we're in a GitHub Actions PR context

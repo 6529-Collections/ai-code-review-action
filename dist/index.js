@@ -30495,8 +30495,35 @@ class BusinessDomainService {
         }
         return domains;
     }
+    async extractBusinessDomainWithContext(name, description, enhancedContext) {
+        // Build code context summary if available
+        let codeContext = '';
+        if (enhancedContext?.codeChanges && enhancedContext.codeChanges.length > 0) {
+            const changes = enhancedContext.codeChanges;
+            codeContext = `Files changed: ${changes.length}\n`;
+            codeContext += `Types: ${[...new Set(changes.map((c) => c.fileType))].join(', ')}\n`;
+            const functions = changes.flatMap((c) => c.functionsChanged).slice(0, 5);
+            if (functions.length > 0) {
+                codeContext += `Functions: ${functions.join(', ')}\n`;
+            }
+            const classes = changes.flatMap((c) => c.classesChanged).slice(0, 3);
+            if (classes.length > 0) {
+                codeContext += `Classes/Interfaces: ${classes.join(', ')}\n`;
+            }
+            if (enhancedContext?.contextSummary) {
+                codeContext += `Summary: ${enhancedContext.contextSummary}`;
+            }
+        }
+        const prompt = codeContext
+            ? this.buildEnhancedDomainExtractionPrompt(name, description, codeContext)
+            : this.buildDomainExtractionPrompt(name, description);
+        return this.executeDomainExtraction(name, prompt, description);
+    }
     async extractBusinessDomain(name, description) {
         const prompt = this.buildDomainExtractionPrompt(name, description);
+        return this.executeDomainExtraction(name, prompt, description);
+    }
+    async executeDomainExtraction(name, prompt, description) {
         try {
             const tempFile = path.join(os.tmpdir(), `claude-domain-${Date.now()}.txt`);
             fs.writeFileSync(tempFile, prompt);
@@ -30517,24 +30544,58 @@ class BusinessDomainService {
             }
             else {
                 console.warn(`[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`);
-                return this.extractBusinessDomainFallback(name, description);
+                return this.extractBusinessDomainFallback(name, description || '');
             }
         }
         catch (error) {
             console.warn('AI domain extraction failed:', error);
-            return this.extractBusinessDomainFallback(name, description);
+            return this.extractBusinessDomainFallback(name, description || '');
         }
     }
     buildDomainExtractionPrompt(name, description) {
+        // Check if we have enhanced context available
         return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
 
 Theme Name: "${name}"
 Description: "${description}"
 
-Focus on the end-user or business outcome, not the technical details. Ask:
+IMPORTANT: Focus on the end-user or business outcome, not the technical details. Ask:
 - What user experience is being improved?
 - What business capability is being added/enhanced/removed?
 - What problem does this solve for end users?
+- What workflow or process is being streamlined?
+
+Choose from these USER-FOCUSED domains or create a similar category:
+- Remove Demo/Scaffolding Content
+- Improve Code Review Experience  
+- Streamline Development Workflow
+- Enhance Automation Capabilities
+- Simplify Configuration & Setup
+- Add User Feedback Features
+- Clean Up Legacy Code
+- Improve Documentation & Onboarding
+- Fix User-Facing Issues
+- Optimize Performance for Users
+- Enable New Integrations
+- Modernize User Interface
+
+Think like a product manager explaining value to users, not a developer describing implementation.
+
+Respond with just the user-focused domain name (2-5 words, no extra text):`;
+    }
+    buildEnhancedDomainExtractionPrompt(name, description, codeContext) {
+        return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
+
+Theme Name: "${name}"
+Description: "${description}"
+${codeContext ? `\nACTUAL CODE CONTEXT:\n${codeContext}` : ''}
+
+IMPORTANT: Focus on the end-user or business outcome, not the technical details. The code context above shows what was actually changed - use this to understand the real business purpose.
+
+Ask yourself:
+- What user experience is being improved by these specific code changes?
+- What business capability is being added/enhanced/removed?
+- What problem do these changes solve for end users?
 - What workflow or process is being streamlined?
 
 Choose from these USER-FOCUSED domains or create a similar category:
@@ -30682,9 +30743,26 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GitService = void 0;
 const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
+const code_analyzer_1 = __nccwpck_require__(4579);
 class GitService {
     constructor(githubToken) {
         this.githubToken = githubToken;
+    }
+    async getEnhancedChangedFiles() {
+        console.log('[GIT-SERVICE] Getting enhanced changed files with code analysis');
+        // Get basic changed files first
+        const changedFiles = await this.getChangedFiles();
+        // Convert to enhanced CodeChange objects
+        const codeChanges = [];
+        for (const file of changedFiles) {
+            console.log(`[GIT-SERVICE] Processing ${file.filename} for enhanced analysis`);
+            // Map GitHub status to our type system
+            const changeType = file.status === 'removed' ? 'deleted' : file.status;
+            const codeChange = code_analyzer_1.CodeAnalyzer.processChangedFile(file.filename, file.patch || '', changeType, file.additions, file.deletions);
+            codeChanges.push(codeChange);
+        }
+        console.log(`[GIT-SERVICE] Processed ${codeChanges.length} files with enhanced context`);
+        return codeChanges;
     }
     async getPullRequestContext() {
         // Check if we're in a GitHub Actions PR context
@@ -30994,6 +31072,9 @@ const os = __importStar(__nccwpck_require__(857));
 class ThemeNamingService {
     async generateMergedThemeNameAndDescription(themes) {
         const prompt = this.buildMergedThemeNamingPrompt(themes);
+        return this.executeMergedThemeNaming(prompt);
+    }
+    async executeMergedThemeNaming(prompt) {
         try {
             const tempFile = path.join(os.tmpdir(), `claude-naming-${Date.now()}.txt`);
             fs.writeFileSync(tempFile, prompt);
@@ -31014,12 +31095,18 @@ class ThemeNamingService {
             }
             else {
                 console.warn(`[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`);
-                return this.createFallbackMergedThemeName(themes);
+                return {
+                    name: 'Merged Changes',
+                    description: 'Consolidated related changes',
+                };
             }
         }
         catch (error) {
             console.warn('AI theme naming failed:', error);
-            return this.createFallbackMergedThemeName(themes);
+            return {
+                name: 'Merged Changes',
+                description: 'Consolidated related changes',
+            };
         }
     }
     createParentTheme(domain, children) {
@@ -31049,6 +31136,29 @@ class ThemeNamingService {
             consolidationMethod: 'hierarchy',
         };
     }
+    generateMergedThemeNameWithContext(themes, enhancedContext) {
+        // Build enhanced context if available
+        let codeContext = '';
+        if (enhancedContext?.codeChanges && enhancedContext.codeChanges.length > 0) {
+            const changes = enhancedContext.codeChanges;
+            codeContext = `\nACTUAL CODE CHANGES:\n`;
+            codeContext += `- Files: ${changes.length} files affected\n`;
+            codeContext += `- Types: ${[...new Set(changes.map((c) => c.fileType))].join(', ')}\n`;
+            const functions = changes.flatMap((c) => c.functionsChanged);
+            if (functions.length > 0) {
+                codeContext += `- Functions added/modified: ${functions.slice(0, 5).join(', ')}${functions.length > 5 ? '...' : ''}\n`;
+            }
+            const imports = changes.flatMap((c) => c.importsChanged);
+            if (imports.length > 0) {
+                codeContext += `- Dependencies: ${imports.slice(0, 3).join(', ')}${imports.length > 3 ? '...' : ''}\n`;
+            }
+            if (enhancedContext?.contextSummary) {
+                codeContext += `- Summary: ${enhancedContext.contextSummary}\n`;
+            }
+        }
+        const prompt = this.buildEnhancedMergedThemeNamingPrompt(themes, codeContext);
+        return this.executeMergedThemeNaming(prompt);
+    }
     buildMergedThemeNamingPrompt(themes) {
         const themeDetails = themes
             .map((theme) => `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles.join(', ')})`)
@@ -31061,6 +31171,43 @@ ${themeDetails}
 
 Create a unified theme name focused on USER VALUE and BUSINESS IMPACT, not technical implementation. Ask:
 - What user experience is being improved by these changes collectively?
+- What business capability is being enhanced/added/removed?
+- What problem do these changes solve for end users?
+- Think like a product manager explaining value to users
+
+Good examples:
+- "Remove demo functionality" (not "Delete greeting parameters")
+- "Improve code review automation" (not "Add AI services")
+- "Streamline configuration" (not "Update workflow files")
+- "Add pull request feedback" (not "Implement commenting system")
+
+The name should be:
+- User/business-focused (what value does this provide?)
+- Concise (2-5 words)
+- Descriptive of the user benefit, not technical implementation
+- Focused on outcomes, not code changes
+
+Respond in this exact JSON format (no other text):
+{
+  "name": "Remove Authentication Scaffolding",
+  "description": "Removes demo authentication components and related scaffolding code that are no longer needed"
+}`;
+    }
+    buildEnhancedMergedThemeNamingPrompt(themes, codeContext) {
+        const themeDetails = themes
+            .map((theme) => `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles?.join(', ') || 'unknown'})`)
+            .join('\n');
+        return `You are a product manager analyzing related code changes to create a USER-FOCUSED theme name.
+
+These ${themes.length} themes have been identified as similar and will be consolidated:
+
+${themeDetails}
+${codeContext}
+
+Create a unified theme name focused on USER VALUE and BUSINESS IMPACT, not technical implementation. Use the actual code changes above to understand what's really happening.
+
+Ask:
+- What user experience is being improved by these specific code changes?
 - What business capability is being enhanced/added/removed?
 - What problem do these changes solve for end users?
 - Think like a product manager explaining value to users
@@ -31167,6 +31314,7 @@ const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
 const os = __importStar(__nccwpck_require__(857));
 const theme_similarity_1 = __nccwpck_require__(4189);
+const code_analyzer_1 = __nccwpck_require__(4579);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
     BATCH_SIZE: 10,
@@ -31213,6 +31361,66 @@ class ClaudeService {
                 }
             }
         }
+    }
+    buildEnhancedAnalysisPrompt(chunk, context, codeChange, smartContext) {
+        // Limit content length to avoid overwhelming Claude
+        const maxContentLength = 2000;
+        const truncatedContent = chunk.content.length > maxContentLength
+            ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
+            : chunk.content;
+        let enhancedContext = context;
+        // Add algorithmic context if available
+        if (codeChange && smartContext) {
+            enhancedContext += `\n\nCODE ANALYSIS CONTEXT:`;
+            enhancedContext += `\nFile: ${codeChange.file} (${codeChange.changeType})`;
+            enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
+            enhancedContext += `\nFile type: ${codeChange.fileType}`;
+            if (codeChange.functionsChanged.length > 0) {
+                enhancedContext += `\nFunctions affected: ${codeChange.functionsChanged.slice(0, 3).join(', ')}${codeChange.functionsChanged.length > 3 ? '...' : ''}`;
+            }
+            if (codeChange.classesChanged.length > 0) {
+                enhancedContext += `\nClasses/interfaces affected: ${codeChange.classesChanged.slice(0, 3).join(', ')}${codeChange.classesChanged.length > 3 ? '...' : ''}`;
+            }
+            if (codeChange.importsChanged.length > 0) {
+                enhancedContext += `\nImports affected: ${codeChange.importsChanged.slice(0, 2).join(', ')}${codeChange.importsChanged.length > 2 ? '...' : ''}`;
+            }
+            if (codeChange.isTestFile) {
+                enhancedContext += `\nThis is a TEST file`;
+            }
+            if (codeChange.isConfigFile) {
+                enhancedContext += `\nThis is a CONFIG file`;
+            }
+            enhancedContext += `\nOverall complexity: ${smartContext.fileMetrics.codeComplexity}`;
+        }
+        return `${enhancedContext}
+
+Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
+
+File: ${chunk.filename}
+Code changes:
+${truncatedContent}
+
+Focus on:
+- What user experience or workflow is being improved?
+- What business capability is being added/removed/enhanced?
+- What problem is this solving for end users?
+- Think like a product manager, not a developer
+
+Examples of good business-focused themes:
+- "Remove demo functionality" (not "Delete greeting parameter")
+- "Improve code review automation" (not "Add AI services")
+- "Simplify configuration" (not "Update workflow files")
+- "Add pull request feedback" (not "Implement commenting system")
+
+Respond in this exact JSON format (no other text):
+{
+  "themeName": "user/business-focused name (what value does this provide?)",
+  "description": "what business problem this solves or capability it provides",
+  "businessImpact": "how this affects user experience or business outcomes",
+  "suggestedParent": null,
+  "confidence": 0.8,
+  "codePattern": "what pattern this represents"
+}`;
     }
     buildAnalysisPrompt(chunk, context) {
         // Limit content length to avoid overwhelming Claude
@@ -31390,6 +31598,26 @@ class ThemeContextManager {
                 codeSnippets: [chunk.content],
                 confidence: analysis.confidence,
                 context: analysis.description,
+                enhancedContext: {
+                    fileMetrics: {
+                        totalFiles: 1,
+                        fileTypes: [chunk.filename.split('.').pop() || 'unknown'],
+                        hasTests: false,
+                        hasConfig: false,
+                        codeComplexity: 'low',
+                    },
+                    changePatterns: {
+                        newFunctions: [],
+                        modifiedFunctions: [],
+                        newImports: [],
+                        removedImports: [],
+                        newClasses: [],
+                        modifiedClasses: [],
+                    },
+                    contextSummary: `Single chunk: ${chunk.filename}`,
+                    significantChanges: [],
+                },
+                codeChanges: [],
                 lastAnalysis: new Date(),
             };
             this.context.themes.set(newTheme.id, newTheme);
@@ -31438,8 +31666,31 @@ class ThemeService {
         this.anthropicApiKey = anthropicApiKey;
         this.similarityService = new theme_similarity_1.ThemeSimilarityService(anthropicApiKey, consolidationConfig);
     }
-    async analyzeThemes(changedFiles) {
+    async analyzeThemesWithEnhancedContext(gitService) {
+        console.log('[THEME-SERVICE] Starting enhanced theme analysis');
         const startTime = Date.now();
+        // Get enhanced code changes instead of basic changed files
+        const codeChanges = await gitService.getEnhancedChangedFiles();
+        console.log(`[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`);
+        // Analyze the code changes to build smart context
+        const smartContext = code_analyzer_1.CodeAnalyzer.analyzeCodeChanges(codeChanges);
+        console.log(`[THEME-SERVICE] Smart context: ${smartContext.contextSummary}`);
+        // Convert to the legacy format temporarily while we transition
+        const changedFiles = codeChanges.map((change) => ({
+            filename: change.file,
+            status: change.changeType,
+            additions: change.linesAdded,
+            deletions: change.linesRemoved,
+            patch: change.diffHunk,
+        }));
+        return this.analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime);
+    }
+    async analyzeThemes(changedFiles) {
+        console.log('[THEME-SERVICE] Starting legacy theme analysis');
+        const startTime = Date.now();
+        return this.analyzeThemesInternal(changedFiles, [], null, startTime);
+    }
+    async analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime) {
         const analysisResult = {
             themes: [],
             originalThemes: [],
@@ -31527,6 +31778,9 @@ class ThemeService {
         return analysisResult;
     }
     createFallbackThemes(changedFiles) {
+        const fileTypes = [
+            ...new Set(changedFiles.map((f) => f.filename.split('.').pop() || 'unknown')),
+        ];
         return [
             {
                 id: 'fallback-theme',
@@ -31538,6 +31792,32 @@ class ThemeService {
                 codeSnippets: [],
                 confidence: 0.3,
                 context: 'Analysis failed, manual review recommended',
+                enhancedContext: {
+                    fileMetrics: {
+                        totalFiles: changedFiles.length,
+                        fileTypes: fileTypes.filter((type) => type !== 'unknown'),
+                        hasTests: changedFiles.some((f) => /\.test\.|\.spec\./.test(f.filename)),
+                        hasConfig: changedFiles.some((f) => /\.config\.|package\.json/.test(f.filename)),
+                        codeComplexity: changedFiles.length > 5
+                            ? 'high'
+                            : changedFiles.length > 2
+                                ? 'medium'
+                                : 'low',
+                    },
+                    changePatterns: {
+                        newFunctions: [],
+                        modifiedFunctions: [],
+                        newImports: [],
+                        removedImports: [],
+                        newClasses: [],
+                        modifiedClasses: [],
+                    },
+                    contextSummary: `Fallback analysis: ${changedFiles.length} files changed`,
+                    significantChanges: [
+                        `Analysis failed for ${changedFiles.length} files`,
+                    ],
+                },
+                codeChanges: [],
                 lastAnalysis: new Date(),
             },
         ];
@@ -31937,6 +32217,234 @@ function logInfo(message) {
 function setOutput(name, value) {
     core.setOutput(name, value);
 }
+
+
+/***/ }),
+
+/***/ 4579:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CodeAnalyzer = void 0;
+class CodeAnalyzer {
+    static analyzeCodeChanges(changes) {
+        console.log(`[CODE-ANALYZER] Analyzing ${changes.length} code changes`);
+        const fileMetrics = this.analyzeFileMetrics(changes);
+        const changePatterns = this.extractChangePatterns(changes);
+        const contextSummary = this.buildContextSummary(changes, fileMetrics, changePatterns);
+        const significantChanges = this.extractSignificantChanges(changes);
+        return {
+            fileMetrics,
+            changePatterns,
+            contextSummary,
+            significantChanges,
+        };
+    }
+    static processChangedFile(filename, diffPatch, changeType, linesAdded, linesRemoved) {
+        console.log(`[CODE-ANALYZER] Processing ${filename} (${changeType})`);
+        return {
+            file: filename,
+            diffHunk: diffPatch,
+            changeType,
+            linesAdded,
+            linesRemoved,
+            functionsChanged: this.extractFunctions(diffPatch),
+            classesChanged: this.extractClasses(diffPatch),
+            importsChanged: this.extractImports(diffPatch),
+            fileType: this.getFileType(filename),
+            isTestFile: this.isTestFile(filename),
+            isConfigFile: this.isConfigFile(filename),
+        };
+    }
+    static analyzeFileMetrics(changes) {
+        const fileTypes = [...new Set(changes.map((c) => c.fileType))];
+        const totalLines = changes.reduce((sum, c) => sum + c.linesAdded + c.linesRemoved, 0);
+        const fileCount = changes.length;
+        // Complexity scoring based on file count and line changes
+        let codeComplexity = 'low';
+        if (fileCount > 5 || totalLines > 200) {
+            codeComplexity = 'high';
+        }
+        else if (fileCount > 2 || totalLines > 50) {
+            codeComplexity = 'medium';
+        }
+        return {
+            totalFiles: fileCount,
+            fileTypes: fileTypes.filter((type) => type !== 'unknown'),
+            hasTests: changes.some((c) => c.isTestFile),
+            hasConfig: changes.some((c) => c.isConfigFile),
+            codeComplexity,
+        };
+    }
+    static extractChangePatterns(changes) {
+        // Categorize by change type
+        const newFunctions = changes
+            .filter((c) => c.changeType === 'added')
+            .flatMap((c) => c.functionsChanged);
+        const modifiedFunctions = changes
+            .filter((c) => c.changeType === 'modified')
+            .flatMap((c) => c.functionsChanged);
+        const newClasses = changes
+            .filter((c) => c.changeType === 'added')
+            .flatMap((c) => c.classesChanged);
+        const modifiedClasses = changes
+            .filter((c) => c.changeType === 'modified')
+            .flatMap((c) => c.classesChanged);
+        // Import analysis
+        const addedImports = this.extractImportChanges(changes, 'added');
+        const removedImports = this.extractImportChanges(changes, 'removed');
+        return {
+            newFunctions: [...new Set(newFunctions)],
+            modifiedFunctions: [...new Set(modifiedFunctions)],
+            newImports: addedImports,
+            removedImports: removedImports,
+            newClasses: [...new Set(newClasses)],
+            modifiedClasses: [...new Set(modifiedClasses)],
+        };
+    }
+    static extractFunctions(diffContent) {
+        const functions = new Set();
+        for (const pattern of this.FUNCTION_PATTERNS) {
+            let match;
+            while ((match = pattern.exec(diffContent)) !== null) {
+                if (match[1] && match[1].length > 0) {
+                    functions.add(match[1]);
+                }
+            }
+            pattern.lastIndex = 0; // Reset regex state
+        }
+        return Array.from(functions);
+    }
+    static extractClasses(diffContent) {
+        const classes = new Set();
+        for (const pattern of this.CLASS_PATTERNS) {
+            let match;
+            while ((match = pattern.exec(diffContent)) !== null) {
+                if (match[1] && match[1].length > 0) {
+                    classes.add(match[1]);
+                }
+            }
+            pattern.lastIndex = 0; // Reset regex state
+        }
+        return Array.from(classes);
+    }
+    static extractImports(diffContent) {
+        const imports = new Set();
+        for (const pattern of this.IMPORT_PATTERNS) {
+            let match;
+            while ((match = pattern.exec(diffContent)) !== null) {
+                if (match[1] && match[1].length > 0) {
+                    imports.add(match[1]);
+                }
+            }
+            pattern.lastIndex = 0; // Reset regex state
+        }
+        return Array.from(imports);
+    }
+    static extractImportChanges(changes, changeType) {
+        const imports = new Set();
+        for (const change of changes) {
+            const lines = change.diffHunk.split('\n');
+            const prefix = changeType === 'added' ? '+' : '-';
+            for (const line of lines) {
+                if (line.startsWith(prefix) && line.includes('import')) {
+                    const importMatch = line.match(/from\s+['"]([^'"]+)['"]/);
+                    if (importMatch) {
+                        imports.add(importMatch[1]);
+                    }
+                }
+            }
+        }
+        return Array.from(imports);
+    }
+    static getFileType(filename) {
+        const ext = filename.split('.').pop()?.toLowerCase();
+        return ext ? `.${ext}` : 'unknown';
+    }
+    static isTestFile(filename) {
+        const testPatterns = [
+            /\.test\./,
+            /\.spec\./,
+            /^tests?\//,
+            /^spec\//,
+            /__tests__\//,
+        ];
+        return testPatterns.some((pattern) => pattern.test(filename));
+    }
+    static isConfigFile(filename) {
+        const configPatterns = [
+            /\.config\./,
+            /^package\.json$/,
+            /^tsconfig/,
+            /^jest\.config/,
+            /^webpack\.config/,
+            /^\.env/,
+            /^\.eslintrc/,
+            /^\.prettierrc/,
+        ];
+        return configPatterns.some((pattern) => pattern.test(filename));
+    }
+    static buildContextSummary(changes, metrics, patterns) {
+        const summary = [];
+        // File overview
+        summary.push(`${metrics.totalFiles} files changed`);
+        if (metrics.fileTypes.length > 0) {
+            summary.push(`Types: ${metrics.fileTypes.join(', ')}`);
+        }
+        // Function changes
+        if (patterns.newFunctions.length > 0) {
+            summary.push(`New functions: ${patterns.newFunctions.slice(0, 3).join(', ')}${patterns.newFunctions.length > 3 ? '...' : ''}`);
+        }
+        if (patterns.modifiedFunctions.length > 0) {
+            summary.push(`Modified functions: ${patterns.modifiedFunctions.slice(0, 3).join(', ')}${patterns.modifiedFunctions.length > 3 ? '...' : ''}`);
+        }
+        // Import changes
+        if (patterns.newImports.length > 0) {
+            summary.push(`New imports: ${patterns.newImports.slice(0, 2).join(', ')}${patterns.newImports.length > 2 ? '...' : ''}`);
+        }
+        // Complexity
+        summary.push(`Complexity: ${metrics.codeComplexity}`);
+        return summary.join(' | ');
+    }
+    static extractSignificantChanges(changes) {
+        const significant = [];
+        // Large files
+        const largeChanges = changes.filter((c) => c.linesAdded + c.linesRemoved > 50);
+        for (const change of largeChanges) {
+            significant.push(`Large change in ${change.file} (+${change.linesAdded}/-${change.linesRemoved})`);
+        }
+        // New files
+        const newFiles = changes.filter((c) => c.changeType === 'added');
+        for (const file of newFiles) {
+            significant.push(`New file: ${file.file}`);
+        }
+        // Deleted files
+        const deletedFiles = changes.filter((c) => c.changeType === 'deleted');
+        for (const file of deletedFiles) {
+            significant.push(`Deleted file: ${file.file}`);
+        }
+        return significant;
+    }
+}
+exports.CodeAnalyzer = CodeAnalyzer;
+CodeAnalyzer.FUNCTION_PATTERNS = [
+    /(?:^|\n)[-+]\s*(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+    /(?:^|\n)[-+]\s*(?:public|private|protected)?\s*(?:async\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g,
+    /(?:^|\n)[-+]\s*const\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:async\s+)?\(/g,
+    /(?:^|\n)[-+]\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:\s*\(/g, // Interface methods
+];
+CodeAnalyzer.CLASS_PATTERNS = [
+    /(?:^|\n)[-+]\s*(?:export\s+)?(?:abstract\s+)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+    /(?:^|\n)[-+]\s*(?:export\s+)?interface\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+    /(?:^|\n)[-+]\s*(?:export\s+)?type\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+    /(?:^|\n)[-+]\s*(?:export\s+)?enum\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
+];
+CodeAnalyzer.IMPORT_PATTERNS = [
+    /(?:^|\n)[-+]\s*import\s+.*?from\s+['"]([^'"]+)['"]/g,
+    /(?:^|\n)[-+]\s*import\s+['"]([^'"]+)['"]/g,
+];
 
 
 /***/ }),

@@ -8,6 +8,7 @@ import {
   ConsolidatedTheme,
   ConsolidationConfig,
 } from '../types/similarity-types';
+import { CodeAnalyzer, CodeChange, SmartContext } from '../utils/code-analyzer';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
@@ -29,6 +30,8 @@ export interface Theme {
   confidence: number;
 
   context: string;
+  enhancedContext: SmartContext; // Rich code context with algorithmic + AI insights
+  codeChanges: CodeChange[]; // Detailed code change information
   lastAnalysis: Date;
 }
 
@@ -138,6 +141,82 @@ class ClaudeService {
         }
       }
     }
+  }
+
+  private buildEnhancedAnalysisPrompt(
+    chunk: CodeChunk,
+    context: string,
+    codeChange?: CodeChange,
+    smartContext?: SmartContext
+  ): string {
+    // Limit content length to avoid overwhelming Claude
+    const maxContentLength = 2000;
+    const truncatedContent =
+      chunk.content.length > maxContentLength
+        ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
+        : chunk.content;
+
+    let enhancedContext = context;
+
+    // Add algorithmic context if available
+    if (codeChange && smartContext) {
+      enhancedContext += `\n\nCODE ANALYSIS CONTEXT:`;
+      enhancedContext += `\nFile: ${codeChange.file} (${codeChange.changeType})`;
+      enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
+      enhancedContext += `\nFile type: ${codeChange.fileType}`;
+
+      if (codeChange.functionsChanged.length > 0) {
+        enhancedContext += `\nFunctions affected: ${codeChange.functionsChanged.slice(0, 3).join(', ')}${codeChange.functionsChanged.length > 3 ? '...' : ''}`;
+      }
+
+      if (codeChange.classesChanged.length > 0) {
+        enhancedContext += `\nClasses/interfaces affected: ${codeChange.classesChanged.slice(0, 3).join(', ')}${codeChange.classesChanged.length > 3 ? '...' : ''}`;
+      }
+
+      if (codeChange.importsChanged.length > 0) {
+        enhancedContext += `\nImports affected: ${codeChange.importsChanged.slice(0, 2).join(', ')}${codeChange.importsChanged.length > 2 ? '...' : ''}`;
+      }
+
+      if (codeChange.isTestFile) {
+        enhancedContext += `\nThis is a TEST file`;
+      }
+
+      if (codeChange.isConfigFile) {
+        enhancedContext += `\nThis is a CONFIG file`;
+      }
+
+      enhancedContext += `\nOverall complexity: ${smartContext.fileMetrics.codeComplexity}`;
+    }
+
+    return `${enhancedContext}
+
+Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
+
+File: ${chunk.filename}
+Code changes:
+${truncatedContent}
+
+Focus on:
+- What user experience or workflow is being improved?
+- What business capability is being added/removed/enhanced?
+- What problem is this solving for end users?
+- Think like a product manager, not a developer
+
+Examples of good business-focused themes:
+- "Remove demo functionality" (not "Delete greeting parameter")
+- "Improve code review automation" (not "Add AI services")
+- "Simplify configuration" (not "Update workflow files")
+- "Add pull request feedback" (not "Implement commenting system")
+
+Respond in this exact JSON format (no other text):
+{
+  "themeName": "user/business-focused name (what value does this provide?)",
+  "description": "what business problem this solves or capability it provides",
+  "businessImpact": "how this affects user experience or business outcomes",
+  "suggestedParent": null,
+  "confidence": 0.8,
+  "codePattern": "what pattern this represents"
+}`;
   }
 
   private buildAnalysisPrompt(chunk: CodeChunk, context: string): string {
@@ -354,6 +433,26 @@ class ThemeContextManager {
         codeSnippets: [chunk.content],
         confidence: analysis.confidence,
         context: analysis.description,
+        enhancedContext: {
+          fileMetrics: {
+            totalFiles: 1,
+            fileTypes: [chunk.filename.split('.').pop() || 'unknown'],
+            hasTests: false,
+            hasConfig: false,
+            codeComplexity: 'low',
+          },
+          changePatterns: {
+            newFunctions: [],
+            modifiedFunctions: [],
+            newImports: [],
+            removedImports: [],
+            newClasses: [],
+            modifiedClasses: [],
+          },
+          contextSummary: `Single chunk: ${chunk.filename}`,
+          significantChanges: [],
+        },
+        codeChanges: [],
         lastAnalysis: new Date(),
       };
 
@@ -429,11 +528,55 @@ export class ThemeService {
     );
   }
 
+  async analyzeThemesWithEnhancedContext(
+    gitService: import('./git-service').GitService
+  ): Promise<ThemeAnalysisResult> {
+    console.log('[THEME-SERVICE] Starting enhanced theme analysis');
+    const startTime = Date.now();
+
+    // Get enhanced code changes instead of basic changed files
+    const codeChanges = await gitService.getEnhancedChangedFiles();
+    console.log(
+      `[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`
+    );
+
+    // Analyze the code changes to build smart context
+    const smartContext = CodeAnalyzer.analyzeCodeChanges(codeChanges);
+    console.log(
+      `[THEME-SERVICE] Smart context: ${smartContext.contextSummary}`
+    );
+
+    // Convert to the legacy format temporarily while we transition
+    const changedFiles = codeChanges.map((change) => ({
+      filename: change.file,
+      status: change.changeType as 'added' | 'modified' | 'removed' | 'renamed',
+      additions: change.linesAdded,
+      deletions: change.linesRemoved,
+      patch: change.diffHunk,
+    }));
+
+    return this.analyzeThemesInternal(
+      changedFiles,
+      codeChanges,
+      smartContext,
+      startTime
+    );
+  }
+
   async analyzeThemes(
     changedFiles: ChangedFile[]
   ): Promise<ThemeAnalysisResult> {
+    console.log('[THEME-SERVICE] Starting legacy theme analysis');
     const startTime = Date.now();
+    return this.analyzeThemesInternal(changedFiles, [], null, startTime);
+  }
 
+  private async analyzeThemesInternal(
+    changedFiles: ChangedFile[],
+    codeChanges: CodeChange[],
+    smartContext: SmartContext | null,
+    startTime: number
+  ): Promise<ThemeAnalysisResult> {
     const analysisResult: ThemeAnalysisResult = {
       themes: [],
       originalThemes: [],
@@ -546,6 +689,12 @@ export class ThemeService {
   }
 
   private createFallbackThemes(changedFiles: ChangedFile[]): Theme[] {
+    const fileTypes = [
+      ...new Set(
+        changedFiles.map((f) => f.filename.split('.').pop() || 'unknown')
+      ),
+    ];
+
     return [
       {
         id: 'fallback-theme',
@@ -557,6 +706,37 @@ export class ThemeService {
         codeSnippets: [],
         confidence: 0.3,
         context: 'Analysis failed, manual review recommended',
+        enhancedContext: {
+          fileMetrics: {
+            totalFiles: changedFiles.length,
+            fileTypes: fileTypes.filter((type) => type !== 'unknown'),
+            hasTests: changedFiles.some((f) =>
+              /\.test\.|\.spec\./.test(f.filename)
+            ),
+            hasConfig: changedFiles.some((f) =>
+              /\.config\.|package\.json/.test(f.filename)
+            ),
+            codeComplexity:
+              changedFiles.length > 5
+                ? 'high'
+                : changedFiles.length > 2
+                  ? 'medium'
+                  : 'low',
+          },
+          changePatterns: {
+            newFunctions: [],
+            modifiedFunctions: [],
+            newImports: [],
+            removedImports: [],
+            newClasses: [],
+            modifiedClasses: [],
+          },
+          contextSummary: `Fallback analysis: ${changedFiles.length} files changed`,
+          significantChanges: [
+            `Analysis failed for ${changedFiles.length} files`,
+          ],
+        },
+        codeChanges: [],
         lastAnalysis: new Date(),
       },
     ];

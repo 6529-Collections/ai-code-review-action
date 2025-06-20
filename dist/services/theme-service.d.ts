@@ -1,5 +1,6 @@
 import { ChangedFile } from './git-service';
 import { ConsolidatedTheme, ConsolidationConfig } from '../types/similarity-types';
+import { CodeChange, SmartContext } from '../utils/code-analyzer';
 export interface Theme {
     id: string;
     name: string;
@@ -11,6 +12,8 @@ export interface Theme {
     codeSnippets: string[];
     confidence: number;
     context: string;
+    enhancedContext: SmartContext;
+    codeChanges: CodeChange[];
     lastAnalysis: Date;
 }
 export interface CodeChunk {
@@ -69,6 +72,8 @@ export declare class ThemeService {
     private readonly anthropicApiKey;
     private similarityService;
     constructor(anthropicApiKey: string, consolidationConfig?: Partial<ConsolidationConfig>);
+    analyzeThemesWithEnhancedContext(gitService: import('./git-service').GitService): Promise<ThemeAnalysisResult>;
     analyzeThemes(changedFiles: ChangedFile[]): Promise<ThemeAnalysisResult>;
+    private analyzeThemesInternal;
     private createFallbackThemes;
 }

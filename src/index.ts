@@ -76,22 +76,24 @@ export async function run(): Promise<void> {
         if (theme.childThemes && theme.childThemes.length > 0) {
           detailedThemes += `\\n   - 📁 Contains ${theme.childThemes.length} sub-themes:`;
 
-          theme.childThemes.forEach((child: typeof theme, childIndex: number) => {
-            const childConfidence = (child.confidence * 100).toFixed(0);
-            const childFiles = child.affectedFiles.slice(0, 2).join(', ');
-            const moreChildFiles =
-              child.affectedFiles.length > 2
-                ? ` (+${child.affectedFiles.length - 2})`
-                : '';
+          theme.childThemes.forEach(
+            (child: typeof theme, childIndex: number) => {
+              const childConfidence = (child.confidence * 100).toFixed(0);
+              const childFiles = child.affectedFiles.slice(0, 2).join(', ');
+              const moreChildFiles =
+                child.affectedFiles.length > 2
+                  ? ` (+${child.affectedFiles.length - 2})`
+                  : '';
 
-            detailedThemes += `\\n     ${childIndex + 1}. **${child.name}** (${childConfidence}%)`;
-            detailedThemes += `\\n        - Files: ${childFiles}${moreChildFiles}`;
-            detailedThemes += `\\n        - ${child.description.replace(/[\r\n]/g, ' ').trim()}`;
+              detailedThemes += `\\n     ${childIndex + 1}. **${child.name}** (${childConfidence}%)`;
+              detailedThemes += `\\n        - Files: ${childFiles}${moreChildFiles}`;
+              detailedThemes += `\\n        - ${child.description.replace(/[\r\n]/g, ' ').trim()}`;
 
-            if (child.consolidationMethod === 'merge') {
-              detailedThemes += `\\n        - 🔄 Merged from ${child.sourceThemes.length} themes`;
+              if (child.consolidationMethod === 'merge') {
+                detailedThemes += `\\n        - 🔄 Merged from ${child.sourceThemes.length} themes`;
+              }
             }
-          });
+          );
         }
       });
 

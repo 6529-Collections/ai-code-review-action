@@ -1,4 +1,5 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
+import { CodeChange } from '../utils/code-analyzer';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -26,12 +27,56 @@ export class BusinessDomainService {
     return domains;
   }
 
+  async extractBusinessDomainWithContext(
+    name: string,
+    description: string,
+    enhancedContext?: { codeChanges?: CodeChange[]; contextSummary?: string }
+  ): Promise<string> {
+    // Build code context summary if available
+    let codeContext = '';
+    if (
+      enhancedContext?.codeChanges &&
+      enhancedContext.codeChanges.length > 0
+    ) {
+      const changes = enhancedContext.codeChanges;
+      codeContext = `Files changed: ${changes.length}\n`;
+      codeContext += `Types: ${[...new Set(changes.map((c) => c.fileType))].join(', ')}\n`;
+
+      const functions = changes.flatMap((c) => c.functionsChanged).slice(0, 5);
+      if (functions.length > 0) {
+        codeContext += `Functions: ${functions.join(', ')}\n`;
+      }
+
+      const classes = changes.flatMap((c) => c.classesChanged).slice(0, 3);
+      if (classes.length > 0) {
+        codeContext += `Classes/Interfaces: ${classes.join(', ')}\n`;
+      }
+
+      if (enhancedContext?.contextSummary) {
+        codeContext += `Summary: ${enhancedContext.contextSummary}`;
+      }
+    }
+
+    const prompt = codeContext
+      ? this.buildEnhancedDomainExtractionPrompt(name, description, codeContext)
+      : this.buildDomainExtractionPrompt(name, description);
+
+    return this.executeDomainExtraction(name, prompt, description);
+  }
+
   async extractBusinessDomain(
     name: string,
     description: string
   ): Promise<string> {
     const prompt = this.buildDomainExtractionPrompt(name, description);
+    return this.executeDomainExtraction(name, prompt, description);
+  }
 
+  private async executeDomainExtraction(
+    name: string,
+    prompt: string,
+    description?: string
+  ): Promise<string> {
     try {
       const tempFile = path.join(
         os.tmpdir(),
@@ -60,11 +105,11 @@ export class BusinessDomainService {
         console.warn(
           `[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`
         );
-        return this.extractBusinessDomainFallback(name, description);
+        return this.extractBusinessDomainFallback(name, description || '');
       }
     } catch (error) {
       console.warn('AI domain extraction failed:', error);
-      return this.extractBusinessDomainFallback(name, description);
+      return this.extractBusinessDomainFallback(name, description || '');
     }
   }
 
@@ -72,15 +117,54 @@ export class BusinessDomainService {
     name: string,
     description: string
   ): string {
+    // Check if we have enhanced context available
     return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
 
 Theme Name: "${name}"
 Description: "${description}"
 
-Focus on the end-user or business outcome, not the technical details. Ask:
+IMPORTANT: Focus on the end-user or business outcome, not the technical details. Ask:
 - What user experience is being improved?
 - What business capability is being added/enhanced/removed?
 - What problem does this solve for end users?
+- What workflow or process is being streamlined?
+
+Choose from these USER-FOCUSED domains or create a similar category:
+- Remove Demo/Scaffolding Content
+- Improve Code Review Experience  
+- Streamline Development Workflow
+- Enhance Automation Capabilities
+- Simplify Configuration & Setup
+- Add User Feedback Features
+- Clean Up Legacy Code
+- Improve Documentation & Onboarding
+- Fix User-Facing Issues
+- Optimize Performance for Users
+- Enable New Integrations
+- Modernize User Interface
+
+Think like a product manager explaining value to users, not a developer describing implementation.
+
+Respond with just the user-focused domain name (2-5 words, no extra text):`;
+  }
+
+  private buildEnhancedDomainExtractionPrompt(
+    name: string,
+    description: string,
+    codeContext?: string
+  ): string {
+    return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
+
+Theme Name: "${name}"
+Description: "${description}"
+${codeContext ? `\nACTUAL CODE CONTEXT:\n${codeContext}` : ''}
+
+IMPORTANT: Focus on the end-user or business outcome, not the technical details. The code context above shows what was actually changed - use this to understand the real business purpose.
+
+Ask yourself:
+- What user experience is being improved by these specific code changes?
+- What business capability is being added/enhanced/removed?
+- What problem do these changes solve for end users?
 - What workflow or process is being streamlined?
 
 Choose from these USER-FOCUSED domains or create a similar category:

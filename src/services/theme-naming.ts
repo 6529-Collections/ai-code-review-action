@@ -1,5 +1,6 @@
 import { Theme } from './theme-service';
 import { ConsolidatedTheme } from '../types/similarity-types';
+import { CodeChange } from '../utils/code-analyzer';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -10,7 +11,12 @@ export class ThemeNamingService {
     themes: Theme[]
   ): Promise<{ name: string; description: string }> {
     const prompt = this.buildMergedThemeNamingPrompt(themes);
+    return this.executeMergedThemeNaming(prompt);
+  }
 
+  private async executeMergedThemeNaming(
+    prompt: string
+  ): Promise<{ name: string; description: string }> {
     try {
       const tempFile = path.join(
         os.tmpdir(),
@@ -39,11 +45,17 @@ export class ThemeNamingService {
         console.warn(
           `[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`
         );
-        return this.createFallbackMergedThemeName(themes);
+        return {
+          name: 'Merged Changes',
+          description: 'Consolidated related changes',
+        };
       }
     } catch (error) {
       console.warn('AI theme naming failed:', error);
-      return this.createFallbackMergedThemeName(themes);
+      return {
+        name: 'Merged Changes',
+        description: 'Consolidated related changes',
+      };
     }
   }
 
@@ -80,6 +92,43 @@ export class ThemeNamingService {
     };
   }
 
+  generateMergedThemeNameWithContext(
+    themes: Theme[],
+    enhancedContext?: { codeChanges?: CodeChange[]; contextSummary?: string }
+  ): Promise<{ name: string; description: string }> {
+    // Build enhanced context if available
+    let codeContext = '';
+    if (
+      enhancedContext?.codeChanges &&
+      enhancedContext.codeChanges.length > 0
+    ) {
+      const changes = enhancedContext.codeChanges;
+      codeContext = `\nACTUAL CODE CHANGES:\n`;
+      codeContext += `- Files: ${changes.length} files affected\n`;
+      codeContext += `- Types: ${[...new Set(changes.map((c) => c.fileType))].join(', ')}\n`;
+
+      const functions = changes.flatMap((c) => c.functionsChanged);
+      if (functions.length > 0) {
+        codeContext += `- Functions added/modified: ${functions.slice(0, 5).join(', ')}${functions.length > 5 ? '...' : ''}\n`;
+      }
+
+      const imports = changes.flatMap((c) => c.importsChanged);
+      if (imports.length > 0) {
+        codeContext += `- Dependencies: ${imports.slice(0, 3).join(', ')}${imports.length > 3 ? '...' : ''}\n`;
+      }
+
+      if (enhancedContext?.contextSummary) {
+        codeContext += `- Summary: ${enhancedContext.contextSummary}\n`;
+      }
+    }
+
+    const prompt = this.buildEnhancedMergedThemeNamingPrompt(
+      themes,
+      codeContext
+    );
+    return this.executeMergedThemeNaming(prompt);
+  }
+
   private buildMergedThemeNamingPrompt(themes: Theme[]): string {
     const themeDetails = themes
       .map(
@@ -96,6 +145,51 @@ ${themeDetails}
 
 Create a unified theme name focused on USER VALUE and BUSINESS IMPACT, not technical implementation. Ask:
 - What user experience is being improved by these changes collectively?
+- What business capability is being enhanced/added/removed?
+- What problem do these changes solve for end users?
+- Think like a product manager explaining value to users
+
+Good examples:
+- "Remove demo functionality" (not "Delete greeting parameters")
+- "Improve code review automation" (not "Add AI services")
+- "Streamline configuration" (not "Update workflow files")
+- "Add pull request feedback" (not "Implement commenting system")
+
+The name should be:
+- User/business-focused (what value does this provide?)
+- Concise (2-5 words)
+- Descriptive of the user benefit, not technical implementation
+- Focused on outcomes, not code changes
+
+Respond in this exact JSON format (no other text):
+{
+  "name": "Remove Authentication Scaffolding",
+  "description": "Removes demo authentication components and related scaffolding code that are no longer needed"
+}`;
+  }
+
+  private buildEnhancedMergedThemeNamingPrompt(
+    themes: Theme[],
+    codeContext: string
+  ): string {
+    const themeDetails = themes
+      .map(
+        (theme) =>
+          `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles?.join(', ') || 'unknown'})`
+      )
+      .join('\n');
+
+    return `You are a product manager analyzing related code changes to create a USER-FOCUSED theme name.
+
+These ${themes.length} themes have been identified as similar and will be consolidated:
+
+${themeDetails}
+${codeContext}
+
+Create a unified theme name focused on USER VALUE and BUSINESS IMPACT, not technical implementation. Use the actual code changes above to understand what's really happening.
+
+Ask:
+- What user experience is being improved by these specific code changes?
 - What business capability is being enhanced/added/removed?
 - What problem do these changes solve for end users?
 - Think like a product manager explaining value to users

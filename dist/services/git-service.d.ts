@@ -1,3 +1,4 @@
+import { CodeChange } from '../utils/code-analyzer';
 export interface ChangedFile {
     filename: string;
     status: 'added' | 'modified' | 'removed' | 'renamed';
@@ -17,6 +18,7 @@ export interface PullRequestContext {
 export declare class GitService {
     private readonly githubToken;
     constructor(githubToken: string);
+    getEnhancedChangedFiles(): Promise<CodeChange[]>;
     getPullRequestContext(): Promise<PullRequestContext | null>;
     private createDevModeContext;
     private getCurrentBranch;
