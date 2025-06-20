@@ -30414,16 +30414,29 @@ class ClaudeService {
             : chunk.content;
         return `${context}
 
-Analyze this code change in file: ${chunk.filename}
+Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
 
+File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Please provide analysis in this exact JSON format (no other text):
+Focus on:
+- What user experience or workflow is being improved?
+- What business capability is being added/removed/enhanced?
+- What problem is this solving for end users?
+- Think like a product manager, not a developer
+
+Examples of good business-focused themes:
+- "Remove demo functionality" (not "Delete greeting parameter")
+- "Improve code review automation" (not "Add AI services")
+- "Simplify configuration" (not "Update workflow files")
+- "Add pull request feedback" (not "Implement commenting system")
+
+Respond in this exact JSON format (no other text):
 {
-  "themeName": "brief name for what this change does",
-  "description": "explanation of the change purpose",
-  "businessImpact": "what business functionality this affects",
+  "themeName": "user/business-focused name (what value does this provide?)",
+  "description": "what business problem this solves or capability it provides",
+  "businessImpact": "how this affects user experience or business outcomes",
   "suggestedParent": null,
   "confidence": 0.8,
   "codePattern": "what pattern this represents"
@@ -31467,31 +31480,34 @@ Respond in this exact JSON format (no other text):
         }
     }
     buildDomainExtractionPrompt(name, description) {
-        return `You are an expert code reviewer analyzing code changes to determine their business domain category.
+        return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
 
 Theme Name: "${name}"
 Description: "${description}"
 
-Based on this theme, determine what high-level business domain or functional area this change belongs to. Consider:
-- What business functionality is being affected?
-- What system or component is being modified?
-- What is the primary purpose of this change?
+Focus on the end-user or business outcome, not the technical details. Ask:
+- What user experience is being improved?
+- What business capability is being added/enhanced/removed?
+- What problem does this solve for end users?
+- What workflow or process is being streamlined?
 
-Choose from these common domains or create a similar concise category:
-- Authentication & Security
-- User Interface
-- Data Management
-- API & Services
-- Testing & Validation
-- Configuration & Setup
-- Infrastructure
-- Documentation
-- Bug Fixes
-- Performance
-- Integration
-- Workflow & Automation
+Choose from these USER-FOCUSED domains or create a similar category:
+- Remove Demo/Scaffolding Content
+- Improve Code Review Experience  
+- Streamline Development Workflow
+- Enhance Automation Capabilities
+- Simplify Configuration & Setup
+- Add User Feedback Features
+- Clean Up Legacy Code
+- Improve Documentation & Onboarding
+- Fix User-Facing Issues
+- Optimize Performance for Users
+- Enable New Integrations
+- Modernize User Interface
 
-Respond with just the domain name (2-4 words, no extra text):`;
+Think like a product manager explaining value to users, not a developer describing implementation.
+
+Respond with just the user-focused domain name (2-5 words, no extra text):`;
     }
     parseDomainExtractionResponse(output) {
         // Clean up the response - take first line, trim whitespace, remove quotes
@@ -31508,32 +31524,44 @@ Respond with just the domain name (2-4 words, no extra text):`;
     }
     extractBusinessDomainFallback(name, description) {
         const text = (name + ' ' + description).toLowerCase();
-        // Business domain keywords (fallback)
-        if (text.includes('greeting') || text.includes('demo')) {
-            return 'Demo & Examples';
+        // User-focused domain keywords (fallback)
+        if (text.includes('greeting') || text.includes('demo') || text.includes('scaffolding') || text.includes('example')) {
+            return 'Remove Demo/Scaffolding Content';
         }
-        if (text.includes('service') || text.includes('architecture')) {
-            return 'Service Architecture';
+        if (text.includes('review') || text.includes('analysis') || text.includes('feedback')) {
+            return 'Improve Code Review Experience';
         }
-        if (text.includes('git') || text.includes('repository')) {
-            return 'Git Integration';
+        if (text.includes('workflow') || text.includes('action') || text.includes('automation')) {
+            return 'Streamline Development Workflow';
         }
-        if (text.includes('theme') || text.includes('analysis')) {
-            return 'Analysis & Processing';
+        if (text.includes('config') || text.includes('setup') || text.includes('install')) {
+            return 'Simplify Configuration & Setup';
         }
-        if (text.includes('test') || text.includes('validation')) {
-            return 'Testing & Validation';
+        if (text.includes('comment') || text.includes('pr') || text.includes('pull request')) {
+            return 'Add User Feedback Features';
         }
-        if (text.includes('interface') || text.includes('type')) {
-            return 'Interface Changes';
+        if (text.includes('test') || text.includes('validation') || text.includes('quality')) {
+            return 'Enhance Automation Capabilities';
         }
-        if (text.includes('workflow') || text.includes('action')) {
-            return 'Workflow & Automation';
+        if (text.includes('documentation') || text.includes('readme') || text.includes('guide')) {
+            return 'Improve Documentation & Onboarding';
         }
-        if (text.includes('auth') || text.includes('security')) {
-            return 'Authentication & Security';
+        if (text.includes('performance') || text.includes('speed') || text.includes('optimization')) {
+            return 'Optimize Performance for Users';
         }
-        return 'General Changes';
+        if (text.includes('integration') || text.includes('api') || text.includes('service')) {
+            return 'Enable New Integrations';
+        }
+        if (text.includes('interface') || text.includes('ui') || text.includes('user')) {
+            return 'Modernize User Interface';
+        }
+        if (text.includes('remove') || text.includes('delete') || text.includes('cleanup')) {
+            return 'Clean Up Legacy Code';
+        }
+        if (text.includes('fix') || text.includes('bug') || text.includes('error')) {
+            return 'Fix User-Facing Issues';
+        }
+        return 'General Improvements';
     }
     createParentTheme(domain, children) {
         const allFiles = new Set();
@@ -31596,17 +31624,29 @@ Respond with just the domain name (2-4 words, no extra text):`;
         const themeDetails = themes
             .map((theme) => `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles.join(', ')})`)
             .join('\n');
-        return `You are an expert code reviewer analyzing related code changes that should be merged into a single theme.
+        return `You are a product manager analyzing related code changes to create a USER-FOCUSED theme name.
 
 These ${themes.length} themes have been identified as similar and will be consolidated:
 
 ${themeDetails}
 
-Please create a unified theme name and description that best represents what these changes collectively accomplish. The name should be:
+Create a unified theme name focused on USER VALUE and BUSINESS IMPACT, not technical implementation. Ask:
+- What user experience is being improved by these changes collectively?
+- What business capability is being enhanced/added/removed?
+- What problem do these changes solve for end users?
+- Think like a product manager explaining value to users
+
+Good examples:
+- "Remove demo functionality" (not "Delete greeting parameters")
+- "Improve code review automation" (not "Add AI services")
+- "Streamline configuration" (not "Update workflow files")
+- "Add pull request feedback" (not "Implement commenting system")
+
+The name should be:
+- User/business-focused (what value does this provide?)
 - Concise (2-5 words)
-- Descriptive of the actual change being made
-- Not just a list of the individual themes
-- Focused on the business purpose rather than implementation details
+- Descriptive of the user benefit, not technical implementation
+- Focused on outcomes, not code changes
 
 Respond in this exact JSON format (no other text):
 {

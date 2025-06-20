@@ -150,16 +150,29 @@ class ClaudeService {
 
     return `${context}
 
-Analyze this code change in file: ${chunk.filename}
+Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
 
+File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Please provide analysis in this exact JSON format (no other text):
+Focus on:
+- What user experience or workflow is being improved?
+- What business capability is being added/removed/enhanced?
+- What problem is this solving for end users?
+- Think like a product manager, not a developer
+
+Examples of good business-focused themes:
+- "Remove demo functionality" (not "Delete greeting parameter")
+- "Improve code review automation" (not "Add AI services")
+- "Simplify configuration" (not "Update workflow files")
+- "Add pull request feedback" (not "Implement commenting system")
+
+Respond in this exact JSON format (no other text):
 {
-  "themeName": "brief name for what this change does",
-  "description": "explanation of the change purpose",
-  "businessImpact": "what business functionality this affects",
+  "themeName": "user/business-focused name (what value does this provide?)",
+  "description": "what business problem this solves or capability it provides",
+  "businessImpact": "how this affects user experience or business outcomes",
   "suggestedParent": null,
   "confidence": 0.8,
   "codePattern": "what pattern this represents"
