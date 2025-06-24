@@ -30846,13 +30846,17 @@ class GitService {
         if (!prContext) {
             return [];
         }
+        console.log(`[GIT-DEBUG] PR Context: number=${prContext.number}, event=${github.context.eventName}, hasToken=${!!this.githubToken}`);
+        console.log(`[GIT-DEBUG] baseBranch=${prContext.baseBranch}, headBranch=${prContext.headBranch}`);
         // GitHub Actions PR mode - use GitHub API
         if (github.context.eventName === 'pull_request' &&
             this.githubToken &&
             prContext.number > 0) {
+            console.log(`[GIT-DEBUG] Using GitHub API method`);
             return await this.getChangedFilesFromGitHub(prContext.number);
         }
         // Dev mode - use git commands
+        console.log(`[GIT-DEBUG] Using git commands method`);
         return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
     }
     async getChangedFilesFromGitHub(prNumber) {
