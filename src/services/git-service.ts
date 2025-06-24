@@ -21,6 +21,24 @@ export interface PullRequestContext {
 }
 
 export class GitService {
+  // Patterns for files to exclude from analysis
+  private static readonly EXCLUDED_PATTERNS = [
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /^\.github\//, // Exclude GitHub workflows
+    /package-lock\.json$/, // Exclude lock files
+    /^README\.md$/, // Exclude main README (optional)
+    /^action\.yml$/, // Exclude action config (optional)
+  ];
+
+  private shouldIncludeFile(filename: string): boolean {
+    return !GitService.EXCLUDED_PATTERNS.some((pattern) =>
+      pattern.test(filename)
+    );
+  }
+
   constructor(private readonly githubToken: string) {}
 
   async getEnhancedChangedFiles(): Promise<CodeChange[]> {
@@ -184,14 +202,19 @@ export class GitService {
         pull_number: prNumber,
       });
 
-      const changedFiles = files.map((file) => ({
-        filename: file.filename,
-        status: file.status as ChangedFile['status'],
-        additions: file.additions,
-        deletions: file.deletions,
-        patch: file.patch,
-      }));
+      const changedFiles = files
+        .filter((file) => this.shouldIncludeFile(file.filename))
+        .map((file) => ({
+          filename: file.filename,
+          status: file.status as ChangedFile['status'],
+          additions: file.additions,
+          deletions: file.deletions,
+          patch: file.patch,
+        }));
 
+      console.log(
+        `[GIT-SERVICE] Filtered ${files.length} files down to ${changedFiles.length} for analysis`
+      );
       return changedFiles;
     } catch (error) {
       console.error('Failed to get changed files from GitHub:', error);
@@ -228,7 +251,7 @@ export class GitService {
 
       for (const line of fileLines) {
         const [status, filename] = line.split('\t');
-        if (!filename) continue;
+        if (!filename || !this.shouldIncludeFile(filename)) continue;
 
         // Get diff patch for this file
         let patch = '';
@@ -263,6 +286,9 @@ export class GitService {
         files.push(file);
       }
 
+      console.log(
+        `[GIT-SERVICE] Found ${files.length} source files for analysis (excluded build artifacts)`
+      );
       return files;
     } catch (error) {
       console.error('Failed to get changed files from git:', error);

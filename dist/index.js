@@ -30730,6 +30730,9 @@ const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
 const code_analyzer_1 = __nccwpck_require__(4579);
 class GitService {
+    shouldIncludeFile(filename) {
+        return !GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
+    }
     constructor(githubToken) {
         this.githubToken = githubToken;
     }
@@ -30857,13 +30860,16 @@ class GitService {
                 ...github.context.repo,
                 pull_number: prNumber,
             });
-            const changedFiles = files.map((file) => ({
+            const changedFiles = files
+                .filter((file) => this.shouldIncludeFile(file.filename))
+                .map((file) => ({
                 filename: file.filename,
                 status: file.status,
                 additions: file.additions,
                 deletions: file.deletions,
                 patch: file.patch,
             }));
+            console.log(`[GIT-SERVICE] Filtered ${files.length} files down to ${changedFiles.length} for analysis`);
             return changedFiles;
         }
         catch (error) {
@@ -30890,7 +30896,7 @@ class GitService {
                 .filter((line) => line.trim());
             for (const line of fileLines) {
                 const [status, filename] = line.split('\t');
-                if (!filename)
+                if (!filename || !this.shouldIncludeFile(filename))
                     continue;
                 // Get diff patch for this file
                 let patch = '';
@@ -30918,6 +30924,7 @@ class GitService {
                 };
                 files.push(file);
             }
+            console.log(`[GIT-SERVICE] Found ${files.length} source files for analysis (excluded build artifacts)`);
             return files;
         }
         catch (error) {
@@ -30957,6 +30964,17 @@ class GitService {
     }
 }
 exports.GitService = GitService;
+// Patterns for files to exclude from analysis
+GitService.EXCLUDED_PATTERNS = [
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /^\.github\//, // Exclude GitHub workflows
+    /package-lock\.json$/, // Exclude lock files
+    /^README\.md$/, // Exclude main README (optional)
+    /^action\.yml$/, // Exclude action config (optional)
+];
 
 
 /***/ }),

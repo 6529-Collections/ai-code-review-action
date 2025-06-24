@@ -17,6 +17,8 @@ export interface PullRequestContext {
 }
 export declare class GitService {
     private readonly githubToken;
+    private static readonly EXCLUDED_PATTERNS;
+    private shouldIncludeFile;
     constructor(githubToken: string);
     getEnhancedChangedFiles(): Promise<CodeChange[]>;
     getPullRequestContext(): Promise<PullRequestContext | null>;
