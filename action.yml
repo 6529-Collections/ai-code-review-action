@@ -1,5 +1,5 @@
-name: 'AI Code Review Action'
-description: 'AI-powered code review GitHub Action that provides automated code analysis and feedback'
+name: 'AI Code Theme Analysis Action'
+description: 'AI-powered GitHub Action that analyzes code changes in pull requests to identify and consolidate business themes using Claude AI'
 author: '6529 Collections'
 
 inputs:
@@ -10,6 +10,12 @@ inputs:
   anthropic-api-key:
     description: 'Anthropic API key for Claude access'
     required: true
+
+outputs:
+  themes:
+    description: 'Detailed theme analysis with consolidation information'
+  summary:
+    description: 'Summary of the theme analysis'
 
 branding:
   icon: 'eye'

@@ -24,7 +24,7 @@ export interface ConsolidatedTheme {
   id: string;
   name: string;
   description: string;
-  level: number; // 0=root, 1=child, 2=grandchild
+  level: number; // 0=root, 1=child, 2=grandchild, 3=great-grandchild, etc. (unlimited depth)
   parentId?: string;
   childThemes: ConsolidatedTheme[];
 
@@ -38,7 +38,14 @@ export interface ConsolidatedTheme {
 
   // Consolidation metadata
   sourceThemes: string[]; // IDs of original themes
-  consolidationMethod: 'merge' | 'hierarchy' | 'single';
+  consolidationMethod: 'merge' | 'hierarchy' | 'single' | 'expansion';
+
+  // Expansion metadata
+  isExpanded?: boolean; // Whether this theme has been expanded
+  expansionDepth?: number; // Depth of expansion from original theme
+  businessLogicPatterns?: string[]; // Identified business patterns
+  userFlowPatterns?: string[]; // Identified user flow patterns
+  complexityScore?: number; // Calculated complexity score for expansion
 }
 
 export interface ConsolidationConfig {
@@ -47,6 +54,11 @@ export interface ConsolidationConfig {
   minThemesForParent: number; // 2 - min themes to create parent
   confidenceWeight: number; // 0.3 - how much confidence affects merging
   businessDomainWeight: number; // 0.4 - importance of business similarity
+
+  // Hierarchical expansion configuration
+  maxHierarchyDepth: number; // 4 - maximum depth for theme expansion
+  expansionEnabled: boolean; // true - whether to enable hierarchical expansion
+  crossLevelSimilarityCheck: boolean; // true - check similarity across hierarchy levels
 }
 
 export interface MergeDecision {

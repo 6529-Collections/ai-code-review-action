@@ -29,6 +29,9 @@ export class ThemeSimilarityService {
       minThemesForParent: 2,
       confidenceWeight: 0.3,
       businessDomainWeight: 0.4,
+      maxHierarchyDepth: 4,
+      expansionEnabled: true,
+      crossLevelSimilarityCheck: true,
       ...config,
     };
 

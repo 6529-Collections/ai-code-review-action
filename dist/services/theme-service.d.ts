@@ -58,6 +58,7 @@ export interface ThemeAnalysisResult {
     originalThemeCount: number;
     processingTime: number;
     consolidationTime: number;
+    expansionTime?: number;
     expandable: {
         hasChildThemes: boolean;
         canDrillDown: boolean;
@@ -67,13 +68,23 @@ export interface ThemeAnalysisResult {
         hierarchicalThemes: number;
         consolidationRatio: number;
     };
+    expansionStats?: {
+        expandedThemes: number;
+        maxDepth: number;
+        averageDepth: number;
+        totalSubThemes: number;
+    };
 }
 export declare class ThemeService {
     private readonly anthropicApiKey;
     private similarityService;
+    private expansionService;
+    private hierarchicalSimilarityService;
+    private expansionEnabled;
     constructor(anthropicApiKey: string, consolidationConfig?: Partial<ConsolidationConfig>);
     analyzeThemesWithEnhancedContext(gitService: import('./git-service').GitService): Promise<ThemeAnalysisResult>;
     analyzeThemes(changedFiles: ChangedFile[]): Promise<ThemeAnalysisResult>;
     private analyzeThemesInternal;
+    private calculateExpansionStats;
     private createFallbackThemes;
 }

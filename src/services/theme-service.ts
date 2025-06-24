@@ -4,6 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { ThemeSimilarityService } from './theme-similarity';
+import { ThemeExpansionService } from './theme-expansion';
+import { HierarchicalSimilarityService } from './hierarchical-similarity';
 import {
   ConsolidatedTheme,
   ConsolidationConfig,
@@ -82,6 +84,7 @@ export interface ThemeAnalysisResult {
   originalThemeCount: number;
   processingTime: number;
   consolidationTime: number;
+  expansionTime?: number;
   expandable: {
     hasChildThemes: boolean;
     canDrillDown: boolean;
@@ -90,6 +93,12 @@ export interface ThemeAnalysisResult {
     mergedThemes: number;
     hierarchicalThemes: number;
     consolidationRatio: number;
+  };
+  expansionStats?: {
+    expandedThemes: number;
+    maxDepth: number;
+    averageDepth: number;
+    totalSubThemes: number;
   };
 }
 
@@ -517,6 +526,9 @@ async function processBatches<T, R>(
 
 export class ThemeService {
   private similarityService: ThemeSimilarityService;
+  private expansionService: ThemeExpansionService;
+  private hierarchicalSimilarityService: HierarchicalSimilarityService;
+  private expansionEnabled: boolean;
 
   constructor(
     private readonly anthropicApiKey: string,
@@ -526,6 +538,15 @@ export class ThemeService {
       anthropicApiKey,
       consolidationConfig
     );
+
+    // Initialize expansion services
+    this.expansionService = new ThemeExpansionService(anthropicApiKey);
+    this.hierarchicalSimilarityService = new HierarchicalSimilarityService(
+      anthropicApiKey
+    );
+
+    // Enable expansion by default
+    this.expansionEnabled = consolidationConfig?.expansionEnabled ?? true;
   }
 
   async analyzeThemesWithEnhancedContext(
@@ -627,9 +648,48 @@ export class ThemeService {
       const consolidationStartTime = Date.now();
 
       // Apply theme consolidation
-      const consolidatedThemes =
+      let consolidatedThemes =
         await this.similarityService.consolidateThemes(originalThemes);
       const consolidationTime = Date.now() - consolidationStartTime;
+
+      // Apply hierarchical expansion if enabled
+      let expansionTime = 0;
+      let expansionStats = undefined;
+
+      if (this.expansionEnabled && consolidatedThemes.length > 0) {
+        console.log('[THEME-SERVICE] Starting hierarchical expansion');
+        const expansionStartTime = Date.now();
+
+        try {
+          // Expand themes hierarchically
+          const expandedThemes =
+            await this.expansionService.expandThemesHierarchically(
+              consolidatedThemes
+            );
+
+          // Apply cross-level deduplication
+          await this.hierarchicalSimilarityService.deduplicateHierarchy(
+            expandedThemes
+          );
+
+          // Update consolidated themes with expanded and deduplicated results
+          consolidatedThemes = expandedThemes; // For now, use expanded themes directly
+
+          // Calculate expansion statistics
+          expansionStats = this.calculateExpansionStats(consolidatedThemes);
+
+          console.log(
+            `[THEME-SERVICE] Expansion complete: ${expansionStats.expandedThemes} themes expanded, max depth: ${expansionStats.maxDepth}`
+          );
+        } catch (error) {
+          console.warn(
+            '[THEME-SERVICE] Expansion failed, using consolidated themes:',
+            error
+          );
+        }
+
+        expansionTime = Date.now() - expansionStartTime;
+      }
 
       // Calculate consolidation stats
       const mergedThemes = consolidatedThemes.filter(
@@ -650,11 +710,13 @@ export class ThemeService {
       analysisResult.originalThemeCount = originalThemes.length;
       analysisResult.processingTime = Date.now() - startTime;
       analysisResult.consolidationTime = consolidationTime;
+      analysisResult.expansionTime = expansionTime;
       analysisResult.consolidationStats = {
         mergedThemes,
         hierarchicalThemes,
         consolidationRatio,
       };
+      analysisResult.expansionStats = expansionStats;
 
       if (consolidatedThemes.length > 0) {
         const hasHierarchy = consolidatedThemes.some(
@@ -686,6 +748,48 @@ export class ThemeService {
 
     analysisResult.processingTime = Date.now() - startTime;
     return analysisResult;
+  }
+
+  private calculateExpansionStats(themes: ConsolidatedTheme[]): {
+    expandedThemes: number;
+    maxDepth: number;
+    averageDepth: number;
+    totalSubThemes: number;
+  } {
+    let expandedThemes = 0;
+    let totalSubThemes = 0;
+    let maxDepth = 0;
+    let totalDepth = 0;
+    let themeCount = 0;
+
+    const calculateRecursively = (
+      themeList: ConsolidatedTheme[],
+      depth: number
+    ): void => {
+      themeList.forEach((theme) => {
+        themeCount++;
+        totalDepth += depth;
+        maxDepth = Math.max(maxDepth, depth);
+
+        if (theme.isExpanded || theme.consolidationMethod === 'expansion') {
+          expandedThemes++;
+        }
+
+        if (theme.childThemes.length > 0) {
+          totalSubThemes += theme.childThemes.length;
+          calculateRecursively(theme.childThemes, depth + 1);
+        }
+      });
+    };
+
+    calculateRecursively(themes, 0);
+
+    return {
+      expandedThemes,
+      maxDepth,
+      averageDepth: themeCount > 0 ? totalDepth / themeCount : 0,
+      totalSubThemes,
+    };
   }
 
   private createFallbackThemes(changedFiles: ChangedFile[]): Theme[] {

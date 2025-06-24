@@ -31,7 +31,12 @@ export interface ConsolidatedTheme {
     context: string;
     lastAnalysis: Date;
     sourceThemes: string[];
-    consolidationMethod: 'merge' | 'hierarchy' | 'single';
+    consolidationMethod: 'merge' | 'hierarchy' | 'single' | 'expansion';
+    isExpanded?: boolean;
+    expansionDepth?: number;
+    businessLogicPatterns?: string[];
+    userFlowPatterns?: string[];
+    complexityScore?: number;
 }
 export interface ConsolidationConfig {
     similarityThreshold: number;
@@ -39,6 +44,9 @@ export interface ConsolidationConfig {
     minThemesForParent: number;
     confidenceWeight: number;
     businessDomainWeight: number;
+    maxHierarchyDepth: number;
+    expansionEnabled: boolean;
+    crossLevelSimilarityCheck: boolean;
 }
 export interface MergeDecision {
     action: 'merge' | 'group_under_parent' | 'keep_separate';
