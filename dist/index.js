@@ -30878,33 +30878,81 @@ class GitService {
         }
     }
     async getChangedFilesFromGit(baseSha, headSha) {
+        console.log(`[GIT-DEBUG] Comparing ${baseSha.substring(0, 8)} (base) vs ${headSha.substring(0, 8)} (head)`);
+        const files = [];
+        let fileList = '';
+        let diffCommand = [];
+        // Method 1: Try exact SHA comparison (remove triple-dot syntax)
         try {
-            console.log(`[GIT-DEBUG] Comparing ${baseSha.substring(0, 8)} (base) vs ${headSha.substring(0, 8)} (head)`);
-            console.log(`[GIT-DEBUG] Git command: git diff --name-status ${baseSha}...${headSha}`);
-            const files = [];
-            // Get list of changed files with status
-            let fileList = '';
-            await exec.exec('git', ['diff', '--name-status', `${baseSha}...${headSha}`], {
+            diffCommand = ['diff', '--name-status', baseSha, headSha];
+            console.log(`[GIT-DEBUG] Method 1: git ${diffCommand.join(' ')}`);
+            await exec.exec('git', diffCommand, {
                 listeners: {
                     stdout: (data) => {
                         fileList += data.toString();
                     },
                 },
             });
-            // Parse file status
-            const fileLines = fileList
-                .trim()
-                .split('\n')
-                .filter((line) => line.trim());
-            console.log(`[GIT-DEBUG] Found ${fileLines.length} changed files total before filtering`);
+            console.log(`[GIT-DEBUG] Method 1 succeeded`);
+        }
+        catch (method1Error) {
+            console.log(`[GIT-DEBUG] Method 1 failed: ${method1Error}`);
+            // Method 2: Fetch base branch and compare
+            try {
+                const prContext = await this.getPullRequestContext();
+                const baseBranch = prContext?.baseBranch || 'main';
+                console.log(`[GIT-DEBUG] Method 2: Fetching base branch ${baseBranch}`);
+                await exec.exec('git', ['fetch', 'origin', baseBranch]);
+                diffCommand = ['diff', '--name-status', `origin/${baseBranch}`, 'HEAD'];
+                console.log(`[GIT-DEBUG] Method 2: git ${diffCommand.join(' ')}`);
+                fileList = ''; // Reset for retry
+                await exec.exec('git', diffCommand, {
+                    listeners: {
+                        stdout: (data) => {
+                            fileList += data.toString();
+                        },
+                    },
+                });
+                console.log(`[GIT-DEBUG] Method 2 succeeded`);
+            }
+            catch (method2Error) {
+                console.log(`[GIT-DEBUG] Method 2 failed: ${method2Error}`);
+                // Method 3: Emergency fallback - recent commits only
+                try {
+                    diffCommand = ['diff', '--name-status', 'HEAD~1', 'HEAD'];
+                    console.log(`[GIT-DEBUG] Method 3 (emergency): git ${diffCommand.join(' ')}`);
+                    fileList = ''; // Reset for retry
+                    await exec.exec('git', diffCommand, {
+                        listeners: {
+                            stdout: (data) => {
+                                fileList += data.toString();
+                            },
+                        },
+                    });
+                    console.log(`[GIT-DEBUG] Method 3 succeeded (showing recent commits only)`);
+                }
+                catch (method3Error) {
+                    console.error(`[GIT-DEBUG] All methods failed. Method 3 error: ${method3Error}`);
+                    throw new Error(`Git diff failed with all methods. Last error: ${method3Error}`);
+                }
+            }
+        }
+        // Parse file status
+        const fileLines = fileList
+            .trim()
+            .split('\n')
+            .filter((line) => line.trim());
+        console.log(`[GIT-DEBUG] Found ${fileLines.length} changed files total before filtering`);
+        try {
             for (const line of fileLines) {
                 const [status, filename] = line.split('\t');
                 if (!filename || !this.shouldIncludeFile(filename))
                     continue;
-                // Get diff patch for this file
+                // Get diff patch for this file using the same command that succeeded for file list
                 let patch = '';
                 try {
-                    await exec.exec('git', ['diff', `${baseSha}...${headSha}`, '--', filename], {
+                    const patchCommand = [...diffCommand, '--', filename];
+                    await exec.exec('git', patchCommand, {
                         listeners: {
                             stdout: (data) => {
                                 patch += data.toString();
@@ -30913,7 +30961,8 @@ class GitService {
                     });
                 }
                 catch (error) {
-                    console.warn(`Failed to get patch for ${filename}:`, error);
+                    console.warn(`[GIT-DEBUG] Failed to get patch for ${filename}:`, error);
+                    // Continue without patch - we still have the file status
                 }
                 // Count additions/deletions from patch
                 const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
@@ -30930,8 +30979,8 @@ class GitService {
             console.log(`[GIT-SERVICE] Found ${files.length} source files for analysis (excluded build artifacts)`);
             return files;
         }
-        catch (error) {
-            console.error('Failed to get changed files from git:', error);
+        catch (fileProcessingError) {
+            console.error('Failed to process files:', fileProcessingError);
             return [];
         }
     }
