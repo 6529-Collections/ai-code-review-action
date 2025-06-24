@@ -121,7 +121,7 @@ class ClaudeService {
       );
       fs.writeFileSync(tempFile, prompt);
 
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
         listeners: {
           stdout: (data: Buffer) => {
             output += data.toString();

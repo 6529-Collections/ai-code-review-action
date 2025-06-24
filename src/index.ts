@@ -18,6 +18,18 @@ export async function run(): Promise<void> {
     await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
     logInfo('Claude Code CLI installed successfully');
 
+    // Initialize Claude CLI configuration to avoid JSON config errors
+    logInfo('Initializing Claude CLI configuration...');
+    const claudeConfig = {
+      allowedTools: [],
+      hasTrustDialogAccepted: true,
+      permissions: {
+        allow: ["*"]
+      }
+    };
+    await exec.exec('bash', ['-c', `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`]);
+    logInfo('Claude CLI configuration initialized');
+
     logInfo('Starting AI code review analysis...');
 
     // Initialize services
@@ -48,7 +60,7 @@ export async function run(): Promise<void> {
 
     // Analyze themes
     logInfo('Analyzing code themes...');
-    const themeAnalysis = await themeService.analyzeThemes(changedFiles);
+    const themeAnalysis = await themeService.analyzeThemesWithEnhancedContext(gitService);
 
     // Output results using enhanced formatter
     try {

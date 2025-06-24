@@ -29971,6 +29971,17 @@ async function run() {
         (0, utils_1.logInfo)('Installing Claude Code CLI...');
         await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
         (0, utils_1.logInfo)('Claude Code CLI installed successfully');
+        // Initialize Claude CLI configuration to avoid JSON config errors
+        (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
+        const claudeConfig = {
+            allowedTools: [],
+            hasTrustDialogAccepted: true,
+            permissions: {
+                allow: ["*"]
+            }
+        };
+        await exec.exec('bash', ['-c', `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`]);
+        (0, utils_1.logInfo)('Claude CLI configuration initialized');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
         // Initialize services
         const gitService = new git_service_1.GitService(inputs.githubToken || '');
@@ -29993,7 +30004,7 @@ async function run() {
         }
         // Analyze themes
         (0, utils_1.logInfo)('Analyzing code themes...');
-        const themeAnalysis = await themeService.analyzeThemes(changedFiles);
+        const themeAnalysis = await themeService.analyzeThemesWithEnhancedContext(gitService);
         // Output results using enhanced formatter
         try {
             // Use the new ThemeFormatter for better hierarchical display
@@ -30087,7 +30098,7 @@ class AISimilarityService {
             const tempFile = path.join(os.tmpdir(), `claude-similarity-${Date.now()}.txt`);
             fs.writeFileSync(tempFile, prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                 listeners: {
                     stdout: (data) => {
                         output += data.toString();
@@ -30248,7 +30259,7 @@ class BatchProcessor {
             const tempFile = path.join(os.tmpdir(), `claude-batch-similarity-${Date.now()}.txt`);
             fs.writeFileSync(tempFile, prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                 listeners: {
                     stdout: (data) => {
                         output += data.toString();
@@ -30502,7 +30513,7 @@ class BusinessDomainService {
             const tempFile = path.join(os.tmpdir(), `claude-domain-${Date.now()}.txt`);
             fs.writeFileSync(tempFile, prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                 listeners: {
                     stdout: (data) => {
                         output += data.toString();
@@ -31667,7 +31678,7 @@ class ThemeNamingService {
             const tempFile = path.join(os.tmpdir(), `claude-naming-${Date.now()}.txt`);
             fs.writeFileSync(tempFile, prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                 listeners: {
                     stdout: (data) => {
                         output += data.toString();
@@ -31924,7 +31935,7 @@ class ClaudeService {
             // Use a unique temporary file for each concurrent request
             tempFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`);
             fs.writeFileSync(tempFile, prompt);
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                 listeners: {
                     stdout: (data) => {
                         output += data.toString();
@@ -32932,7 +32943,7 @@ class ClaudeClient {
             tempFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`);
             fs.writeFileSync(tempFile, prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                 listeners: {
                     stdout: (data) => {
                         output += data.toString();

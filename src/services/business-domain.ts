@@ -85,7 +85,7 @@ export class BusinessDomainService {
       fs.writeFileSync(tempFile, prompt);
 
       let output = '';
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude`], {
+      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
         listeners: {
           stdout: (data: Buffer) => {
             output += data.toString();
