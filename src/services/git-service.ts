@@ -27,16 +27,15 @@ export class GitService {
     /\.d\.ts$/, // Exclude TypeScript declaration files
     /node_modules\//, // Exclude dependencies
     /\.map$/, // Exclude source maps
-    /^\.github\//, // Exclude GitHub workflows
     /package-lock\.json$/, // Exclude lock files
-    /^README\.md$/, // Exclude main README (optional)
-    /^action\.yml$/, // Exclude action config (optional)
   ];
 
   private shouldIncludeFile(filename: string): boolean {
-    return !GitService.EXCLUDED_PATTERNS.some((pattern) =>
+    const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) =>
       pattern.test(filename)
     );
+    console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
+    return !isExcluded;
   }
 
   constructor(private readonly githubToken: string) {}

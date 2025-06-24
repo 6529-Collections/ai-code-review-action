@@ -30731,7 +30731,9 @@ const exec = __importStar(__nccwpck_require__(5236));
 const code_analyzer_1 = __nccwpck_require__(4579);
 class GitService {
     shouldIncludeFile(filename) {
-        return !GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
+        const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
+        console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
+        return !isExcluded;
     }
     constructor(githubToken) {
         this.githubToken = githubToken;
@@ -30970,10 +30972,7 @@ GitService.EXCLUDED_PATTERNS = [
     /\.d\.ts$/, // Exclude TypeScript declaration files
     /node_modules\//, // Exclude dependencies
     /\.map$/, // Exclude source maps
-    /^\.github\//, // Exclude GitHub workflows
     /package-lock\.json$/, // Exclude lock files
-    /^README\.md$/, // Exclude main README (optional)
-    /^action\.yml$/, // Exclude action config (optional)
 ];
 
 
