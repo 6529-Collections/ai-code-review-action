@@ -30881,6 +30881,8 @@ class GitService {
     }
     async getChangedFilesFromGit(baseSha, headSha) {
         try {
+            console.log(`[GIT-DEBUG] Comparing ${baseSha.substring(0, 8)} (base) vs ${headSha.substring(0, 8)} (head)`);
+            console.log(`[GIT-DEBUG] Git command: git diff --name-status ${baseSha}...${headSha}`);
             const files = [];
             // Get list of changed files with status
             let fileList = '';
@@ -30896,6 +30898,7 @@ class GitService {
                 .trim()
                 .split('\n')
                 .filter((line) => line.trim());
+            console.log(`[GIT-DEBUG] Found ${fileLines.length} changed files total before filtering`);
             for (const line of fileLines) {
                 const [status, filename] = line.split('\t');
                 if (!filename || !this.shouldIncludeFile(filename))
