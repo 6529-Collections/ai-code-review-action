@@ -754,9 +754,14 @@ export class ThemeService {
             );
 
           // Apply cross-level deduplication
-          await this.hierarchicalSimilarityService.deduplicateHierarchy(
-            expandedThemes
-          );
+          if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
+            console.log('[THEME-SERVICE] Running cross-level deduplication...');
+            await this.hierarchicalSimilarityService.deduplicateHierarchy(
+              expandedThemes
+            );
+          } else {
+            console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
+          }
 
           // Update consolidated themes with expanded and deduplicated results
           consolidatedThemes = expandedThemes; // For now, use expanded themes directly
