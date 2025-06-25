@@ -12,7 +12,7 @@ export class ThemeFormatter {
    */
   static formatThemesForOutput(themes: ConsolidatedTheme[]): string {
     const themeCount = this.countTotalThemes(themes);
-    let output = `Found ${themeCount} themes:\\n`;
+    let output = `Found ${themeCount} themes:\n\n`;
 
     themes.forEach((theme, index) => {
       output += this.formatThemeRecursively(theme, index + 1, 0);
@@ -49,65 +49,65 @@ export class ThemeFormatter {
       this.MAX_DESCRIPTION_LENGTH
     );
 
-    let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}% confidence)`;
-    output += `\\n${indent}   - Files: ${files}${moreFiles}`;
-    output += `\\n${indent}   - ${description}`;
+    let output = `\n${indent}${themeNumber}. **${theme.name}** (${confidence}% confidence)`;
+    output += `\n${indent}   - Files: ${files}${moreFiles}`;
+    output += `\n${indent}   - ${description}`;
 
     // Show detailed description if available
     if (theme.detailedDescription) {
-      output += `\\n${indent}   - **Details**: ${theme.detailedDescription}`;
+      output += `\n${indent}   - **Details**: ${theme.detailedDescription}`;
     }
 
     // Show technical summary if available
     if (theme.technicalSummary) {
-      output += `\\n${indent}   - **Technical**: ${theme.technicalSummary}`;
+      output += `\n${indent}   - **Technical**: ${theme.technicalSummary}`;
     }
 
     // Show key changes as bullet points
     if (theme.keyChanges && theme.keyChanges.length > 0) {
-      output += `\\n${indent}   - **Key Changes**:`;
+      output += `\n${indent}   - **Key Changes**:`;
       theme.keyChanges.forEach((change) => {
-        output += `\\n${indent}     • ${change}`;
+        output += `\n${indent}     • ${change}`;
       });
     }
 
     // Show user scenario if available
     if (theme.userScenario) {
-      output += `\\n${indent}   - **User Impact**: ${theme.userScenario}`;
+      output += `\n${indent}   - **User Impact**: ${theme.userScenario}`;
     }
 
     // Show code metrics if available
     if (theme.codeMetrics) {
       const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-      output += `\\n${indent}   - **Code Metrics**: +${linesAdded}/-${linesRemoved} lines across ${filesChanged} files`;
+      output += `\n${indent}   - **Code Metrics**: +${linesAdded}/-${linesRemoved} lines across ${filesChanged} files`;
     }
 
     // Show functions/classes changed if available
     if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
-      output += `\\n${indent}   - **Functions**: ${theme.mainFunctionsChanged.slice(0, 3).join(', ')}${theme.mainFunctionsChanged.length > 3 ? ` (+${theme.mainFunctionsChanged.length - 3} more)` : ''}`;
+      output += `\n${indent}   - **Functions**: ${theme.mainFunctionsChanged.slice(0, 3).join(', ')}${theme.mainFunctionsChanged.length > 3 ? ` (+${theme.mainFunctionsChanged.length - 3} more)` : ''}`;
     }
 
     if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
-      output += `\\n${indent}   - **Classes**: ${theme.mainClassesChanged.slice(0, 3).join(', ')}${theme.mainClassesChanged.length > 3 ? ` (+${theme.mainClassesChanged.length - 3} more)` : ''}`;
+      output += `\n${indent}   - **Classes**: ${theme.mainClassesChanged.slice(0, 3).join(', ')}${theme.mainClassesChanged.length > 3 ? ` (+${theme.mainClassesChanged.length - 3} more)` : ''}`;
     }
 
     // Show consolidation info
     if (theme.consolidationMethod === 'merge') {
-      output += `\\n${indent}   - 🔄 Merged from ${theme.sourceThemes.length} similar themes`;
+      output += `\n${indent}   - 🔄 Merged from ${theme.sourceThemes.length} similar themes`;
       if (theme.consolidationSummary) {
         output += `: ${theme.consolidationSummary}`;
       }
     } else if (theme.consolidationMethod === 'expansion') {
-      output += `\\n${indent}   - 🔍 Expanded from complexity analysis`;
+      output += `\n${indent}   - 🔍 Expanded from complexity analysis`;
     }
 
     // Show expansion metadata if available
     if (theme.businessLogicPatterns && theme.businessLogicPatterns.length > 0) {
-      output += `\\n${indent}   - 🎯 Business patterns: ${theme.businessLogicPatterns.slice(0, 2).join(', ')}`;
+      output += `\n${indent}   - 🎯 Business patterns: ${theme.businessLogicPatterns.slice(0, 2).join(', ')}`;
     }
 
     if (theme.userFlowPatterns && theme.userFlowPatterns.length > 0) {
-      output += `\\n${indent}   - 👤 User flows: ${theme.userFlowPatterns.slice(0, 2).join(', ')}`;
+      output += `\n${indent}   - 👤 User flows: ${theme.userFlowPatterns.slice(0, 2).join(', ')}`;
     }
 
     // Show child themes recursively
@@ -119,7 +119,7 @@ export class ThemeFormatter {
             ? 'sub-sub-themes'
             : 'nested themes';
 
-      output += `\\n${indent}   - 📁 Contains ${theme.childThemes.length} ${childLabel}:`;
+      output += `\n${indent}   - 📁 Contains ${theme.childThemes.length} ${childLabel}:`;
 
       theme.childThemes.forEach((childTheme, childIndex) => {
         output += this.formatThemeRecursively(
@@ -192,13 +192,13 @@ export class ThemeFormatter {
 
     collectThemes(themes);
 
-    let output = `Theme hierarchy (${flatThemes.length} total themes):\\n`;
+    let output = `Theme hierarchy (${flatThemes.length} total themes):\n`;
     flatThemes.forEach(({ theme, path }) => {
       const confidence = (theme.confidence * 100).toFixed(0);
       const level = path.split('.').length;
       const indent = '  '.repeat(level - 1);
 
-      output += `\\n${indent}${path}. ${theme.name} (${confidence}%, ${theme.affectedFiles.length} files)`;
+      output += `\n${indent}${path}. ${theme.name} (${confidence}%, ${theme.affectedFiles.length} files)`;
     });
 
     return output;
