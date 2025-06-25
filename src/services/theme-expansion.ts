@@ -218,6 +218,13 @@ export class ThemeExpansionService {
   async expandThemesHierarchically(
     consolidatedThemes: ConsolidatedTheme[]
   ): Promise<ConsolidatedTheme[]> {
+    console.log(
+      `[DEBUG-EXPANSION] Starting hierarchical expansion of ${consolidatedThemes.length} themes`
+    );
+    console.log(
+      `[DEBUG-EXPANSION] Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`
+    );
+
     logInfo(
       `Starting hierarchical expansion of ${consolidatedThemes.length} themes`
     );
@@ -262,6 +269,13 @@ export class ThemeExpansionService {
         console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
       }
     }
+
+    console.log(
+      `[DEBUG-EXPANSION] Completed expansion with ${expandedThemes.length}/${consolidatedThemes.length} themes`
+    );
+    console.log(
+      `[DEBUG-EXPANSION] Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`
+    );
 
     logInfo(
       `Completed hierarchical expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes processed successfully`

@@ -30005,13 +30005,30 @@ async function run() {
         // Analyze themes
         (0, utils_1.logInfo)('Analyzing code themes...');
         const themeAnalysis = await themeService.analyzeThemesWithEnhancedContext(gitService);
+        // Debug: Log theme analysis result
+        console.log(`[DEBUG] Theme analysis completed:`);
+        console.log(`[DEBUG] - Total themes: ${themeAnalysis.totalThemes}`);
+        console.log(`[DEBUG] - Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`);
+        console.log(`[DEBUG] - Processing time: ${themeAnalysis.processingTime}ms`);
+        console.log(`[DEBUG] - Has expansion stats: ${!!themeAnalysis.expansionStats}`);
+        if (themeAnalysis.themes) {
+            console.log(`[DEBUG] - Theme names: ${themeAnalysis.themes.map(t => t.name).join(', ')}`);
+        }
+        else {
+            console.log(`[DEBUG] - Themes is null/undefined!`);
+        }
         // Output results using enhanced formatter
         try {
+            console.log(`[DEBUG] Starting output formatting...`);
             // Use the new ThemeFormatter for better hierarchical display
             const detailedThemes = theme_formatter_1.ThemeFormatter.formatThemesForOutput(themeAnalysis.themes);
+            console.log(`[DEBUG] Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
             const safeSummary = theme_formatter_1.ThemeFormatter.createThemeSummary(themeAnalysis.themes);
+            console.log(`[DEBUG] Summary created, length: ${safeSummary?.length || 'undefined'}`);
+            console.log(`[DEBUG] Setting outputs...`);
             core.setOutput('themes', detailedThemes);
             core.setOutput('summary', safeSummary);
+            console.log(`[DEBUG] Outputs set successfully`);
             (0, utils_1.logInfo)(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
@@ -30019,6 +30036,8 @@ async function run() {
             }
         }
         catch (error) {
+            console.error(`[DEBUG] Error in output formatting:`, error);
+            console.error(`[DEBUG] Error stack:`, error instanceof Error ? error.stack : 'No stack trace');
             (0, utils_1.logInfo)(`Failed to set outputs: ${error}`);
             core.setOutput('themes', 'No themes found');
             core.setOutput('summary', 'Output generation failed');
@@ -31639,6 +31658,8 @@ class ThemeExpansionService {
      * Main entry point for expanding themes hierarchically
      */
     async expandThemesHierarchically(consolidatedThemes) {
+        console.log(`[DEBUG-EXPANSION] Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
+        console.log(`[DEBUG-EXPANSION] Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
         (0, utils_1.logInfo)(`Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
         // Process themes with concurrency limit and retry logic
         const results = await this.processConcurrentlyWithLimit(consolidatedThemes, (theme) => this.expandThemeRecursively(theme, 0), {
@@ -31668,6 +31689,8 @@ class ThemeExpansionService {
                 console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
             }
         }
+        console.log(`[DEBUG-EXPANSION] Completed expansion with ${expandedThemes.length}/${consolidatedThemes.length} themes`);
+        console.log(`[DEBUG-EXPANSION] Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`);
         (0, utils_1.logInfo)(`Completed hierarchical expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes processed successfully`);
         return expandedThemes;
     }
@@ -33072,7 +33095,9 @@ class ThemeService {
                 const expansionStartTime = Date.now();
                 try {
                     // Expand themes hierarchically
+                    console.log(`[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes`);
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
+                    console.log(`[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`);
                     // Apply cross-level deduplication
                     if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
                         console.log('[THEME-SERVICE] Running cross-level deduplication...');
@@ -33083,6 +33108,7 @@ class ThemeService {
                     }
                     // Update consolidated themes with expanded and deduplicated results
                     consolidatedThemes = expandedThemes; // For now, use expanded themes directly
+                    console.log(`[DEBUG-THEME-SERVICE] Final themes after processing: ${consolidatedThemes.length}`);
                     // Calculate expansion statistics
                     expansionStats = this.calculateExpansionStats(consolidatedThemes);
                     console.log(`[THEME-SERVICE] Expansion complete: ${expansionStats.expandedThemes} themes expanded, max depth: ${expansionStats.maxDepth}`);
