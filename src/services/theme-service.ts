@@ -11,6 +11,7 @@ import {
   ConsolidationConfig,
 } from '../types/similarity-types';
 import { CodeAnalyzer, CodeChange, SmartContext } from '../utils/code-analyzer';
+import { JsonExtractor } from '../utils/json-extractor';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
@@ -268,18 +269,45 @@ Respond in this exact JSON format (no other text):
   }
 
   private parseClaudeResponse(output: string): ChunkAnalysis {
-    try {
-      const jsonMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      console.warn('Failed to parse Claude response:', error);
+    const extractionResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'object',
+      ['themeName', 'description', 'businessImpact', 'confidence']
+    );
+
+    if (extractionResult.success) {
+      const data = extractionResult.data as {
+        themeName?: string;
+        description?: string;
+        businessImpact?: string;
+        confidence?: number;
+        codePattern?: string;
+        suggestedParent?: string;
+      };
+      return {
+        themeName: data.themeName || 'Unknown Theme',
+        description: data.description || 'No description provided',
+        businessImpact: data.businessImpact || 'Unknown impact',
+        confidence: data.confidence || 0.5,
+        codePattern: data.codePattern || 'Unknown pattern',
+        suggestedParent: data.suggestedParent || undefined,
+      };
+    }
+
+    console.warn(
+      '[THEME-SERVICE] JSON extraction failed:',
+      extractionResult.error
+    );
+    if (extractionResult.originalResponse) {
+      console.debug(
+        '[THEME-SERVICE] Original response:',
+        extractionResult.originalResponse?.substring(0, 200) + '...'
+      );
     }
 
     return {
       themeName: 'Parse Error',
-      description: 'Failed to parse Claude response',
+      description: `Failed to parse Claude response: ${extractionResult.error}`,
       businessImpact: 'Unknown',
       confidence: 0.1,
       codePattern: 'Unknown',

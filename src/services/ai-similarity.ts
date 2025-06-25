@@ -1,6 +1,7 @@
 import { Theme } from './theme-service';
 import { AISimilarityResult } from '../types/similarity-types';
 import { SimilarityCalculator } from '../utils/similarity-calculator';
+import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -88,30 +89,47 @@ Respond in JSON:
   }
 
   private parseAISimilarityResponse(output: string): AISimilarityResult {
-    try {
-      const jsonMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
+    const extractionResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'object',
+      ['shouldMerge', 'confidence', 'reasoning']
+    );
 
-        // Map the simple response to the full AISimilarityResult interface
-        const shouldMerge = parsed.shouldMerge || false;
-        const confidence = parsed.confidence || 0;
+    if (extractionResult.success) {
+      const parsed = extractionResult.data as {
+        shouldMerge?: boolean;
+        confidence?: number;
+        reasoning?: string;
+      };
 
-        return {
-          shouldMerge,
-          confidence,
-          reasoning: parsed.reasoning || 'No reasoning provided',
-          // Derive a semantic score from the decision and confidence
-          semanticScore: shouldMerge ? confidence : 1 - confidence,
-          // Legacy scores - set to 0 as they're not used anymore
-          nameScore: 0,
-          descriptionScore: 0,
-          patternScore: 0,
-          businessScore: 0,
-        };
-      }
-    } catch (error) {
-      console.warn('Failed to parse AI similarity response:', error);
+      // Map the simple response to the full AISimilarityResult interface
+      const shouldMerge = parsed.shouldMerge || false;
+      const confidence = parsed.confidence || 0;
+
+      return {
+        shouldMerge,
+        confidence,
+        reasoning: parsed.reasoning || 'No reasoning provided',
+        // Derive a semantic score from the decision and confidence
+        semanticScore: shouldMerge ? confidence : 1 - confidence,
+        // Legacy scores - set to 0 as they're not used anymore
+        nameScore: 0,
+        descriptionScore: 0,
+        patternScore: 0,
+        businessScore: 0,
+      };
+    }
+
+    // Log the extraction failure for debugging
+    console.warn(
+      '[AI-SIMILARITY] JSON extraction failed:',
+      extractionResult.error
+    );
+    if (extractionResult.originalResponse) {
+      console.debug(
+        '[AI-SIMILARITY] Original response:',
+        extractionResult.originalResponse?.substring(0, 200) + '...'
+      );
     }
 
     return {
@@ -122,7 +140,7 @@ Respond in JSON:
       semanticScore: 0,
       shouldMerge: false,
       confidence: 0,
-      reasoning: 'Failed to parse AI response',
+      reasoning: `Failed to parse AI response: ${extractionResult.error}`,
     };
   }
 

@@ -3,6 +3,7 @@ import {
   BatchSimilarityResult,
   AISimilarityResult,
 } from '../types/similarity-types';
+import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -115,86 +116,74 @@ Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis
     console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
     console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
 
-    try {
-      // Try to find JSON array in the output
-      let jsonMatch = output.match(/\[[\s\S]*\]/);
+    const extractionResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'array',
+      undefined
+    );
 
-      // If no match, try to extract from code blocks
-      if (!jsonMatch) {
-        const codeBlockMatch = output.match(
-          /```(?:json)?\s*(\[[\s\S]*?\])\s*```/
-        );
-        if (codeBlockMatch) {
-          jsonMatch = [codeBlockMatch[1]];
-        }
-      }
-
-      // If still no match, try to find any array-like structure
-      if (!jsonMatch) {
-        const arrayStart = output.indexOf('[');
-        const arrayEnd = output.lastIndexOf(']');
-        if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
-          jsonMatch = [output.substring(arrayStart, arrayEnd + 1)];
-        }
-      }
-
-      if (jsonMatch) {
-        console.log(
-          `[BATCH-DEBUG] Extracted JSON:`,
-          jsonMatch[0].substring(0, 300)
-        );
-
-        const parsed = JSON.parse(jsonMatch[0]);
-        console.log(
-          `[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`
-        );
-
-        if (Array.isArray(parsed)) {
-          // Handle case where AI returns fewer results than expected
-          const results: BatchSimilarityResult[] = [];
-
-          for (let i = 0; i < pairs.length; i++) {
-            const item = parsed[i];
-            const pair = pairs[i];
-
-            if (item && typeof item === 'object') {
-              results.push({
-                pairId: item.pairId || pair.id,
-                similarity: {
-                  nameScore: this.clampScore(item.nameScore),
-                  descriptionScore: this.clampScore(item.descriptionScore),
-                  patternScore: this.clampScore(item.patternScore),
-                  businessScore: this.clampScore(item.businessScore),
-                  semanticScore: this.clampScore(item.semanticScore),
-                  shouldMerge: Boolean(item.shouldMerge),
-                  confidence: this.clampScore(item.confidence),
-                  reasoning: String(item.reasoning || 'No reasoning provided'),
-                },
-              });
-            } else {
-              // Missing or invalid item - create fallback
-              console.warn(
-                `[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`
-              );
-              results.push({
-                pairId: pair.id,
-                similarity: this.createFallbackSimilarity(),
-                error: `Missing AI response for pair ${i + 1}`,
-              });
-            }
-          }
-
-          console.log(
-            `[BATCH-DEBUG] Successfully parsed ${results.length} results`
-          );
-          return results;
-        }
-      }
-    } catch (error) {
-      console.error('[BATCH-DEBUG] JSON parsing failed:', error);
+    if (extractionResult.success) {
+      const parsed = extractionResult.data as Array<{
+        pairId?: string;
+        nameScore?: number;
+        descriptionScore?: number;
+        patternScore?: number;
+        businessScore?: number;
+        semanticScore?: number;
+        shouldMerge?: boolean;
+        confidence?: number;
+        reasoning?: string;
+      }>;
       console.log(
-        '[BATCH-DEBUG] Full output for debugging:',
-        output.substring(0, 1000)
+        `[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`
+      );
+
+      // Handle case where AI returns fewer results than expected
+      const results: BatchSimilarityResult[] = [];
+
+      for (let i = 0; i < pairs.length; i++) {
+        const item = parsed[i];
+        const pair = pairs[i];
+
+        if (item && typeof item === 'object') {
+          results.push({
+            pairId: item.pairId || pair.id,
+            similarity: {
+              nameScore: this.clampScore(item.nameScore),
+              descriptionScore: this.clampScore(item.descriptionScore),
+              patternScore: this.clampScore(item.patternScore),
+              businessScore: this.clampScore(item.businessScore),
+              semanticScore: this.clampScore(item.semanticScore),
+              shouldMerge: Boolean(item.shouldMerge),
+              confidence: this.clampScore(item.confidence),
+              reasoning: String(item.reasoning || 'No reasoning provided'),
+            },
+          });
+        } else {
+          // Missing or invalid item - create fallback
+          console.warn(
+            `[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`
+          );
+          results.push({
+            pairId: pair.id,
+            similarity: this.createFallbackSimilarity(),
+            error: `Missing AI response for pair ${i + 1}`,
+          });
+        }
+      }
+
+      console.log(
+        `[BATCH-DEBUG] Successfully parsed ${results.length} results`
+      );
+      return results;
+    }
+
+    // JSON extraction failed
+    console.error('[BATCH] JSON extraction failed:', extractionResult.error);
+    if (extractionResult.originalResponse) {
+      console.debug(
+        '[BATCH] Original response:',
+        extractionResult.originalResponse?.substring(0, 500) + '...'
       );
     }
 
@@ -203,7 +192,7 @@ Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis
     return pairs.map((pair) => ({
       pairId: pair.id,
       similarity: this.createFallbackSimilarity(),
-      error: 'Failed to parse batch AI response',
+      error: `Failed to parse batch AI response: ${extractionResult.error}`,
     }));
   }
 

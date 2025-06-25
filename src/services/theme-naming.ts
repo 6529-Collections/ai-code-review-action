@@ -1,6 +1,7 @@
 import { Theme } from './theme-service';
 import { ConsolidatedTheme } from '../types/similarity-types';
 import { CodeChange } from '../utils/code-analyzer';
+import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -217,17 +218,32 @@ Respond in this exact JSON format (no other text):
     name: string;
     description: string;
   } {
-    try {
-      const jsonMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          name: parsed.name || 'Merged Changes',
-          description: parsed.description || 'Consolidated related changes',
-        };
-      }
-    } catch (error) {
-      console.warn('Failed to parse AI naming response:', error);
+    const extractionResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'object',
+      ['name', 'description']
+    );
+
+    if (extractionResult.success) {
+      const parsed = extractionResult.data as {
+        name?: string;
+        description?: string;
+      };
+      return {
+        name: parsed.name || 'Merged Changes',
+        description: parsed.description || 'Consolidated related changes',
+      };
+    }
+
+    console.warn(
+      '[THEME-NAMING] JSON extraction failed:',
+      extractionResult.error
+    );
+    if (extractionResult.originalResponse) {
+      console.debug(
+        '[THEME-NAMING] Original response:',
+        extractionResult.originalResponse?.substring(0, 200) + '...'
+      );
     }
 
     return {

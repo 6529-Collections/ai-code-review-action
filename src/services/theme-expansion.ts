@@ -1,6 +1,7 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
 import { GenericCache } from '../utils/generic-cache';
 import { ClaudeClient } from '../utils/claude-client';
+import { JsonExtractor } from '../utils/json-extractor';
 import { CodeChange, SmartContext } from '../utils/code-analyzer';
 import { logInfo } from '../utils';
 
@@ -267,7 +268,21 @@ Focus on business value, not technical implementation details.
 
     try {
       const response = await this.claudeClient.callClaude(prompt);
-      const patterns = JSON.parse(response.trim()) as string[];
+
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'array',
+        undefined
+      );
+
+      if (!extractionResult.success) {
+        logInfo(
+          `Failed to parse business patterns for ${theme.name}: ${extractionResult.error}`
+        );
+        return [];
+      }
+
+      const patterns = extractionResult.data as string[];
 
       this.cache.set(cacheKey, patterns, 3600000); // Cache for 1 hour
       return patterns;
@@ -408,10 +423,45 @@ Only create sub-themes if there are genuinely distinct business concerns.
 
     try {
       const response = await this.claudeClient.callClaude(prompt);
-      const analysis = JSON.parse(response.trim());
+
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        ['shouldExpand', 'confidence', 'reasoning', 'subThemes']
+      );
+
+      if (!extractionResult.success) {
+        logInfo(
+          `Failed to parse expansion analysis for ${theme.name}: ${extractionResult.error}`
+        );
+        // Return no expansion
+        return {
+          subThemes: [],
+          shouldExpand: false,
+          confidence: 0.3,
+          reasoning: `Analysis parsing failed: ${extractionResult.error}`,
+          businessLogicPatterns: [],
+          userFlowPatterns: [],
+        };
+      }
+
+      const analysis = extractionResult.data as {
+        shouldExpand?: boolean;
+        confidence?: number;
+        reasoning?: string;
+        businessLogicPatterns?: string[];
+        userFlowPatterns?: string[];
+        subThemes?: Array<{
+          name: string;
+          description: string;
+          businessImpact: string;
+          relevantFiles: string[];
+          confidence: number;
+        }>;
+      };
 
       // Convert to ConsolidatedTheme objects
-      const subThemes: ConsolidatedTheme[] = analysis.subThemes.map(
+      const subThemes: ConsolidatedTheme[] = (analysis.subThemes || []).map(
         (
           subTheme: {
             name: string;
@@ -447,9 +497,9 @@ Only create sub-themes if there are genuinely distinct business concerns.
 
       return {
         subThemes,
-        shouldExpand: analysis.shouldExpand && subThemes.length > 0,
-        confidence: analysis.confidence,
-        reasoning: analysis.reasoning,
+        shouldExpand: (analysis.shouldExpand || false) && subThemes.length > 0,
+        confidence: analysis.confidence || 0.5,
+        reasoning: analysis.reasoning || 'No reasoning provided',
         businessLogicPatterns: analysis.businessLogicPatterns || [],
         userFlowPatterns: analysis.userFlowPatterns || [],
       };

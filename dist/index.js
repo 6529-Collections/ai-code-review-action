@@ -30083,6 +30083,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AISimilarityService = void 0;
 const similarity_calculator_1 = __nccwpck_require__(7831);
+const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
@@ -30150,29 +30151,29 @@ Respond in JSON:
 }`;
     }
     parseAISimilarityResponse(output) {
-        try {
-            const jsonMatch = output.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                // Map the simple response to the full AISimilarityResult interface
-                const shouldMerge = parsed.shouldMerge || false;
-                const confidence = parsed.confidence || 0;
-                return {
-                    shouldMerge,
-                    confidence,
-                    reasoning: parsed.reasoning || 'No reasoning provided',
-                    // Derive a semantic score from the decision and confidence
-                    semanticScore: shouldMerge ? confidence : 1 - confidence,
-                    // Legacy scores - set to 0 as they're not used anymore
-                    nameScore: 0,
-                    descriptionScore: 0,
-                    patternScore: 0,
-                    businessScore: 0,
-                };
-            }
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['shouldMerge', 'confidence', 'reasoning']);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            // Map the simple response to the full AISimilarityResult interface
+            const shouldMerge = parsed.shouldMerge || false;
+            const confidence = parsed.confidence || 0;
+            return {
+                shouldMerge,
+                confidence,
+                reasoning: parsed.reasoning || 'No reasoning provided',
+                // Derive a semantic score from the decision and confidence
+                semanticScore: shouldMerge ? confidence : 1 - confidence,
+                // Legacy scores - set to 0 as they're not used anymore
+                nameScore: 0,
+                descriptionScore: 0,
+                patternScore: 0,
+                businessScore: 0,
+            };
         }
-        catch (error) {
-            console.warn('Failed to parse AI similarity response:', error);
+        // Log the extraction failure for debugging
+        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
         return {
             nameScore: 0,
@@ -30182,7 +30183,7 @@ Respond in JSON:
             semanticScore: 0,
             shouldMerge: false,
             confidence: 0,
-            reasoning: 'Failed to parse AI response',
+            reasoning: `Failed to parse AI response: ${extractionResult.error}`,
         };
     }
     createFallbackSimilarity(theme1, theme2) {
@@ -30248,6 +30249,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BatchProcessor = void 0;
+const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
@@ -30334,74 +30336,54 @@ Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis
     parseBatchSimilarityResponse(output, pairs) {
         console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
         console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
-        try {
-            // Try to find JSON array in the output
-            let jsonMatch = output.match(/\[[\s\S]*\]/);
-            // If no match, try to extract from code blocks
-            if (!jsonMatch) {
-                const codeBlockMatch = output.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
-                if (codeBlockMatch) {
-                    jsonMatch = [codeBlockMatch[1]];
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
+            // Handle case where AI returns fewer results than expected
+            const results = [];
+            for (let i = 0; i < pairs.length; i++) {
+                const item = parsed[i];
+                const pair = pairs[i];
+                if (item && typeof item === 'object') {
+                    results.push({
+                        pairId: item.pairId || pair.id,
+                        similarity: {
+                            nameScore: this.clampScore(item.nameScore),
+                            descriptionScore: this.clampScore(item.descriptionScore),
+                            patternScore: this.clampScore(item.patternScore),
+                            businessScore: this.clampScore(item.businessScore),
+                            semanticScore: this.clampScore(item.semanticScore),
+                            shouldMerge: Boolean(item.shouldMerge),
+                            confidence: this.clampScore(item.confidence),
+                            reasoning: String(item.reasoning || 'No reasoning provided'),
+                        },
+                    });
+                }
+                else {
+                    // Missing or invalid item - create fallback
+                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
+                    results.push({
+                        pairId: pair.id,
+                        similarity: this.createFallbackSimilarity(),
+                        error: `Missing AI response for pair ${i + 1}`,
+                    });
                 }
             }
-            // If still no match, try to find any array-like structure
-            if (!jsonMatch) {
-                const arrayStart = output.indexOf('[');
-                const arrayEnd = output.lastIndexOf(']');
-                if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
-                    jsonMatch = [output.substring(arrayStart, arrayEnd + 1)];
-                }
-            }
-            if (jsonMatch) {
-                console.log(`[BATCH-DEBUG] Extracted JSON:`, jsonMatch[0].substring(0, 300));
-                const parsed = JSON.parse(jsonMatch[0]);
-                console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
-                if (Array.isArray(parsed)) {
-                    // Handle case where AI returns fewer results than expected
-                    const results = [];
-                    for (let i = 0; i < pairs.length; i++) {
-                        const item = parsed[i];
-                        const pair = pairs[i];
-                        if (item && typeof item === 'object') {
-                            results.push({
-                                pairId: item.pairId || pair.id,
-                                similarity: {
-                                    nameScore: this.clampScore(item.nameScore),
-                                    descriptionScore: this.clampScore(item.descriptionScore),
-                                    patternScore: this.clampScore(item.patternScore),
-                                    businessScore: this.clampScore(item.businessScore),
-                                    semanticScore: this.clampScore(item.semanticScore),
-                                    shouldMerge: Boolean(item.shouldMerge),
-                                    confidence: this.clampScore(item.confidence),
-                                    reasoning: String(item.reasoning || 'No reasoning provided'),
-                                },
-                            });
-                        }
-                        else {
-                            // Missing or invalid item - create fallback
-                            console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
-                            results.push({
-                                pairId: pair.id,
-                                similarity: this.createFallbackSimilarity(),
-                                error: `Missing AI response for pair ${i + 1}`,
-                            });
-                        }
-                    }
-                    console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
-                    return results;
-                }
-            }
+            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
+            return results;
         }
-        catch (error) {
-            console.error('[BATCH-DEBUG] JSON parsing failed:', error);
-            console.log('[BATCH-DEBUG] Full output for debugging:', output.substring(0, 1000));
+        // JSON extraction failed
+        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
         }
         console.warn('[BATCH-DEBUG] Using fallback for all pairs');
         // Fallback: create error results for all pairs
         return pairs.map((pair) => ({
             pairId: pair.id,
             similarity: this.createFallbackSimilarity(),
-            error: 'Failed to parse batch AI response',
+            error: `Failed to parse batch AI response: ${extractionResult.error}`,
         }));
     }
     clampScore(value) {
@@ -31099,6 +31081,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HierarchicalSimilarityService = void 0;
 const generic_cache_1 = __nccwpck_require__(9267);
 const claude_client_1 = __nccwpck_require__(3831);
+const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
@@ -31301,22 +31284,59 @@ Focus on business value and avoid merging themes with distinct business purposes
 `;
         try {
             const response = await this.claudeClient.callClaude(prompt);
-            const analysis = JSON.parse(response.trim());
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'similarityScore',
+                'relationshipType',
+                'action',
+                'confidence',
+                'reasoning',
+            ]);
+            if (!extractionResult.success) {
+                console.warn(`[HIERARCHICAL] Failed to parse AI response: ${extractionResult.error}`);
+                console.debug(`[HIERARCHICAL] Original response: ${extractionResult.originalResponse?.substring(0, 200)}...`);
+                // Return conservative default
+                const fallbackResult = {
+                    theme1,
+                    theme2,
+                    levelDifference,
+                    similarityScore: 0.2,
+                    relationshipType: 'distinct',
+                    action: 'keep_separate',
+                    confidence: 0.3,
+                    reasoning: `AI response parsing failed: ${extractionResult.error}`,
+                };
+                this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
+                return fallbackResult;
+            }
+            const analysis = extractionResult.data;
             const result = {
                 theme1,
                 theme2,
                 levelDifference,
-                similarityScore: analysis.similarityScore,
-                relationshipType: analysis.relationshipType,
-                action: analysis.action,
-                confidence: analysis.confidence,
-                reasoning: analysis.reasoning,
+                similarityScore: analysis.similarityScore || 0.2,
+                relationshipType: analysis.relationshipType || 'distinct',
+                action: analysis.action || 'keep_separate',
+                confidence: analysis.confidence || 0.3,
+                reasoning: analysis.reasoning || 'No reasoning provided',
             };
             this.cache.set(cacheKey, result, 1800000); // Cache for 30 minutes
             return result;
         }
         catch (error) {
-            throw new Error(`AI analysis failed: ${error}`);
+            console.error(`[HIERARCHICAL] AI analysis failed: ${error}`);
+            // Return conservative default on any error
+            const fallbackResult = {
+                theme1,
+                theme2,
+                levelDifference,
+                similarityScore: 0.2,
+                relationshipType: 'distinct',
+                action: 'keep_separate',
+                confidence: 0.3,
+                reasoning: `AI analysis failed: ${error}`,
+            };
+            this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
+            return fallbackResult;
         }
     }
     mergeThemes(theme1, theme2, action) {
@@ -31441,6 +31461,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
 const generic_cache_1 = __nccwpck_require__(9267);
 const claude_client_1 = __nccwpck_require__(3831);
+const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 4,
@@ -31584,7 +31605,12 @@ Focus on business value, not technical implementation details.
 `;
         try {
             const response = await this.claudeClient.callClaude(prompt);
-            const patterns = JSON.parse(response.trim());
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'array', undefined);
+            if (!extractionResult.success) {
+                (0, utils_1.logInfo)(`Failed to parse business patterns for ${theme.name}: ${extractionResult.error}`);
+                return [];
+            }
+            const patterns = extractionResult.data;
             this.cache.set(cacheKey, patterns, 3600000); // Cache for 1 hour
             return patterns;
         }
@@ -31708,9 +31734,22 @@ Only create sub-themes if there are genuinely distinct business concerns.
 `;
         try {
             const response = await this.claudeClient.callClaude(prompt);
-            const analysis = JSON.parse(response.trim());
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'confidence', 'reasoning', 'subThemes']);
+            if (!extractionResult.success) {
+                (0, utils_1.logInfo)(`Failed to parse expansion analysis for ${theme.name}: ${extractionResult.error}`);
+                // Return no expansion
+                return {
+                    subThemes: [],
+                    shouldExpand: false,
+                    confidence: 0.3,
+                    reasoning: `Analysis parsing failed: ${extractionResult.error}`,
+                    businessLogicPatterns: [],
+                    userFlowPatterns: [],
+                };
+            }
+            const analysis = extractionResult.data;
             // Convert to ConsolidatedTheme objects
-            const subThemes = analysis.subThemes.map((subTheme, index) => ({
+            const subThemes = (analysis.subThemes || []).map((subTheme, index) => ({
                 id: `${theme.id}_sub_${index}_${Date.now()}`,
                 name: subTheme.name,
                 description: subTheme.description,
@@ -31728,9 +31767,9 @@ Only create sub-themes if there are genuinely distinct business concerns.
             }));
             return {
                 subThemes,
-                shouldExpand: analysis.shouldExpand && subThemes.length > 0,
-                confidence: analysis.confidence,
-                reasoning: analysis.reasoning,
+                shouldExpand: (analysis.shouldExpand || false) && subThemes.length > 0,
+                confidence: analysis.confidence || 0.5,
+                reasoning: analysis.reasoning || 'No reasoning provided',
                 businessLogicPatterns: analysis.businessLogicPatterns || [],
                 userFlowPatterns: analysis.userFlowPatterns || [],
             };
@@ -31793,6 +31832,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeNamingService = void 0;
+const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
@@ -31960,18 +32000,17 @@ Respond in this exact JSON format (no other text):
 }`;
     }
     parseMergedThemeNamingResponse(output) {
-        try {
-            const jsonMatch = output.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                return {
-                    name: parsed.name || 'Merged Changes',
-                    description: parsed.description || 'Consolidated related changes',
-                };
-            }
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['name', 'description']);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            return {
+                name: parsed.name || 'Merged Changes',
+                description: parsed.description || 'Consolidated related changes',
+            };
         }
-        catch (error) {
-            console.warn('Failed to parse AI naming response:', error);
+        console.warn('[THEME-NAMING] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[THEME-NAMING] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
         return {
             name: 'Merged Changes',
@@ -32046,6 +32085,7 @@ const theme_similarity_1 = __nccwpck_require__(4189);
 const theme_expansion_1 = __nccwpck_require__(7333);
 const hierarchical_similarity_1 = __nccwpck_require__(2983);
 const code_analyzer_1 = __nccwpck_require__(4579);
+const json_extractor_1 = __nccwpck_require__(2642);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
     BATCH_SIZE: 10,
@@ -32190,18 +32230,25 @@ Respond in this exact JSON format (no other text):
 }`;
     }
     parseClaudeResponse(output) {
-        try {
-            const jsonMatch = output.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                return JSON.parse(jsonMatch[0]);
-            }
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
+        if (extractionResult.success) {
+            const data = extractionResult.data;
+            return {
+                themeName: data.themeName || 'Unknown Theme',
+                description: data.description || 'No description provided',
+                businessImpact: data.businessImpact || 'Unknown impact',
+                confidence: data.confidence || 0.5,
+                codePattern: data.codePattern || 'Unknown pattern',
+                suggestedParent: data.suggestedParent || undefined,
+            };
         }
-        catch (error) {
-            console.warn('Failed to parse Claude response:', error);
+        console.warn('[THEME-SERVICE] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[THEME-SERVICE] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
         return {
             themeName: 'Parse Error',
-            description: 'Failed to parse Claude response',
+            description: `Failed to parse Claude response: ${extractionResult.error}`,
             businessImpact: 'Unknown',
             confidence: 0.1,
             codePattern: 'Unknown',
@@ -33321,6 +33368,232 @@ class GenericCache {
     }
 }
 exports.GenericCache = GenericCache;
+
+
+/***/ }),
+
+/***/ 2642:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Robust JSON extraction utility for handling mixed text/JSON responses from Claude AI
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.JsonExtractor = void 0;
+class JsonExtractor {
+    /**
+     * Extract JSON from Claude AI response that may contain explanatory text
+     */
+    static extractJson(response) {
+        if (!response || typeof response !== 'string') {
+            return {
+                success: false,
+                data: null,
+                error: 'Invalid response: empty or non-string input',
+                originalResponse: response,
+            };
+        }
+        const trimmedResponse = response.trim();
+        // Strategy 1: Try parsing as pure JSON first
+        try {
+            const parsed = JSON.parse(trimmedResponse);
+            return {
+                success: true,
+                data: parsed,
+                originalResponse: response,
+            };
+        }
+        catch {
+            // Continue to other strategies
+        }
+        // Strategy 2: Extract JSON from markdown code blocks
+        const jsonMarkdownMatch = trimmedResponse.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMarkdownMatch) {
+            try {
+                const parsed = JSON.parse(jsonMarkdownMatch[1].trim());
+                return {
+                    success: true,
+                    data: parsed,
+                    originalResponse: response,
+                };
+            }
+            catch (error) {
+                return {
+                    success: false,
+                    data: null,
+                    error: `JSON parsing failed in markdown block: ${error}`,
+                    originalResponse: response,
+                };
+            }
+        }
+        // Strategy 3: Extract JSON from regular code blocks
+        const codeBlockMatch = trimmedResponse.match(/```\s*([\s\S]*?)\s*```/);
+        if (codeBlockMatch) {
+            try {
+                const parsed = JSON.parse(codeBlockMatch[1].trim());
+                return {
+                    success: true,
+                    data: parsed,
+                    originalResponse: response,
+                };
+            }
+            catch {
+                // Continue to next strategy
+            }
+        }
+        // Strategy 4: Find JSON object/array in mixed text
+        const jsonPatterns = [
+            // Match JSON objects
+            /\{[\s\S]*\}/,
+            // Match JSON arrays
+            /\[[\s\S]*\]/,
+        ];
+        for (const pattern of jsonPatterns) {
+            const matches = trimmedResponse.match(pattern);
+            if (matches) {
+                for (const match of matches) {
+                    try {
+                        const parsed = JSON.parse(match);
+                        return {
+                            success: true,
+                            data: parsed,
+                            originalResponse: response,
+                        };
+                    }
+                    catch {
+                        // Try next match
+                        continue;
+                    }
+                }
+            }
+        }
+        // Strategy 5: Extract multiple potential JSON blocks and try each
+        const allJsonCandidates = this.findAllJsonCandidates(trimmedResponse);
+        for (const candidate of allJsonCandidates) {
+            try {
+                const parsed = JSON.parse(candidate);
+                return {
+                    success: true,
+                    data: parsed,
+                    originalResponse: response,
+                };
+            }
+            catch {
+                // Try next candidate
+                continue;
+            }
+        }
+        // All strategies failed
+        return {
+            success: false,
+            data: null,
+            error: 'No valid JSON found in response',
+            originalResponse: response,
+        };
+    }
+    /**
+     * Find all potential JSON candidates in text
+     */
+    static findAllJsonCandidates(text) {
+        const candidates = [];
+        // Look for balanced braces/brackets
+        let braceCount = 0;
+        let bracketCount = 0;
+        let start = -1;
+        let inString = false;
+        let escapeNext = false;
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            if (escapeNext) {
+                escapeNext = false;
+                continue;
+            }
+            if (char === '\\') {
+                escapeNext = true;
+                continue;
+            }
+            if (char === '"' && !escapeNext) {
+                inString = !inString;
+                continue;
+            }
+            if (inString)
+                continue;
+            if (char === '{') {
+                if (braceCount === 0 && bracketCount === 0) {
+                    start = i;
+                }
+                braceCount++;
+            }
+            else if (char === '}') {
+                braceCount--;
+                if (braceCount === 0 && bracketCount === 0 && start !== -1) {
+                    candidates.push(text.substring(start, i + 1));
+                    start = -1;
+                }
+            }
+            else if (char === '[') {
+                if (bracketCount === 0 && braceCount === 0) {
+                    start = i;
+                }
+                bracketCount++;
+            }
+            else if (char === ']') {
+                bracketCount--;
+                if (bracketCount === 0 && braceCount === 0 && start !== -1) {
+                    candidates.push(text.substring(start, i + 1));
+                    start = -1;
+                }
+            }
+        }
+        return candidates;
+    }
+    /**
+     * Validate that extracted JSON matches expected schema
+     */
+    static validateJsonSchema(data, expectedType, requiredFields) {
+        if (!data) {
+            return { valid: false, error: 'Data is null or undefined' };
+        }
+        if (expectedType === 'array' && !Array.isArray(data)) {
+            return { valid: false, error: 'Expected array but got ' + typeof data };
+        }
+        if (expectedType === 'object' &&
+            (typeof data !== 'object' || Array.isArray(data))) {
+            return { valid: false, error: 'Expected object but got ' + typeof data };
+        }
+        if (requiredFields && expectedType === 'object') {
+            const obj = data;
+            for (const field of requiredFields) {
+                if (!(field in obj)) {
+                    return { valid: false, error: `Missing required field: ${field}` };
+                }
+            }
+        }
+        return { valid: true };
+    }
+    /**
+     * Extract JSON with schema validation
+     */
+    static extractAndValidateJson(response, expectedType, requiredFields) {
+        const extractionResult = this.extractJson(response);
+        if (!extractionResult.success) {
+            return extractionResult;
+        }
+        const validationResult = this.validateJsonSchema(extractionResult.data, expectedType, requiredFields);
+        if (!validationResult.valid) {
+            return {
+                success: false,
+                data: extractionResult.data,
+                error: `Schema validation failed: ${validationResult.error}`,
+                originalResponse: response,
+            };
+        }
+        return extractionResult;
+    }
+}
+exports.JsonExtractor = JsonExtractor;
 
 
 /***/ }),
