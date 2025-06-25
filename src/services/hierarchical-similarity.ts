@@ -53,11 +53,23 @@ export class HierarchicalSimilarityService {
 
     logInfo(`Generated ${comparisons.length} cross-level comparisons`);
 
+    if (comparisons.length > 100) {
+      logInfo(
+        `WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`
+      );
+    }
+
     // Process comparisons directly
+    console.log(
+      `[HIERARCHICAL] Starting ${comparisons.length} parallel Claude API calls`
+    );
     const results = await Promise.all(
-      comparisons.map((comparison) =>
-        this.analyzeCrossLevelSimilarityPair(comparison)
-      )
+      comparisons.map((comparison, index) => {
+        console.log(
+          `[HIERARCHICAL] Starting comparison ${index + 1}/${comparisons.length}`
+        );
+        return this.analyzeCrossLevelSimilarityPair(comparison);
+      })
     );
 
     logInfo(
@@ -275,7 +287,11 @@ Focus on business value and avoid merging themes with distinct business purposes
 `;
 
     try {
+      console.log(
+        `[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`
+      );
       const response = await this.claudeClient.callClaude(prompt);
+      console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
 
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,
@@ -335,7 +351,15 @@ Focus on business value and avoid merging themes with distinct business purposes
       this.cache.set(cacheKey, result, 1800000); // Cache for 30 minutes
       return result;
     } catch (error) {
-      console.error(`[HIERARCHICAL] AI analysis failed: ${error}`);
+      console.error(
+        `[HIERARCHICAL] AI analysis failed for ${theme1.name} vs ${theme2.name}:`,
+        error
+      );
+      console.error(`[HIERARCHICAL] Error details:`, {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        name: error instanceof Error ? error.name : undefined,
+      });
 
       // Return conservative default on any error
       const fallbackResult: CrossLevelSimilarity = {

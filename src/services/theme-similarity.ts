@@ -358,7 +358,7 @@ export class ThemeSimilarityService {
       context: themes.map((t) => t.context).join('\n'),
       lastAnalysis: new Date(),
       sourceThemes: themes.map((t) => t.id),
-      consolidationMethod: 'merge',
+      consolidationMethod: 'merge',w
     };
   }
 }

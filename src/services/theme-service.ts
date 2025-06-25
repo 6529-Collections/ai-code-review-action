@@ -130,7 +130,7 @@ class ClaudeService {
         },
       });
 
-      const result = this.parseClaudeResponse(output);
+      const result = this.parseClaudeResponse(output, chunk);
       return result;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -218,7 +218,9 @@ Examples of good business-focused themes:
 - "Simplify configuration" (not "Update workflow files")
 - "Add pull request feedback" (not "Implement commenting system")
 
-Respond in this exact JSON format (no other text):
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+
+Start your response with { and end with }. Example:
 {
   "themeName": "user/business-focused name (what value does this provide?)",
   "description": "what business problem this solves or capability it provides",
@@ -257,7 +259,9 @@ Examples of good business-focused themes:
 - "Simplify configuration" (not "Update workflow files")
 - "Add pull request feedback" (not "Implement commenting system")
 
-Respond in this exact JSON format (no other text):
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+
+Start your response with { and end with }. Example:
 {
   "themeName": "user/business-focused name (what value does this provide?)",
   "description": "what business problem this solves or capability it provides",
@@ -268,7 +272,7 @@ Respond in this exact JSON format (no other text):
 }`;
   }
 
-  private parseClaudeResponse(output: string): ChunkAnalysis {
+  private parseClaudeResponse(output: string, chunk: CodeChunk): ChunkAnalysis {
     const extractionResult = JsonExtractor.extractAndValidateJson(
       output,
       'object',
@@ -305,13 +309,8 @@ Respond in this exact JSON format (no other text):
       );
     }
 
-    return {
-      themeName: 'Parse Error',
-      description: `Failed to parse Claude response: ${extractionResult.error}`,
-      businessImpact: 'Unknown',
-      confidence: 0.1,
-      codePattern: 'Unknown',
-    };
+    // Use the better fallback that includes filename
+    return this.createFallbackAnalysis(chunk);
   }
 
   private createFallbackAnalysis(chunk: CodeChunk): ChunkAnalysis {
