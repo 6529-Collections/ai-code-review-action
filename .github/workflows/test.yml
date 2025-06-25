@@ -41,9 +41,9 @@ jobs:
           const themes = ${{ toJSON(steps.review.outputs.themes) }};
           const summary = ${{ toJSON(steps.review.outputs.summary) }};
           
-          // Convert escaped newlines to actual newlines for proper formatting
-          const formattedThemes = themes.replace(/\\n/g, '\n');
-          const formattedSummary = summary.replace(/\\n/g, '\n');
+          // Handle null/undefined outputs
+          const formattedThemes = themes ? (typeof themes === 'string' ? themes.replace(/\\n/g, '\n') : JSON.stringify(themes, null, 2)) : 'No themes available';
+          const formattedSummary = summary ? (typeof summary === 'string' ? summary.replace(/\\n/g, '\n') : JSON.stringify(summary, null, 2)) : 'No summary available';
           
           github.rest.issues.createComment({
             issue_number: context.issue.number,

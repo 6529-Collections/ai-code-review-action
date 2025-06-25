@@ -748,10 +748,16 @@ export class ThemeService {
 
         try {
           // Expand themes hierarchically
+          console.log(
+            `[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes`
+          );
           const expandedThemes =
             await this.expansionService.expandThemesHierarchically(
               consolidatedThemes
             );
+          console.log(
+            `[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`
+          );
 
           // Apply cross-level deduplication
           if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
@@ -760,11 +766,16 @@ export class ThemeService {
               expandedThemes
             );
           } else {
-            console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
+            console.log(
+              '[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)'
+            );
           }
 
           // Update consolidated themes with expanded and deduplicated results
           consolidatedThemes = expandedThemes; // For now, use expanded themes directly
+          console.log(
+            `[DEBUG-THEME-SERVICE] Final themes after processing: ${consolidatedThemes.length}`
+          );
 
           // Calculate expansion statistics
           expansionStats = this.calculateExpansionStats(consolidatedThemes);

@@ -290,7 +290,7 @@ export class GitService {
       const allFiles = [];
       let page = 1;
       let hasMore = true;
-      
+
       while (hasMore) {
         const { data: files } = await this.octokit.rest.pulls.listFiles({
           ...github.context.repo,
@@ -298,16 +298,18 @@ export class GitService {
           per_page: 100, // Maximum allowed by GitHub
           page: page,
         });
-        
+
         allFiles.push(...files);
-        
+
         // If we got less than 100 files, we've reached the end
         hasMore = files.length === 100;
         page++;
-        
+
         // Safety limit to prevent infinite loops
         if (page > 10) {
-          console.warn('[GIT-SERVICE] Reached pagination limit, stopping at 1000 files');
+          console.warn(
+            '[GIT-SERVICE] Reached pagination limit, stopping at 1000 files'
+          );
           break;
         }
       }

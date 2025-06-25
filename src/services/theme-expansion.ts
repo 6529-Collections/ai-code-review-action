@@ -12,6 +12,11 @@ export interface ExpansionConfig {
   minFilesForExpansion: number; // Minimum files required for expansion (default: 2)
   businessImpactThreshold: number; // Minimum business impact for expansion (default: 0.6)
   parallelBatchSize: number; // Batch size for parallel processing (default: 5)
+  concurrencyLimit: number; // Maximum concurrent operations (default: 5)
+  maxRetries: number; // Maximum retry attempts (default: 3)
+  retryDelay: number; // Base retry delay in ms (default: 1000)
+  retryBackoffMultiplier: number; // Backoff multiplier (default: 2)
+  enableProgressLogging: boolean; // Enable progress logging (default: true)
 }
 
 export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
@@ -20,6 +25,11 @@ export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
   minFilesForExpansion: 2,
   businessImpactThreshold: 0.6,
   parallelBatchSize: 5,
+  concurrencyLimit: 5,
+  maxRetries: 3,
+  retryDelay: 1000,
+  retryBackoffMultiplier: 2,
+  enableProgressLogging: true,
 };
 
 export interface ExpansionCandidate {
@@ -76,25 +86,236 @@ export class ThemeExpansionService {
   }
 
   /**
+   * Process items concurrently with limit and retry logic
+   */
+  private async processConcurrentlyWithLimit<T, R>(
+    items: T[],
+    processor: (item: T) => Promise<R>,
+    options?: {
+      concurrencyLimit?: number;
+      maxRetries?: number;
+      retryDelay?: number;
+      onProgress?: (completed: number, total: number) => void;
+      onError?: (error: Error, item: T, retryCount: number) => void;
+    }
+  ): Promise<Array<R | { error: Error; item: T }>> {
+    const {
+      concurrencyLimit = this.config.concurrencyLimit,
+      maxRetries = this.config.maxRetries,
+      retryDelay = this.config.retryDelay,
+      onProgress,
+      onError,
+    } = options || {};
+
+    const results: Array<R | { error: Error; item: T }> = new Array(
+      items.length
+    );
+    const active = new Set<Promise<void>>();
+    let completed = 0;
+    let index = 0;
+
+    const processItem = async (item: T, itemIndex: number): Promise<void> => {
+      console.log(`[DEBUG-CONCURRENCY] Processing item ${itemIndex}: starting`);
+      try {
+        const result = await this.processWithRetry(
+          item,
+          processor,
+          maxRetries,
+          retryDelay,
+          onError
+        );
+        console.log(
+          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: success`
+        );
+        results[itemIndex] = result;
+      } catch (error) {
+        console.log(
+          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: error - ${error}`
+        );
+        results[itemIndex] = { error: error as Error, item };
+      } finally {
+        completed++;
+        console.log(
+          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: completed (${completed}/${items.length})`
+        );
+        if (onProgress && this.config.enableProgressLogging) {
+          onProgress(completed, items.length);
+        }
+      }
+    };
+
+    return new Promise((resolve) => {
+      // Handle empty array case
+      if (items.length === 0) {
+        console.log(
+          `[DEBUG-CONCURRENCY] Empty items array, resolving immediately`
+        );
+        resolve(results);
+        return;
+      }
+
+      console.log(
+        `[DEBUG-CONCURRENCY] Starting processing of ${items.length} items with limit ${concurrencyLimit}`
+      );
+
+      const startNext = () => {
+        while (active.size < concurrencyLimit && index < items.length) {
+          const currentIndex = index++;
+          console.log(
+            `[DEBUG-CONCURRENCY] Starting item ${currentIndex + 1}/${items.length}, active: ${active.size}`
+          );
+          const promise = processItem(items[currentIndex], currentIndex);
+          active.add(promise);
+
+          promise.finally(() => {
+            active.delete(promise);
+            console.log(
+              `[DEBUG-CONCURRENCY] Completed item, total completed: ${completed}/${items.length}, active: ${active.size}`
+            );
+            if (completed === items.length) {
+              console.log(`[DEBUG-CONCURRENCY] All items completed, resolving`);
+              resolve(results);
+            } else {
+              startNext();
+            }
+          });
+        }
+
+        // If we have active promises but no more items to start, log status
+        if (index >= items.length && active.size > 0) {
+          console.log(
+            `[DEBUG-CONCURRENCY] No more items to start, waiting for ${active.size} active promises`
+          );
+        }
+      };
+
+      startNext();
+    });
+  }
+
+  /**
+   * Process single item with retry logic
+   */
+  private async processWithRetry<T, R>(
+    item: T,
+    processor: (item: T) => Promise<R>,
+    maxRetries: number,
+    baseDelay: number,
+    onError?: (error: Error, item: T, retryCount: number) => void
+  ): Promise<R | { error: Error; item: T }> {
+    let lastError: Error;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await processor(item);
+      } catch (error) {
+        lastError = error as Error;
+
+        if (attempt < maxRetries) {
+          const delay = this.calculateBackoffDelay(attempt, baseDelay);
+
+          if (onError) {
+            onError(lastError, item, attempt + 1);
+          }
+
+          if (this.config.enableProgressLogging) {
+            console.log(
+              `[THEME-EXPANSION] Retry ${attempt + 1}/${maxRetries} after ${delay}ms delay`
+            );
+          }
+
+          await this.sleep(delay);
+        }
+      }
+    }
+
+    return { error: lastError!, item };
+  }
+
+  /**
+   * Calculate exponential backoff delay
+   */
+  private calculateBackoffDelay(attempt: number, baseDelay: number): number {
+    return Math.min(
+      baseDelay * Math.pow(this.config.retryBackoffMultiplier, attempt),
+      30000 // Max 30 seconds
+    );
+  }
+
+  /**
+   * Sleep utility
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
    * Main entry point for expanding themes hierarchically
    */
   async expandThemesHierarchically(
     consolidatedThemes: ConsolidatedTheme[]
   ): Promise<ConsolidatedTheme[]> {
+    console.log(
+      `[DEBUG-EXPANSION] Starting hierarchical expansion of ${consolidatedThemes.length} themes`
+    );
+    console.log(
+      `[DEBUG-EXPANSION] Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`
+    );
+
     logInfo(
       `Starting hierarchical expansion of ${consolidatedThemes.length} themes`
     );
 
-    const expandedThemes: ConsolidatedTheme[] = [];
+    // Process themes with concurrency limit and retry logic
+    const results = await this.processConcurrentlyWithLimit(
+      consolidatedThemes,
+      (theme) => this.expandThemeRecursively(theme, 0),
+      {
+        onProgress: (completed, total) => {
+          if (this.config.enableProgressLogging) {
+            console.log(
+              `[THEME-EXPANSION] Progress: ${completed}/${total} root themes expanded`
+            );
+          }
+        },
+        onError: (error, theme, retryCount) => {
+          console.warn(
+            `[THEME-EXPANSION] Retry ${retryCount} for theme "${theme.name}": ${error.message}`
+          );
+        },
+      }
+    );
 
-    // Process each theme recursively
-    for (const theme of consolidatedThemes) {
-      const expanded = await this.expandThemeRecursively(theme, 0);
-      expandedThemes.push(expanded);
+    // Separate successful and failed results
+    const expandedThemes: ConsolidatedTheme[] = [];
+    const failedThemes: Array<{ theme: ConsolidatedTheme; error: Error }> = [];
+
+    for (const result of results) {
+      if ('error' in result) {
+        failedThemes.push({ theme: result.item, error: result.error });
+      } else {
+        expandedThemes.push(result);
+      }
     }
 
+    if (failedThemes.length > 0) {
+      console.warn(
+        `[THEME-EXPANSION] Failed to expand ${failedThemes.length} themes after retries:`
+      );
+      for (const failed of failedThemes) {
+        console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
+      }
+    }
+
+    console.log(
+      `[DEBUG-EXPANSION] Completed expansion with ${expandedThemes.length}/${consolidatedThemes.length} themes`
+    );
+    console.log(
+      `[DEBUG-EXPANSION] Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`
+    );
+
     logInfo(
-      `Completed hierarchical expansion: ${expandedThemes.length} themes processed`
+      `Completed hierarchical expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes processed successfully`
     );
     return expandedThemes;
   }
@@ -119,11 +340,34 @@ export class ThemeExpansionService {
     );
     if (!expansionCandidate) {
       // Still process existing child themes recursively
-      const expandedChildren = await Promise.all(
-        theme.childThemes.map((child: ConsolidatedTheme) =>
-          this.expandThemeRecursively(child, currentDepth + 1, theme)
-        )
+      const childResults = await this.processConcurrentlyWithLimit(
+        theme.childThemes,
+        (child: ConsolidatedTheme) =>
+          this.expandThemeRecursively(child, currentDepth + 1, theme),
+        {
+          onProgress: (completed, total) => {
+            if (this.config.enableProgressLogging && total > 1) {
+              console.log(
+                `[THEME-EXPANSION] Child themes progress: ${completed}/${total} for "${theme.name}"`
+              );
+            }
+          },
+        }
       );
+
+      // Extract successful results, keep failed themes as fallback
+      const expandedChildren: ConsolidatedTheme[] = [];
+      for (const result of childResults) {
+        if ('error' in result) {
+          console.warn(
+            `[THEME-EXPANSION] Failed to expand child theme: ${result.error.message}`
+          );
+          expandedChildren.push(result.item); // Keep original theme if expansion fails
+        } else {
+          expandedChildren.push(result);
+        }
+      }
+
       return { ...theme, childThemes: expandedChildren };
     }
 
@@ -145,26 +389,70 @@ export class ThemeExpansionService {
     }
 
     // Recursively expand new sub-themes
-    const expandedSubThemes = await Promise.all(
-      result.subThemes.map((subTheme: ConsolidatedTheme) =>
+    const subThemeResults = await this.processConcurrentlyWithLimit(
+      result.subThemes,
+      (subTheme: ConsolidatedTheme) =>
         this.expandThemeRecursively(
           subTheme,
           currentDepth + 1,
           result.expandedTheme
-        )
-      )
+        ),
+      {
+        onProgress: (completed, total) => {
+          if (this.config.enableProgressLogging && total > 1) {
+            console.log(
+              `[THEME-EXPANSION] Sub-themes progress: ${completed}/${total} for "${theme.name}"`
+            );
+          }
+        },
+      }
     );
 
+    // Extract successful sub-themes
+    const expandedSubThemes: ConsolidatedTheme[] = [];
+    for (const subResult of subThemeResults) {
+      if ('error' in subResult) {
+        console.warn(
+          `[THEME-EXPANSION] Failed to expand sub-theme: ${subResult.error.message}`
+        );
+        expandedSubThemes.push(subResult.item); // Keep original if expansion fails
+      } else {
+        expandedSubThemes.push(subResult);
+      }
+    }
+
     // Also expand existing child themes
-    const expandedExistingChildren = await Promise.all(
-      result.expandedTheme!.childThemes.map((child: ConsolidatedTheme) =>
+    const existingChildResults = await this.processConcurrentlyWithLimit(
+      result.expandedTheme!.childThemes,
+      (child: ConsolidatedTheme) =>
         this.expandThemeRecursively(
           child,
           currentDepth + 1,
           result.expandedTheme
-        )
-      )
+        ),
+      {
+        onProgress: (completed, total) => {
+          if (this.config.enableProgressLogging && total > 1) {
+            console.log(
+              `[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`
+            );
+          }
+        },
+      }
     );
+
+    // Extract successful existing children
+    const expandedExistingChildren: ConsolidatedTheme[] = [];
+    for (const childResult of existingChildResults) {
+      if ('error' in childResult) {
+        console.warn(
+          `[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`
+        );
+        expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
+      } else {
+        expandedExistingChildren.push(childResult);
+      }
+    }
 
     // Combine all child themes
     const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
@@ -257,13 +545,37 @@ export class ThemeExpansionService {
       batches.push(subThemes.slice(i, i + batchSize));
     }
 
-    // Process each batch in parallel
-    const deduplicationResults = await Promise.all(
-      batches.map((batch) => this.deduplicateBatch(batch))
+    // Process each batch with concurrency limit
+    const deduplicationResults = await this.processConcurrentlyWithLimit(
+      batches,
+      (batch) => this.deduplicateBatch(batch),
+      {
+        onProgress: (completed, total) => {
+          if (this.config.enableProgressLogging && total > 1) {
+            console.log(
+              `[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches`
+            );
+          }
+        },
+      }
     );
 
+    // Extract successful results
+    const successfulResults: ConsolidatedTheme[][][] = [];
+    for (const result of deduplicationResults) {
+      if ('error' in result) {
+        console.warn(
+          `[THEME-EXPANSION] Deduplication batch failed: ${result.error.message}`
+        );
+        // For failed batches, we could return the original batch as fallback
+        // but for now, we'll skip failed batches
+      } else {
+        successfulResults.push(result);
+      }
+    }
+
     // Flatten and combine results
-    const allGroups = deduplicationResults.flat();
+    const allGroups = successfulResults.flat();
 
     // Merge groups that span batches
     const finalThemes: ConsolidatedTheme[] = [];

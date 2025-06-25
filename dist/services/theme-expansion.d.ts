@@ -6,6 +6,11 @@ export interface ExpansionConfig {
     minFilesForExpansion: number;
     businessImpactThreshold: number;
     parallelBatchSize: number;
+    concurrencyLimit: number;
+    maxRetries: number;
+    retryDelay: number;
+    retryBackoffMultiplier: number;
+    enableProgressLogging: boolean;
 }
 export declare const DEFAULT_EXPANSION_CONFIG: ExpansionConfig;
 export interface ExpansionCandidate {
@@ -50,6 +55,22 @@ export declare class ThemeExpansionService {
     private cache;
     private config;
     constructor(anthropicApiKey: string, config?: Partial<ExpansionConfig>);
+    /**
+     * Process items concurrently with limit and retry logic
+     */
+    private processConcurrentlyWithLimit;
+    /**
+     * Process single item with retry logic
+     */
+    private processWithRetry;
+    /**
+     * Calculate exponential backoff delay
+     */
+    private calculateBackoffDelay;
+    /**
+     * Sleep utility
+     */
+    private sleep;
     /**
      * Main entry point for expanding themes hierarchically
      */
