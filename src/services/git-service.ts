@@ -286,12 +286,33 @@ export class GitService {
         throw new Error('GitHub API client not initialized');
       }
 
-      const { data: files } = await this.octokit.rest.pulls.listFiles({
-        ...github.context.repo,
-        pull_number: prNumber,
-      });
+      // Fetch all files using pagination (GitHub API returns max 30 per page)
+      const allFiles = [];
+      let page = 1;
+      let hasMore = true;
+      
+      while (hasMore) {
+        const { data: files } = await this.octokit.rest.pulls.listFiles({
+          ...github.context.repo,
+          pull_number: prNumber,
+          per_page: 100, // Maximum allowed by GitHub
+          page: page,
+        });
+        
+        allFiles.push(...files);
+        
+        // If we got less than 100 files, we've reached the end
+        hasMore = files.length === 100;
+        page++;
+        
+        // Safety limit to prevent infinite loops
+        if (page > 10) {
+          console.warn('[GIT-SERVICE] Reached pagination limit, stopping at 1000 files');
+          break;
+        }
+      }
 
-      const changedFiles = files
+      const changedFiles = allFiles
         .filter((file) => this.shouldIncludeFile(file.filename))
         .map((file) => ({
           filename: file.filename,
@@ -302,7 +323,7 @@ export class GitService {
         }));
 
       console.log(
-        `[GIT-SERVICE] GitHub API: Filtered ${files.length} files down to ${changedFiles.length} for analysis`
+        `[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`
       );
       return changedFiles;
     } catch (error) {
