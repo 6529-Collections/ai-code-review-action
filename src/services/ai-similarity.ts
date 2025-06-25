@@ -39,7 +39,7 @@ export class AISimilarityService {
 
       const result = this.parseAISimilarityResponse(output);
       console.log(
-        `[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.semanticScore.toFixed(2)} (${result.shouldMerge ? 'MERGE' : 'SEPARATE'})`
+        `[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
       );
       console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
 
@@ -55,38 +55,35 @@ export class AISimilarityService {
   }
 
   private buildSimilarityPrompt(theme1: Theme, theme2: Theme): string {
-    return `You are an expert code reviewer analyzing theme similarity for consolidation.
+    return `You are a product manager reviewing code changes to determine if they represent the SAME business value or user improvement.
 
-Compare these two code change themes and determine if they should be merged:
-
-**Theme 1:**
-Name: "${theme1.name}"
-Description: "${theme1.description}"
+**Theme 1: "${theme1.name}"**
+Description: ${theme1.description}
 Files: ${theme1.affectedFiles.join(', ')}
-Confidence: ${theme1.confidence}
+Actual Code Changes:
+${theme1.codeSnippets.join('\n\n')}
 
-**Theme 2:**
-Name: "${theme2.name}"  
-Description: "${theme2.description}"
+**Theme 2: "${theme2.name}"**
+Description: ${theme2.description}
 Files: ${theme2.affectedFiles.join(', ')}
-Confidence: ${theme2.confidence}
+Actual Code Changes:
+${theme2.codeSnippets.join('\n\n')}
 
-Analyze semantic similarity considering:
-- Are they the same logical change/feature?
-- Do they serve the same business purpose?
-- Are they part of the same refactoring effort?
-- Would a developer naturally group them together?
+Question: Do these two themes represent the SAME business improvement or user value?
 
-Respond in this exact JSON format (no other text):
+Consider:
+- Are they solving the SAME user problem?
+- Are they part of the SAME feature or workflow?
+- Would you present these as ONE improvement to stakeholders?
+- Do the code changes show they serve the SAME business purpose?
+
+Focus on BUSINESS VALUE and USER IMPACT, not technical implementation details.
+
+Respond in JSON:
 {
-  "nameScore": 0.85,
-  "descriptionScore": 0.72,
-  "patternScore": 0.68,
-  "businessScore": 0.91,
-  "semanticScore": 0.79,
   "shouldMerge": true,
-  "confidence": 0.88,
-  "reasoning": "Both themes relate to removing authentication scaffolding - semantically identical despite different wording"
+  "confidence": 0.85,
+  "reasoning": "Both themes implement the same email validation improvement for user data integrity"
 }`;
   }
 
@@ -95,15 +92,22 @@ Respond in this exact JSON format (no other text):
       const jsonMatch = output.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
+
+        // Map the simple response to the full AISimilarityResult interface
+        const shouldMerge = parsed.shouldMerge || false;
+        const confidence = parsed.confidence || 0;
+
         return {
-          nameScore: parsed.nameScore || 0,
-          descriptionScore: parsed.descriptionScore || 0,
-          patternScore: parsed.patternScore || 0,
-          businessScore: parsed.businessScore || 0,
-          semanticScore: parsed.semanticScore || 0,
-          shouldMerge: parsed.shouldMerge || false,
-          confidence: parsed.confidence || 0,
+          shouldMerge,
+          confidence,
           reasoning: parsed.reasoning || 'No reasoning provided',
+          // Derive a semantic score from the decision and confidence
+          semanticScore: shouldMerge ? confidence : 1 - confidence,
+          // Legacy scores - set to 0 as they're not used anymore
+          nameScore: 0,
+          descriptionScore: 0,
+          patternScore: 0,
+          businessScore: 0,
         };
       }
     } catch (error) {
@@ -126,25 +130,26 @@ Respond in this exact JSON format (no other text):
     theme1: Theme,
     theme2: Theme
   ): AISimilarityResult {
-    // Fallback to basic string matching when AI fails
+    // Fallback when AI fails - conservative approach
     const nameScore = this.similarityCalculator.calculateNameSimilarity(
       theme1.name,
       theme2.name
     );
-    const descScore = this.similarityCalculator.calculateDescriptionSimilarity(
-      theme1.description,
-      theme2.description
-    );
+
+    // Only merge if names are extremely similar (fallback is conservative)
+    const shouldMerge = nameScore > 0.9;
 
     return {
-      nameScore,
-      descriptionScore: descScore,
-      patternScore: 0.3,
-      businessScore: 0.3,
-      semanticScore: (nameScore + descScore) / 2,
-      shouldMerge: nameScore > 0.7,
-      confidence: 0.4,
-      reasoning: 'AI analysis failed, used basic string matching fallback',
+      shouldMerge,
+      confidence: 0.3, // Low confidence for fallback
+      reasoning:
+        'AI analysis failed - conservative fallback based on name similarity only',
+      semanticScore: shouldMerge ? 0.6 : 0.2,
+      // Legacy scores - not used
+      nameScore: 0,
+      descriptionScore: 0,
+      patternScore: 0,
+      businessScore: 0,
     };
   }
 }

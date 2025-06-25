@@ -18,5 +18,4 @@ export declare class ThemeSimilarityService {
     private buildHierarchies;
     private themeToConsolidated;
     private mergeThemes;
-    private aiSimilarityToMetrics;
 }
