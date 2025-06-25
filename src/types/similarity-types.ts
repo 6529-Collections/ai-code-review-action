@@ -46,6 +46,30 @@ export interface ConsolidatedTheme {
   businessLogicPatterns?: string[]; // Identified business patterns
   userFlowPatterns?: string[]; // Identified user flow patterns
   complexityScore?: number; // Calculated complexity score for expansion
+
+  // New consolidation context fields
+  consolidationSummary?: string; // Why these were merged
+  childThemeSummaries?: string[]; // Quick summary of each child
+  combinedTechnicalDetails?: string; // Unified technical description
+  unifiedUserImpact?: string; // Combined user value proposition
+
+  // Rich context from Theme
+  detailedDescription?: string;
+  technicalSummary?: string;
+  keyChanges?: string[];
+  userScenario?: string;
+  mainFunctionsChanged?: string[];
+  mainClassesChanged?: string[];
+  codeMetrics?: {
+    linesAdded: number;
+    linesRemoved: number;
+    filesChanged: number;
+  };
+  codeExamples?: Array<{
+    file: string;
+    description: string;
+    snippet: string;
+  }>;
 }
 
 export interface ConsolidationConfig {

@@ -325,6 +325,15 @@ export class ThemeSimilarityService {
       lastAnalysis: theme.lastAnalysis,
       sourceThemes: [theme.id],
       consolidationMethod: 'single',
+      // Include new detailed fields
+      detailedDescription: theme.detailedDescription,
+      technicalSummary: theme.technicalSummary,
+      keyChanges: theme.keyChanges,
+      userScenario: theme.userScenario,
+      mainFunctionsChanged: theme.mainFunctionsChanged,
+      mainClassesChanged: theme.mainClassesChanged,
+      codeMetrics: theme.codeMetrics,
+      codeExamples: theme.codeExamples,
     };
   }
 
@@ -333,10 +342,34 @@ export class ThemeSimilarityService {
     const allSnippets: string[] = [];
     let totalConfidence = 0;
 
+    // Combine all rich fields
+    const allKeyChanges: string[] = [];
+    const allFunctions = new Set<string>();
+    const allClasses = new Set<string>();
+    const allCodeExamples: Array<{
+      file: string;
+      description: string;
+      snippet: string;
+    }> = [];
+    let totalLinesAdded = 0;
+    let totalLinesRemoved = 0;
+
     themes.forEach((theme) => {
       theme.affectedFiles.forEach((file) => allFiles.add(file));
       allSnippets.push(...theme.codeSnippets);
       totalConfidence += theme.confidence;
+
+      // Combine new fields
+      if (theme.keyChanges) allKeyChanges.push(...theme.keyChanges);
+      if (theme.mainFunctionsChanged)
+        theme.mainFunctionsChanged.forEach((f) => allFunctions.add(f));
+      if (theme.mainClassesChanged)
+        theme.mainClassesChanged.forEach((c) => allClasses.add(c));
+      if (theme.codeExamples) allCodeExamples.push(...theme.codeExamples);
+      if (theme.codeMetrics) {
+        totalLinesAdded += theme.codeMetrics.linesAdded;
+        totalLinesRemoved += theme.codeMetrics.linesRemoved;
+      }
     });
 
     // Generate AI-powered name and description for merged themes
@@ -344,6 +377,18 @@ export class ThemeSimilarityService {
       await this.themeNamingService.generateMergedThemeNameAndDescription(
         themes
       );
+
+    // Combine technical summaries
+    const combinedTechnicalDetails = themes
+      .filter((t) => t.technicalSummary)
+      .map((t) => t.technicalSummary)
+      .join('. ');
+
+    // Combine user scenarios
+    const unifiedUserImpact = themes
+      .filter((t) => t.userScenario)
+      .map((t) => t.userScenario)
+      .join('. Additionally, ');
 
     return {
       id: `merged-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
@@ -358,7 +403,27 @@ export class ThemeSimilarityService {
       context: themes.map((t) => t.context).join('\n'),
       lastAnalysis: new Date(),
       sourceThemes: themes.map((t) => t.id),
-      consolidationMethod: 'merge',w
+      consolidationMethod: 'merge',
+
+      // New rich fields
+      consolidationSummary: `Merged ${themes.length} similar themes: ${themes.map((t) => t.name).join(', ')}`,
+      combinedTechnicalDetails: combinedTechnicalDetails || undefined,
+      unifiedUserImpact: unifiedUserImpact || undefined,
+      keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,
+      mainFunctionsChanged:
+        allFunctions.size > 0 ? Array.from(allFunctions) : undefined,
+      mainClassesChanged:
+        allClasses.size > 0 ? Array.from(allClasses) : undefined,
+      codeMetrics:
+        totalLinesAdded > 0 || totalLinesRemoved > 0
+          ? {
+              linesAdded: totalLinesAdded,
+              linesRemoved: totalLinesRemoved,
+              filesChanged: allFiles.size,
+            }
+          : undefined,
+      codeExamples:
+        allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
     };
   }
 }

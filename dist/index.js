@@ -31117,8 +31117,15 @@ class HierarchicalSimilarityService {
             }
         }
         (0, utils_1.logInfo)(`Generated ${comparisons.length} cross-level comparisons`);
+        if (comparisons.length > 100) {
+            (0, utils_1.logInfo)(`WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`);
+        }
         // Process comparisons directly
-        const results = await Promise.all(comparisons.map((comparison) => this.analyzeCrossLevelSimilarityPair(comparison)));
+        console.log(`[HIERARCHICAL] Starting ${comparisons.length} parallel Claude API calls`);
+        const results = await Promise.all(comparisons.map((comparison, index) => {
+            console.log(`[HIERARCHICAL] Starting comparison ${index + 1}/${comparisons.length}`);
+            return this.analyzeCrossLevelSimilarityPair(comparison);
+        }));
         (0, utils_1.logInfo)(`Completed cross-level similarity analysis: ${results.length} results`);
         return results;
     }
@@ -31222,7 +31229,7 @@ class HierarchicalSimilarityService {
         }
         // Don't compare themes that are too far apart in the hierarchy
         const levelDifference = Math.abs(theme1.level - theme2.level);
-        if (levelDifference > 2) {
+        if (levelDifference > 1) {
             return false;
         }
         return true;
@@ -31283,7 +31290,9 @@ Return JSON:
 Focus on business value and avoid merging themes with distinct business purposes.
 `;
         try {
+            console.log(`[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`);
             const response = await this.claudeClient.callClaude(prompt);
+            console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
                 'similarityScore',
                 'relationshipType',
@@ -31323,7 +31332,12 @@ Focus on business value and avoid merging themes with distinct business purposes
             return result;
         }
         catch (error) {
-            console.error(`[HIERARCHICAL] AI analysis failed: ${error}`);
+            console.error(`[HIERARCHICAL] AI analysis failed for ${theme1.name} vs ${theme2.name}:`, error);
+            console.error(`[HIERARCHICAL] Error details:`, {
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                name: error instanceof Error ? error.name : undefined,
+            });
             // Return conservative default on any error
             const fallbackResult = {
                 theme1,
@@ -32111,7 +32125,7 @@ class ClaudeService {
                     },
                 },
             });
-            const result = this.parseClaudeResponse(output);
+            const result = this.parseClaudeResponse(output, chunk);
             return result;
         }
         catch (err) {
@@ -32183,7 +32197,9 @@ Examples of good business-focused themes:
 - "Simplify configuration" (not "Update workflow files")
 - "Add pull request feedback" (not "Implement commenting system")
 
-Respond in this exact JSON format (no other text):
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+
+Start your response with { and end with }. Example:
 {
   "themeName": "user/business-focused name (what value does this provide?)",
   "description": "what business problem this solves or capability it provides",
@@ -32201,7 +32217,7 @@ Respond in this exact JSON format (no other text):
             : chunk.content;
         return `${context}
 
-Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
+Analyze this code change from a USER and BUSINESS perspective:
 
 File: ${chunk.filename}
 Code changes:
@@ -32211,25 +32227,40 @@ Focus on:
 - What user experience or workflow is being improved?
 - What business capability is being added/removed/enhanced?
 - What problem is this solving for end users?
-- Think like a product manager, not a developer
+- Think like a product manager explaining to stakeholders
 
-Examples of good business-focused themes:
-- "Remove demo functionality" (not "Delete greeting parameter")
-- "Improve code review automation" (not "Add AI services")
-- "Simplify configuration" (not "Update workflow files")
-- "Add pull request feedback" (not "Implement commenting system")
+Provide DETAILED information about:
+- The specific functionality being changed
+- The user scenario this enables or improves
+- The key technical changes (mention specific functions/classes/features)
+- The business value and user impact
 
-Respond in this exact JSON format (no other text):
+Examples of good business-focused analysis:
+- Theme: "Remove demo functionality"
+  Detail: "Removes the demo authentication flow and sample user data that was confusing real users. This includes deleting the MockAuthProvider class and demo user seed data."
+  
+- Theme: "Improve code review automation" 
+  Detail: "Enhances the AI-powered code review to provide more detailed feedback. Added retry logic for failed API calls and improved error handling in the ReviewService class."
+
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+
+Provide a comprehensive response with all fields:
 {
-  "themeName": "user/business-focused name (what value does this provide?)",
-  "description": "what business problem this solves or capability it provides",
+  "themeName": "concise user/business-focused name",
+  "description": "one-line summary of the change",
+  "detailedDescription": "2-3 sentences explaining what specifically changed and why it matters",
   "businessImpact": "how this affects user experience or business outcomes",
+  "technicalSummary": "specific technical changes (mention actual function/class names)",
+  "keyChanges": ["specific change 1", "specific change 2", "specific change 3"],
+  "userScenario": "concrete example of how a user would experience this change",
+  "mainFunctionsChanged": ["function1", "function2"],
+  "mainClassesChanged": ["Class1", "Class2"],
   "suggestedParent": null,
   "confidence": 0.8,
   "codePattern": "what pattern this represents"
 }`;
     }
-    parseClaudeResponse(output) {
+    parseClaudeResponse(output, chunk) {
         const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
         if (extractionResult.success) {
             const data = extractionResult.data;
@@ -32240,19 +32271,20 @@ Respond in this exact JSON format (no other text):
                 confidence: data.confidence || 0.5,
                 codePattern: data.codePattern || 'Unknown pattern',
                 suggestedParent: data.suggestedParent || undefined,
+                detailedDescription: data.detailedDescription,
+                technicalSummary: data.technicalSummary,
+                keyChanges: data.keyChanges,
+                userScenario: data.userScenario,
+                mainFunctionsChanged: data.mainFunctionsChanged,
+                mainClassesChanged: data.mainClassesChanged,
             };
         }
         console.warn('[THEME-SERVICE] JSON extraction failed:', extractionResult.error);
         if (extractionResult.originalResponse) {
             console.debug('[THEME-SERVICE] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
-        return {
-            themeName: 'Parse Error',
-            description: `Failed to parse Claude response: ${extractionResult.error}`,
-            businessImpact: 'Unknown',
-            confidence: 0.1,
-            codePattern: 'Unknown',
-        };
+        // Use the better fallback that includes filename
+        return this.createFallbackAnalysis(chunk);
     }
     createFallbackAnalysis(chunk) {
         return {
@@ -32397,6 +32429,13 @@ class ThemeContextManager {
                 },
                 codeChanges: [],
                 lastAnalysis: new Date(),
+                // New detailed fields
+                detailedDescription: analysis.detailedDescription,
+                technicalSummary: analysis.technicalSummary,
+                keyChanges: analysis.keyChanges,
+                userScenario: analysis.userScenario,
+                mainFunctionsChanged: analysis.mainFunctionsChanged,
+                mainClassesChanged: analysis.mainClassesChanged,
             };
             this.context.themes.set(newTheme.id, newTheme);
             if (newTheme.level === 0) {
@@ -32892,19 +32931,58 @@ class ThemeSimilarityService {
             lastAnalysis: theme.lastAnalysis,
             sourceThemes: [theme.id],
             consolidationMethod: 'single',
+            // Include new detailed fields
+            detailedDescription: theme.detailedDescription,
+            technicalSummary: theme.technicalSummary,
+            keyChanges: theme.keyChanges,
+            userScenario: theme.userScenario,
+            mainFunctionsChanged: theme.mainFunctionsChanged,
+            mainClassesChanged: theme.mainClassesChanged,
+            codeMetrics: theme.codeMetrics,
+            codeExamples: theme.codeExamples,
         };
     }
     async mergeThemes(themes) {
         const allFiles = new Set();
         const allSnippets = [];
         let totalConfidence = 0;
+        // Combine all rich fields
+        const allKeyChanges = [];
+        const allFunctions = new Set();
+        const allClasses = new Set();
+        const allCodeExamples = [];
+        let totalLinesAdded = 0;
+        let totalLinesRemoved = 0;
         themes.forEach((theme) => {
             theme.affectedFiles.forEach((file) => allFiles.add(file));
             allSnippets.push(...theme.codeSnippets);
             totalConfidence += theme.confidence;
+            // Combine new fields
+            if (theme.keyChanges)
+                allKeyChanges.push(...theme.keyChanges);
+            if (theme.mainFunctionsChanged)
+                theme.mainFunctionsChanged.forEach((f) => allFunctions.add(f));
+            if (theme.mainClassesChanged)
+                theme.mainClassesChanged.forEach((c) => allClasses.add(c));
+            if (theme.codeExamples)
+                allCodeExamples.push(...theme.codeExamples);
+            if (theme.codeMetrics) {
+                totalLinesAdded += theme.codeMetrics.linesAdded;
+                totalLinesRemoved += theme.codeMetrics.linesRemoved;
+            }
         });
         // Generate AI-powered name and description for merged themes
         const { name, description } = await this.themeNamingService.generateMergedThemeNameAndDescription(themes);
+        // Combine technical summaries
+        const combinedTechnicalDetails = themes
+            .filter((t) => t.technicalSummary)
+            .map((t) => t.technicalSummary)
+            .join('. ');
+        // Combine user scenarios
+        const unifiedUserImpact = themes
+            .filter((t) => t.userScenario)
+            .map((t) => t.userScenario)
+            .join('. Additionally, ');
         return {
             id: `merged-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             name,
@@ -32919,6 +32997,21 @@ class ThemeSimilarityService {
             lastAnalysis: new Date(),
             sourceThemes: themes.map((t) => t.id),
             consolidationMethod: 'merge',
+            // New rich fields
+            consolidationSummary: `Merged ${themes.length} similar themes: ${themes.map((t) => t.name).join(', ')}`,
+            combinedTechnicalDetails: combinedTechnicalDetails || undefined,
+            unifiedUserImpact: unifiedUserImpact || undefined,
+            keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,
+            mainFunctionsChanged: allFunctions.size > 0 ? Array.from(allFunctions) : undefined,
+            mainClassesChanged: allClasses.size > 0 ? Array.from(allClasses) : undefined,
+            codeMetrics: totalLinesAdded > 0 || totalLinesRemoved > 0
+                ? {
+                    linesAdded: totalLinesAdded,
+                    linesRemoved: totalLinesRemoved,
+                    filesChanged: allFiles.size,
+                }
+                : undefined,
+            codeExamples: allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
         };
     }
 }

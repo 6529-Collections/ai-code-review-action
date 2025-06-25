@@ -36,6 +36,28 @@ export interface Theme {
   enhancedContext: SmartContext; // Rich code context with algorithmic + AI insights
   codeChanges: CodeChange[]; // Detailed code change information
   lastAnalysis: Date;
+
+  // New fields for richer context
+  detailedDescription?: string; // 2-3 sentence detailed explanation
+  technicalSummary?: string; // Technical changes summary
+  keyChanges?: string[]; // Bullet points of main changes
+  userScenario?: string; // Example user flow
+
+  // Code context
+  mainFunctionsChanged?: string[]; // Key functions/methods
+  mainClassesChanged?: string[]; // Key classes/components
+  codeMetrics?: {
+    linesAdded: number;
+    linesRemoved: number;
+    filesChanged: number;
+  };
+
+  // Enhanced snippets
+  codeExamples?: Array<{
+    file: string;
+    description: string;
+    snippet: string;
+  }>;
 }
 
 export interface CodeChunk {
@@ -54,6 +76,14 @@ export interface ChunkAnalysis {
   suggestedParent?: string | null;
   confidence: number;
   codePattern: string;
+
+  // New detailed fields
+  detailedDescription?: string;
+  technicalSummary?: string;
+  keyChanges?: string[];
+  userScenario?: string;
+  mainFunctionsChanged?: string[];
+  mainClassesChanged?: string[];
 }
 
 export interface ThemePlacement {
@@ -241,7 +271,7 @@ Start your response with { and end with }. Example:
 
     return `${context}
 
-Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
+Analyze this code change from a USER and BUSINESS perspective:
 
 File: ${chunk.filename}
 Code changes:
@@ -251,21 +281,34 @@ Focus on:
 - What user experience or workflow is being improved?
 - What business capability is being added/removed/enhanced?
 - What problem is this solving for end users?
-- Think like a product manager, not a developer
+- Think like a product manager explaining to stakeholders
 
-Examples of good business-focused themes:
-- "Remove demo functionality" (not "Delete greeting parameter")
-- "Improve code review automation" (not "Add AI services")
-- "Simplify configuration" (not "Update workflow files")
-- "Add pull request feedback" (not "Implement commenting system")
+Provide DETAILED information about:
+- The specific functionality being changed
+- The user scenario this enables or improves
+- The key technical changes (mention specific functions/classes/features)
+- The business value and user impact
+
+Examples of good business-focused analysis:
+- Theme: "Remove demo functionality"
+  Detail: "Removes the demo authentication flow and sample user data that was confusing real users. This includes deleting the MockAuthProvider class and demo user seed data."
+  
+- Theme: "Improve code review automation" 
+  Detail: "Enhances the AI-powered code review to provide more detailed feedback. Added retry logic for failed API calls and improved error handling in the ReviewService class."
 
 CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
 
-Start your response with { and end with }. Example:
+Provide a comprehensive response with all fields:
 {
-  "themeName": "user/business-focused name (what value does this provide?)",
-  "description": "what business problem this solves or capability it provides",
+  "themeName": "concise user/business-focused name",
+  "description": "one-line summary of the change",
+  "detailedDescription": "2-3 sentences explaining what specifically changed and why it matters",
   "businessImpact": "how this affects user experience or business outcomes",
+  "technicalSummary": "specific technical changes (mention actual function/class names)",
+  "keyChanges": ["specific change 1", "specific change 2", "specific change 3"],
+  "userScenario": "concrete example of how a user would experience this change",
+  "mainFunctionsChanged": ["function1", "function2"],
+  "mainClassesChanged": ["Class1", "Class2"],
   "suggestedParent": null,
   "confidence": 0.8,
   "codePattern": "what pattern this represents"
@@ -287,6 +330,12 @@ Start your response with { and end with }. Example:
         confidence?: number;
         codePattern?: string;
         suggestedParent?: string;
+        detailedDescription?: string;
+        technicalSummary?: string;
+        keyChanges?: string[];
+        userScenario?: string;
+        mainFunctionsChanged?: string[];
+        mainClassesChanged?: string[];
       };
       return {
         themeName: data.themeName || 'Unknown Theme',
@@ -295,6 +344,12 @@ Start your response with { and end with }. Example:
         confidence: data.confidence || 0.5,
         codePattern: data.codePattern || 'Unknown pattern',
         suggestedParent: data.suggestedParent || undefined,
+        detailedDescription: data.detailedDescription,
+        technicalSummary: data.technicalSummary,
+        keyChanges: data.keyChanges,
+        userScenario: data.userScenario,
+        mainFunctionsChanged: data.mainFunctionsChanged,
+        mainClassesChanged: data.mainClassesChanged,
       };
     }
 
@@ -490,6 +545,13 @@ class ThemeContextManager {
         },
         codeChanges: [],
         lastAnalysis: new Date(),
+        // New detailed fields
+        detailedDescription: analysis.detailedDescription,
+        technicalSummary: analysis.technicalSummary,
+        keyChanges: analysis.keyChanges,
+        userScenario: analysis.userScenario,
+        mainFunctionsChanged: analysis.mainFunctionsChanged,
+        mainClassesChanged: analysis.mainClassesChanged,
       };
 
       this.context.themes.set(newTheme.id, newTheme);
