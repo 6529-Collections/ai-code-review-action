@@ -67,6 +67,22 @@ export declare class ThemeExpansionService {
      */
     private calculateComplexityScore;
     /**
+     * Deduplicate sub-themes using AI to identify duplicates
+     */
+    private deduplicateSubThemes;
+    /**
+     * Run a second pass to catch duplicates that were in different batches
+     */
+    private runSecondPassDeduplication;
+    /**
+     * Process a batch of themes for deduplication
+     */
+    private deduplicateBatch;
+    /**
+     * Merge duplicate sub-themes into a single theme
+     */
+    private mergeSubThemes;
+    /**
      * Identify distinct business patterns within a theme
      */
     private identifyBusinessPatterns;

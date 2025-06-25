@@ -271,47 +271,44 @@ Start your response with { and end with }. Example:
 
     return `${context}
 
-Analyze this code change from a USER and BUSINESS perspective:
+Analyze this code change thoroughly. Be SPECIFIC and DETAILED.
 
 File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Focus on:
-- What user experience or workflow is being improved?
-- What business capability is being added/removed/enhanced?
-- What problem is this solving for end users?
-- Think like a product manager explaining to stakeholders
+Provide a comprehensive analysis that helps developers and stakeholders understand:
+1. What EXACTLY is changing - use specific names, values, and details from the code
+2. WHY this matters - both technical and user/business impact  
+3. Important technical details - what functions, classes, configs, parameters changed
+4. How this relates to the overall system
 
-Provide DETAILED information about:
-- The specific functionality being changed
-- The user scenario this enables or improves
-- The key technical changes (mention specific functions/classes/features)
-- The business value and user impact
+Be specific! Examples of good specific analysis:
+- Instead of "Updated configuration" → "Changed pull_request.branches from ['main'] to ['**'] in CI workflow"
+- Instead of "Added new fields" → "Added detailedDescription, technicalSummary, and keyChanges fields to Theme interface"
+- Instead of "Improved error handling" → "Replaced JSON.parse() with JsonExtractor.extractAndValidateJson() in parseClaudeResponse()"
 
-Examples of good business-focused analysis:
-- Theme: "Remove demo functionality"
-  Detail: "Removes the demo authentication flow and sample user data that was confusing real users. This includes deleting the MockAuthProvider class and demo user seed data."
-  
-- Theme: "Improve code review automation" 
-  Detail: "Enhances the AI-powered code review to provide more detailed feedback. Added retry logic for failed API calls and improved error handling in the ReviewService class."
+Don't be generic. Look at the actual code and tell me:
+- What specific values changed?
+- What exact functions/methods were added or modified?
+- What configuration parameters were updated?
+- What the before/after states are?
 
-CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+CRITICAL: Respond with ONLY valid JSON. Start with { and end with }
 
-Provide a comprehensive response with all fields:
 {
-  "themeName": "concise user/business-focused name",
-  "description": "one-line summary of the change",
-  "detailedDescription": "2-3 sentences explaining what specifically changed and why it matters",
-  "businessImpact": "how this affects user experience or business outcomes",
-  "technicalSummary": "specific technical changes (mention actual function/class names)",
-  "keyChanges": ["specific change 1", "specific change 2", "specific change 3"],
-  "userScenario": "concrete example of how a user would experience this change",
-  "mainFunctionsChanged": ["function1", "function2"],
-  "mainClassesChanged": ["Class1", "Class2"],
+  "themeName": "what user value this provides (be specific)",
+  "description": "one clear sentence about what changed",
+  "detailedDescription": "2-3 sentences with SPECIFIC details - mention actual names, values, and changes from the code",
+  "businessImpact": "concrete impact on users with specific examples",
+  "technicalSummary": "exact technical changes - name the specific functions, fields, values that changed",
+  "keyChanges": ["specific change with actual names/values", "another specific change", "third specific change"],
+  "userScenario": "specific example: 'A developer creating a PR to the feature/xyz branch will now...'",
+  "mainFunctionsChanged": ["actualFunctionName1", "actualFunctionName2"],
+  "mainClassesChanged": ["ActualClassName1", "ActualClassName2"],
   "suggestedParent": null,
   "confidence": 0.8,
-  "codePattern": "what pattern this represents"
+  "codePattern": "what type of change this is"
 }`;
   }
 

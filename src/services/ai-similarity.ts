@@ -56,36 +56,88 @@ export class AISimilarityService {
   }
 
   private buildSimilarityPrompt(theme1: Theme, theme2: Theme): string {
-    return `You are a product manager reviewing code changes to determine if they represent the SAME business value or user improvement.
+    // Include rich details if available
+    const theme1Details = this.buildThemeDetails(theme1);
+    const theme2Details = this.buildThemeDetails(theme2);
+
+    return `Analyze these code changes to determine if they should be grouped together.
 
 **Theme 1: "${theme1.name}"**
-Description: ${theme1.description}
-Files: ${theme1.affectedFiles.join(', ')}
-Actual Code Changes:
-${theme1.codeSnippets.join('\n\n')}
+${theme1Details}
 
 **Theme 2: "${theme2.name}"**
-Description: ${theme2.description}
-Files: ${theme2.affectedFiles.join(', ')}
-Actual Code Changes:
-${theme2.codeSnippets.join('\n\n')}
+${theme2Details}
 
-Question: Do these two themes represent the SAME business improvement or user value?
+IMPORTANT CONTEXT:
+- Look at the actual code changes, not just descriptions
+- Consider if these are truly part of the same change or just happen to be similar
+- Think about how a developer would organize these changes in their mind
+- Consider file relationships and dependencies
 
-Consider:
-- Are they solving the SAME user problem?
-- Are they part of the SAME feature or workflow?
-- Would you present these as ONE improvement to stakeholders?
-- Do the code changes show they serve the SAME business purpose?
+Questions to answer:
+1. Are these solving the same problem or different problems?
+2. Would combining them make the theme clearer or more confusing?
+3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
+4. Do they have logical dependencies on each other?
 
-Focus on BUSINESS VALUE and USER IMPACT, not technical implementation details.
+Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
+It's better to have more specific themes than overly broad ones.
 
-Respond in JSON:
+CRITICAL: Respond with ONLY valid JSON.
+
 {
   "shouldMerge": true,
   "confidence": 0.85,
   "reasoning": "Both themes implement the same email validation improvement for user data integrity"
 }`;
+  }
+
+  private buildThemeDetails(theme: Theme): string {
+    let details = `Description: ${theme.description}`;
+
+    // Add detailed description if available
+    if (theme.detailedDescription) {
+      details += `\nDetailed: ${theme.detailedDescription}`;
+    }
+
+    // Add technical summary if available
+    if (theme.technicalSummary) {
+      details += `\nTechnical: ${theme.technicalSummary}`;
+    }
+
+    // Add key changes if available
+    if (theme.keyChanges && theme.keyChanges.length > 0) {
+      details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
+    }
+
+    // Add files
+    details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
+
+    // Add code metrics if available
+    if (theme.codeMetrics) {
+      const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+      details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+    }
+
+    // Add main functions/classes if available
+    if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+      details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
+    }
+
+    if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+      details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
+    }
+
+    // Add code snippets (limit to avoid token overflow)
+    const snippets = theme.codeSnippets.slice(0, 2).join('\n\n');
+    if (snippets) {
+      details += `\n\nActual Code Changes:\n${snippets}`;
+      if (theme.codeSnippets.length > 2) {
+        details += `\n... (${theme.codeSnippets.length - 2} more code snippets)`;
+      }
+    }
+
+    return details;
   }
 
   private parseAISimilarityResponse(output: string): AISimilarityResult {

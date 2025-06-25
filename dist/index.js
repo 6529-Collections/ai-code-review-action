@@ -30119,36 +30119,77 @@ class AISimilarityService {
         }
     }
     buildSimilarityPrompt(theme1, theme2) {
-        return `You are a product manager reviewing code changes to determine if they represent the SAME business value or user improvement.
+        // Include rich details if available
+        const theme1Details = this.buildThemeDetails(theme1);
+        const theme2Details = this.buildThemeDetails(theme2);
+        return `Analyze these code changes to determine if they should be grouped together.
 
 **Theme 1: "${theme1.name}"**
-Description: ${theme1.description}
-Files: ${theme1.affectedFiles.join(', ')}
-Actual Code Changes:
-${theme1.codeSnippets.join('\n\n')}
+${theme1Details}
 
 **Theme 2: "${theme2.name}"**
-Description: ${theme2.description}
-Files: ${theme2.affectedFiles.join(', ')}
-Actual Code Changes:
-${theme2.codeSnippets.join('\n\n')}
+${theme2Details}
 
-Question: Do these two themes represent the SAME business improvement or user value?
+IMPORTANT CONTEXT:
+- Look at the actual code changes, not just descriptions
+- Consider if these are truly part of the same change or just happen to be similar
+- Think about how a developer would organize these changes in their mind
+- Consider file relationships and dependencies
 
-Consider:
-- Are they solving the SAME user problem?
-- Are they part of the SAME feature or workflow?
-- Would you present these as ONE improvement to stakeholders?
-- Do the code changes show they serve the SAME business purpose?
+Questions to answer:
+1. Are these solving the same problem or different problems?
+2. Would combining them make the theme clearer or more confusing?
+3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
+4. Do they have logical dependencies on each other?
 
-Focus on BUSINESS VALUE and USER IMPACT, not technical implementation details.
+Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
+It's better to have more specific themes than overly broad ones.
 
-Respond in JSON:
+CRITICAL: Respond with ONLY valid JSON.
+
 {
   "shouldMerge": true,
   "confidence": 0.85,
   "reasoning": "Both themes implement the same email validation improvement for user data integrity"
 }`;
+    }
+    buildThemeDetails(theme) {
+        let details = `Description: ${theme.description}`;
+        // Add detailed description if available
+        if (theme.detailedDescription) {
+            details += `\nDetailed: ${theme.detailedDescription}`;
+        }
+        // Add technical summary if available
+        if (theme.technicalSummary) {
+            details += `\nTechnical: ${theme.technicalSummary}`;
+        }
+        // Add key changes if available
+        if (theme.keyChanges && theme.keyChanges.length > 0) {
+            details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
+        }
+        // Add files
+        details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
+        // Add code metrics if available
+        if (theme.codeMetrics) {
+            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+        }
+        // Add main functions/classes if available
+        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+            details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
+        }
+        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+            details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
+        }
+        // Add code snippets (limit to avoid token overflow)
+        const snippets = theme.codeSnippets.slice(0, 2).join('\n\n');
+        if (snippets) {
+            details += `\n\nActual Code Changes:\n${snippets}`;
+            if (theme.codeSnippets.length > 2) {
+                details += `\n... (${theme.codeSnippets.length - 2} more code snippets)`;
+            }
+        }
+        return details;
     }
     parseAISimilarityResponse(output) {
         const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['shouldMerge', 'confidence', 'reasoning']);
@@ -31537,9 +31578,14 @@ class ThemeExpansionService {
         const expandedSubThemes = await Promise.all(result.subThemes.map((subTheme) => this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme)));
         // Also expand existing child themes
         const expandedExistingChildren = await Promise.all(result.expandedTheme.childThemes.map((child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme)));
+        // Combine all child themes
+        const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
+        // Deduplicate child themes using AI
+        const deduplicatedChildren = await this.deduplicateSubThemes(allChildThemes);
         return {
             ...result.expandedTheme,
-            childThemes: [...expandedExistingChildren, ...expandedSubThemes],
+            childThemes: deduplicatedChildren,
+            isExpanded: true,
         };
     }
     /**
@@ -31584,6 +31630,280 @@ class ThemeExpansionService {
         // Child theme count (existing complexity)
         score += Math.min(theme.childThemes.length / 5, 0.15);
         return Math.min(score, 1.0);
+    }
+    /**
+     * Deduplicate sub-themes using AI to identify duplicates
+     */
+    async deduplicateSubThemes(subThemes) {
+        if (subThemes.length <= 1) {
+            return subThemes;
+        }
+        (0, utils_1.logInfo)(`Deduplicating ${subThemes.length} sub-themes using AI`);
+        // Process in batches of 4-8 themes
+        const batchSize = 6;
+        const batches = [];
+        for (let i = 0; i < subThemes.length; i += batchSize) {
+            batches.push(subThemes.slice(i, i + batchSize));
+        }
+        // Process each batch in parallel
+        const deduplicationResults = await Promise.all(batches.map((batch) => this.deduplicateBatch(batch)));
+        // Flatten and combine results
+        const allGroups = deduplicationResults.flat();
+        // Merge groups that span batches
+        const finalThemes = [];
+        const processedIds = new Set();
+        for (const group of allGroups) {
+            if (group.length === 1) {
+                // Single theme, no duplicates
+                if (!processedIds.has(group[0].id)) {
+                    finalThemes.push(group[0]);
+                    processedIds.add(group[0].id);
+                }
+            }
+            else {
+                // Multiple themes to merge
+                const unprocessedThemes = group.filter((t) => !processedIds.has(t.id));
+                if (unprocessedThemes.length > 0) {
+                    const mergedTheme = await this.mergeSubThemes(unprocessedThemes);
+                    finalThemes.push(mergedTheme);
+                    unprocessedThemes.forEach((t) => processedIds.add(t.id));
+                }
+            }
+        }
+        (0, utils_1.logInfo)(`Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`);
+        // Second pass: check if any of the final themes are still duplicates
+        // This handles cases where duplicates were in different batches
+        if (finalThemes.length > 1) {
+            (0, utils_1.logInfo)(`Running second pass deduplication on ${finalThemes.length} themes`);
+            const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
+            (0, utils_1.logInfo)(`Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
+            return secondPassResult;
+        }
+        return finalThemes;
+    }
+    /**
+     * Run a second pass to catch duplicates that were in different batches
+     */
+    async runSecondPassDeduplication(themes) {
+        // Create a single batch with all themes for comprehensive comparison
+        const prompt = `
+These themes have already been deduplicated within their groups, but there might still be duplicates across groups.
+Please do a final check to identify any remaining duplicates:
+
+${themes
+            .map((theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+Files: ${theme.affectedFiles.join(', ')}
+`)
+            .join('\n')}
+
+Only identify themes that are CLEARLY duplicates. Be conservative.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "duplicateGroups": [
+    {
+      "themeIndices": [1, 4],
+      "reasoning": "Both implement the exact same testing configuration change"
+    }
+  ]
+}
+
+If no duplicates found, return: {"duplicateGroups": []}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['duplicateGroups']);
+            if (!extractionResult.success) {
+                // No duplicates found or parsing failed
+                return themes;
+            }
+            const data = extractionResult.data;
+            if (!data.duplicateGroups || data.duplicateGroups.length === 0) {
+                return themes;
+            }
+            // Process duplicate groups
+            const finalThemes = [];
+            const processedIndices = new Set();
+            for (const group of data.duplicateGroups) {
+                const duplicateThemes = [];
+                for (const index of group.themeIndices) {
+                    if (index >= 1 &&
+                        index <= themes.length &&
+                        !processedIndices.has(index - 1)) {
+                        duplicateThemes.push(themes[index - 1]);
+                        processedIndices.add(index - 1);
+                    }
+                }
+                if (duplicateThemes.length > 1) {
+                    const mergedTheme = await this.mergeSubThemes(duplicateThemes);
+                    finalThemes.push(mergedTheme);
+                }
+                else if (duplicateThemes.length === 1) {
+                    finalThemes.push(duplicateThemes[0]);
+                }
+            }
+            // Add themes that weren't in any duplicate group
+            themes.forEach((theme, index) => {
+                if (!processedIndices.has(index)) {
+                    finalThemes.push(theme);
+                }
+            });
+            return finalThemes;
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Second pass deduplication failed: ${error}`);
+            return themes;
+        }
+    }
+    /**
+     * Process a batch of themes for deduplication
+     */
+    async deduplicateBatch(themes) {
+        const prompt = `
+Analyze these sub-themes and identify which ones describe the same change or functionality:
+
+${themes
+            .map((theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+Files: ${theme.affectedFiles.join(', ')}
+${theme.keyChanges ? `Key changes: ${theme.keyChanges.join('; ')}` : ''}
+`)
+            .join('\n')}
+
+Questions:
+1. Which themes are describing the same change (even if worded differently)?
+2. Group duplicate themes together
+3. For each group, explain why they are duplicates
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "groups": [
+    {
+      "themeIndices": [1, 3],
+      "reasoning": "Both themes describe the same CI workflow change"
+    },
+    {
+      "themeIndices": [2],
+      "reasoning": "Unique theme about type definitions"
+    }
+  ]
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['groups']);
+            if (!extractionResult.success) {
+                (0, utils_1.logInfo)(`Failed to parse deduplication response: ${extractionResult.error}`);
+                // Return each theme as its own group
+                return themes.map((theme) => [theme]);
+            }
+            const data = extractionResult.data;
+            // Convert indices to theme groups
+            const groups = [];
+            const processedIndices = new Set();
+            if (data.groups) {
+                for (const group of data.groups) {
+                    const themeGroup = [];
+                    for (const index of group.themeIndices) {
+                        if (index >= 1 &&
+                            index <= themes.length &&
+                            !processedIndices.has(index - 1)) {
+                            themeGroup.push(themes[index - 1]);
+                            processedIndices.add(index - 1);
+                        }
+                    }
+                    if (themeGroup.length > 0) {
+                        groups.push(themeGroup);
+                    }
+                }
+            }
+            // Add any themes not in groups
+            themes.forEach((theme, index) => {
+                if (!processedIndices.has(index)) {
+                    groups.push([theme]);
+                }
+            });
+            return groups;
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Deduplication batch failed: ${error}`);
+            // Return each theme as its own group
+            return themes.map((theme) => [theme]);
+        }
+    }
+    /**
+     * Merge duplicate sub-themes into a single theme
+     */
+    async mergeSubThemes(themes) {
+        if (themes.length === 1) {
+            return themes[0];
+        }
+        const prompt = `
+These themes have been identified as duplicates describing the same change:
+
+${themes
+            .map((theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+${theme.technicalSummary ? `Technical: ${theme.technicalSummary}` : ''}
+`)
+            .join('\n')}
+
+Create a single, unified theme that best represents this change. Combine the best aspects of each description.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "name": "unified theme name",
+  "description": "clear, comprehensive description",
+  "detailedDescription": "detailed explanation combining all relevant details",
+  "reasoning": "why this unified version is better"
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['name', 'description']);
+            if (!extractionResult.success) {
+                // Use the first theme as fallback
+                return themes[0];
+            }
+            const data = extractionResult.data;
+            // Combine all data from duplicate themes
+            const allFiles = new Set();
+            const allSnippets = [];
+            const allKeyChanges = [];
+            let totalConfidence = 0;
+            themes.forEach((theme) => {
+                theme.affectedFiles.forEach((file) => allFiles.add(file));
+                allSnippets.push(...theme.codeSnippets);
+                if (theme.keyChanges)
+                    allKeyChanges.push(...theme.keyChanges);
+                totalConfidence += theme.confidence;
+            });
+            return {
+                ...themes[0], // Use first theme as base
+                id: `dedup-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                name: data.name || themes[0].name,
+                description: data.description || themes[0].description,
+                detailedDescription: data.detailedDescription,
+                affectedFiles: Array.from(allFiles),
+                codeSnippets: allSnippets,
+                keyChanges: [...new Set(allKeyChanges)], // Deduplicate key changes
+                confidence: totalConfidence / themes.length,
+                sourceThemes: themes.flatMap((t) => t.sourceThemes),
+                consolidationMethod: 'merge',
+                consolidationSummary: `Deduplicated ${themes.length} similar sub-themes: ${data.reasoning || 'Identified as duplicates'}`,
+            };
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Sub-theme merge failed: ${error}`);
+            return themes[0]; // Use first theme as fallback
+        }
     }
     /**
      * Identify distinct business patterns within a theme
@@ -32217,47 +32537,44 @@ Start your response with { and end with }. Example:
             : chunk.content;
         return `${context}
 
-Analyze this code change from a USER and BUSINESS perspective:
+Analyze this code change thoroughly. Be SPECIFIC and DETAILED.
 
 File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Focus on:
-- What user experience or workflow is being improved?
-- What business capability is being added/removed/enhanced?
-- What problem is this solving for end users?
-- Think like a product manager explaining to stakeholders
+Provide a comprehensive analysis that helps developers and stakeholders understand:
+1. What EXACTLY is changing - use specific names, values, and details from the code
+2. WHY this matters - both technical and user/business impact  
+3. Important technical details - what functions, classes, configs, parameters changed
+4. How this relates to the overall system
 
-Provide DETAILED information about:
-- The specific functionality being changed
-- The user scenario this enables or improves
-- The key technical changes (mention specific functions/classes/features)
-- The business value and user impact
+Be specific! Examples of good specific analysis:
+- Instead of "Updated configuration" → "Changed pull_request.branches from ['main'] to ['**'] in CI workflow"
+- Instead of "Added new fields" → "Added detailedDescription, technicalSummary, and keyChanges fields to Theme interface"
+- Instead of "Improved error handling" → "Replaced JSON.parse() with JsonExtractor.extractAndValidateJson() in parseClaudeResponse()"
 
-Examples of good business-focused analysis:
-- Theme: "Remove demo functionality"
-  Detail: "Removes the demo authentication flow and sample user data that was confusing real users. This includes deleting the MockAuthProvider class and demo user seed data."
-  
-- Theme: "Improve code review automation" 
-  Detail: "Enhances the AI-powered code review to provide more detailed feedback. Added retry logic for failed API calls and improved error handling in the ReviewService class."
+Don't be generic. Look at the actual code and tell me:
+- What specific values changed?
+- What exact functions/methods were added or modified?
+- What configuration parameters were updated?
+- What the before/after states are?
 
-CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+CRITICAL: Respond with ONLY valid JSON. Start with { and end with }
 
-Provide a comprehensive response with all fields:
 {
-  "themeName": "concise user/business-focused name",
-  "description": "one-line summary of the change",
-  "detailedDescription": "2-3 sentences explaining what specifically changed and why it matters",
-  "businessImpact": "how this affects user experience or business outcomes",
-  "technicalSummary": "specific technical changes (mention actual function/class names)",
-  "keyChanges": ["specific change 1", "specific change 2", "specific change 3"],
-  "userScenario": "concrete example of how a user would experience this change",
-  "mainFunctionsChanged": ["function1", "function2"],
-  "mainClassesChanged": ["Class1", "Class2"],
+  "themeName": "what user value this provides (be specific)",
+  "description": "one clear sentence about what changed",
+  "detailedDescription": "2-3 sentences with SPECIFIC details - mention actual names, values, and changes from the code",
+  "businessImpact": "concrete impact on users with specific examples",
+  "technicalSummary": "exact technical changes - name the specific functions, fields, values that changed",
+  "keyChanges": ["specific change with actual names/values", "another specific change", "third specific change"],
+  "userScenario": "specific example: 'A developer creating a PR to the feature/xyz branch will now...'",
+  "mainFunctionsChanged": ["actualFunctionName1", "actualFunctionName2"],
+  "mainClassesChanged": ["ActualClassName1", "ActualClassName2"],
   "suggestedParent": null,
   "confidence": 0.8,
-  "codePattern": "what pattern this represents"
+  "codePattern": "what type of change this is"
 }`;
     }
     parseClaudeResponse(output, chunk) {
@@ -33889,9 +34206,43 @@ class ThemeFormatter {
         let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}% confidence)`;
         output += `\\n${indent}   - Files: ${files}${moreFiles}`;
         output += `\\n${indent}   - ${description}`;
+        // Show detailed description if available
+        if (theme.detailedDescription) {
+            output += `\\n${indent}   - **Details**: ${theme.detailedDescription}`;
+        }
+        // Show technical summary if available
+        if (theme.technicalSummary) {
+            output += `\\n${indent}   - **Technical**: ${theme.technicalSummary}`;
+        }
+        // Show key changes as bullet points
+        if (theme.keyChanges && theme.keyChanges.length > 0) {
+            output += `\\n${indent}   - **Key Changes**:`;
+            theme.keyChanges.forEach((change) => {
+                output += `\\n${indent}     • ${change}`;
+            });
+        }
+        // Show user scenario if available
+        if (theme.userScenario) {
+            output += `\\n${indent}   - **User Impact**: ${theme.userScenario}`;
+        }
+        // Show code metrics if available
+        if (theme.codeMetrics) {
+            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+            output += `\\n${indent}   - **Code Metrics**: +${linesAdded}/-${linesRemoved} lines across ${filesChanged} files`;
+        }
+        // Show functions/classes changed if available
+        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+            output += `\\n${indent}   - **Functions**: ${theme.mainFunctionsChanged.slice(0, 3).join(', ')}${theme.mainFunctionsChanged.length > 3 ? ` (+${theme.mainFunctionsChanged.length - 3} more)` : ''}`;
+        }
+        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+            output += `\\n${indent}   - **Classes**: ${theme.mainClassesChanged.slice(0, 3).join(', ')}${theme.mainClassesChanged.length > 3 ? ` (+${theme.mainClassesChanged.length - 3} more)` : ''}`;
+        }
         // Show consolidation info
         if (theme.consolidationMethod === 'merge') {
             output += `\\n${indent}   - 🔄 Merged from ${theme.sourceThemes.length} similar themes`;
+            if (theme.consolidationSummary) {
+                output += `: ${theme.consolidationSummary}`;
+            }
         }
         else if (theme.consolidationMethod === 'expansion') {
             output += `\\n${indent}   - 🔍 Expanded from complexity analysis`;

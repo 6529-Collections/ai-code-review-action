@@ -6,6 +6,7 @@ export declare class AISimilarityService {
     constructor(anthropicApiKey: string);
     calculateAISimilarity(theme1: Theme, theme2: Theme): Promise<AISimilarityResult>;
     private buildSimilarityPrompt;
+    private buildThemeDetails;
     private parseAISimilarityResponse;
     private createFallbackSimilarity;
 }
