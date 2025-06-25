@@ -115,6 +115,7 @@ export class ThemeExpansionService {
     let index = 0;
 
     const processItem = async (item: T, itemIndex: number): Promise<void> => {
+      console.log(`[DEBUG-CONCURRENCY] Processing item ${itemIndex}: starting`);
       try {
         const result = await this.processWithRetry(
           item,
@@ -123,11 +124,20 @@ export class ThemeExpansionService {
           retryDelay,
           onError
         );
+        console.log(
+          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: success`
+        );
         results[itemIndex] = result;
       } catch (error) {
+        console.log(
+          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: error - ${error}`
+        );
         results[itemIndex] = { error: error as Error, item };
       } finally {
         completed++;
+        console.log(
+          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: completed (${completed}/${items.length})`
+        );
         if (onProgress && this.config.enableProgressLogging) {
           onProgress(completed, items.length);
         }
@@ -135,20 +145,47 @@ export class ThemeExpansionService {
     };
 
     return new Promise((resolve) => {
+      // Handle empty array case
+      if (items.length === 0) {
+        console.log(
+          `[DEBUG-CONCURRENCY] Empty items array, resolving immediately`
+        );
+        resolve(results);
+        return;
+      }
+
+      console.log(
+        `[DEBUG-CONCURRENCY] Starting processing of ${items.length} items with limit ${concurrencyLimit}`
+      );
+
       const startNext = () => {
         while (active.size < concurrencyLimit && index < items.length) {
           const currentIndex = index++;
+          console.log(
+            `[DEBUG-CONCURRENCY] Starting item ${currentIndex + 1}/${items.length}, active: ${active.size}`
+          );
           const promise = processItem(items[currentIndex], currentIndex);
           active.add(promise);
 
           promise.finally(() => {
             active.delete(promise);
+            console.log(
+              `[DEBUG-CONCURRENCY] Completed item, total completed: ${completed}/${items.length}, active: ${active.size}`
+            );
             if (completed === items.length) {
+              console.log(`[DEBUG-CONCURRENCY] All items completed, resolving`);
               resolve(results);
             } else {
               startNext();
             }
           });
+        }
+
+        // If we have active promises but no more items to start, log status
+        if (index >= items.length && active.size > 0) {
+          console.log(
+            `[DEBUG-CONCURRENCY] No more items to start, waiting for ${active.size} active promises`
+          );
         }
       };
 
