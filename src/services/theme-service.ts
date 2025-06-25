@@ -11,6 +11,7 @@ import {
   ConsolidationConfig,
 } from '../types/similarity-types';
 import { CodeAnalyzer, CodeChange, SmartContext } from '../utils/code-analyzer';
+import { JsonExtractor } from '../utils/json-extractor';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
@@ -35,6 +36,28 @@ export interface Theme {
   enhancedContext: SmartContext; // Rich code context with algorithmic + AI insights
   codeChanges: CodeChange[]; // Detailed code change information
   lastAnalysis: Date;
+
+  // New fields for richer context
+  detailedDescription?: string; // 2-3 sentence detailed explanation
+  technicalSummary?: string; // Technical changes summary
+  keyChanges?: string[]; // Bullet points of main changes
+  userScenario?: string; // Example user flow
+
+  // Code context
+  mainFunctionsChanged?: string[]; // Key functions/methods
+  mainClassesChanged?: string[]; // Key classes/components
+  codeMetrics?: {
+    linesAdded: number;
+    linesRemoved: number;
+    filesChanged: number;
+  };
+
+  // Enhanced snippets
+  codeExamples?: Array<{
+    file: string;
+    description: string;
+    snippet: string;
+  }>;
 }
 
 export interface CodeChunk {
@@ -53,6 +76,14 @@ export interface ChunkAnalysis {
   suggestedParent?: string | null;
   confidence: number;
   codePattern: string;
+
+  // New detailed fields
+  detailedDescription?: string;
+  technicalSummary?: string;
+  keyChanges?: string[];
+  userScenario?: string;
+  mainFunctionsChanged?: string[];
+  mainClassesChanged?: string[];
 }
 
 export interface ThemePlacement {
@@ -129,7 +160,7 @@ class ClaudeService {
         },
       });
 
-      const result = this.parseClaudeResponse(output);
+      const result = this.parseClaudeResponse(output, chunk);
       return result;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
@@ -217,7 +248,9 @@ Examples of good business-focused themes:
 - "Simplify configuration" (not "Update workflow files")
 - "Add pull request feedback" (not "Implement commenting system")
 
-Respond in this exact JSON format (no other text):
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+
+Start your response with { and end with }. Example:
 {
   "themeName": "user/business-focused name (what value does this provide?)",
   "description": "what business problem this solves or capability it provides",
@@ -238,52 +271,98 @@ Respond in this exact JSON format (no other text):
 
     return `${context}
 
-Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
+Analyze this code change thoroughly. Be SPECIFIC and DETAILED.
 
 File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Focus on:
-- What user experience or workflow is being improved?
-- What business capability is being added/removed/enhanced?
-- What problem is this solving for end users?
-- Think like a product manager, not a developer
+Provide a comprehensive analysis that helps developers and stakeholders understand:
+1. What EXACTLY is changing - use specific names, values, and details from the code
+2. WHY this matters - both technical and user/business impact  
+3. Important technical details - what functions, classes, configs, parameters changed
+4. How this relates to the overall system
 
-Examples of good business-focused themes:
-- "Remove demo functionality" (not "Delete greeting parameter")
-- "Improve code review automation" (not "Add AI services")
-- "Simplify configuration" (not "Update workflow files")
-- "Add pull request feedback" (not "Implement commenting system")
+Be specific! Examples of good specific analysis:
+- Instead of "Updated configuration" → "Changed pull_request.branches from ['main'] to ['**'] in CI workflow"
+- Instead of "Added new fields" → "Added detailedDescription, technicalSummary, and keyChanges fields to Theme interface"
+- Instead of "Improved error handling" → "Replaced JSON.parse() with JsonExtractor.extractAndValidateJson() in parseClaudeResponse()"
 
-Respond in this exact JSON format (no other text):
+Don't be generic. Look at the actual code and tell me:
+- What specific values changed?
+- What exact functions/methods were added or modified?
+- What configuration parameters were updated?
+- What the before/after states are?
+
+CRITICAL: Respond with ONLY valid JSON. Start with { and end with }
+
 {
-  "themeName": "user/business-focused name (what value does this provide?)",
-  "description": "what business problem this solves or capability it provides",
-  "businessImpact": "how this affects user experience or business outcomes",
+  "themeName": "what user value this provides (be specific)",
+  "description": "one clear sentence about what changed",
+  "detailedDescription": "2-3 sentences with SPECIFIC details - mention actual names, values, and changes from the code",
+  "businessImpact": "concrete impact on users with specific examples",
+  "technicalSummary": "exact technical changes - name the specific functions, fields, values that changed",
+  "keyChanges": ["specific change with actual names/values", "another specific change", "third specific change"],
+  "userScenario": "specific example: 'A developer creating a PR to the feature/xyz branch will now...'",
+  "mainFunctionsChanged": ["actualFunctionName1", "actualFunctionName2"],
+  "mainClassesChanged": ["ActualClassName1", "ActualClassName2"],
   "suggestedParent": null,
   "confidence": 0.8,
-  "codePattern": "what pattern this represents"
+  "codePattern": "what type of change this is"
 }`;
   }
 
-  private parseClaudeResponse(output: string): ChunkAnalysis {
-    try {
-      const jsonMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
-      }
-    } catch (error) {
-      console.warn('Failed to parse Claude response:', error);
+  private parseClaudeResponse(output: string, chunk: CodeChunk): ChunkAnalysis {
+    const extractionResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'object',
+      ['themeName', 'description', 'businessImpact', 'confidence']
+    );
+
+    if (extractionResult.success) {
+      const data = extractionResult.data as {
+        themeName?: string;
+        description?: string;
+        businessImpact?: string;
+        confidence?: number;
+        codePattern?: string;
+        suggestedParent?: string;
+        detailedDescription?: string;
+        technicalSummary?: string;
+        keyChanges?: string[];
+        userScenario?: string;
+        mainFunctionsChanged?: string[];
+        mainClassesChanged?: string[];
+      };
+      return {
+        themeName: data.themeName || 'Unknown Theme',
+        description: data.description || 'No description provided',
+        businessImpact: data.businessImpact || 'Unknown impact',
+        confidence: data.confidence || 0.5,
+        codePattern: data.codePattern || 'Unknown pattern',
+        suggestedParent: data.suggestedParent || undefined,
+        detailedDescription: data.detailedDescription,
+        technicalSummary: data.technicalSummary,
+        keyChanges: data.keyChanges,
+        userScenario: data.userScenario,
+        mainFunctionsChanged: data.mainFunctionsChanged,
+        mainClassesChanged: data.mainClassesChanged,
+      };
     }
 
-    return {
-      themeName: 'Parse Error',
-      description: 'Failed to parse Claude response',
-      businessImpact: 'Unknown',
-      confidence: 0.1,
-      codePattern: 'Unknown',
-    };
+    console.warn(
+      '[THEME-SERVICE] JSON extraction failed:',
+      extractionResult.error
+    );
+    if (extractionResult.originalResponse) {
+      console.debug(
+        '[THEME-SERVICE] Original response:',
+        extractionResult.originalResponse?.substring(0, 200) + '...'
+      );
+    }
+
+    // Use the better fallback that includes filename
+    return this.createFallbackAnalysis(chunk);
   }
 
   private createFallbackAnalysis(chunk: CodeChunk): ChunkAnalysis {
@@ -463,6 +542,13 @@ class ThemeContextManager {
         },
         codeChanges: [],
         lastAnalysis: new Date(),
+        // New detailed fields
+        detailedDescription: analysis.detailedDescription,
+        technicalSummary: analysis.technicalSummary,
+        keyChanges: analysis.keyChanges,
+        userScenario: analysis.userScenario,
+        mainFunctionsChanged: analysis.mainFunctionsChanged,
+        mainClassesChanged: analysis.mainClassesChanged,
       };
 
       this.context.themes.set(newTheme.id, newTheme);

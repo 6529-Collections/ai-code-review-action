@@ -1,6 +1,7 @@
 import { Theme } from './theme-service';
 import { AISimilarityResult } from '../types/similarity-types';
 import { SimilarityCalculator } from '../utils/similarity-calculator';
+import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -39,7 +40,7 @@ export class AISimilarityService {
 
       const result = this.parseAISimilarityResponse(output);
       console.log(
-        `[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.semanticScore.toFixed(2)} (${result.shouldMerge ? 'MERGE' : 'SEPARATE'})`
+        `[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
       );
       console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
 
@@ -55,59 +56,132 @@ export class AISimilarityService {
   }
 
   private buildSimilarityPrompt(theme1: Theme, theme2: Theme): string {
-    return `You are an expert code reviewer analyzing theme similarity for consolidation.
+    // Include rich details if available
+    const theme1Details = this.buildThemeDetails(theme1);
+    const theme2Details = this.buildThemeDetails(theme2);
 
-Compare these two code change themes and determine if they should be merged:
+    return `Analyze these code changes to determine if they should be grouped together.
 
-**Theme 1:**
-Name: "${theme1.name}"
-Description: "${theme1.description}"
-Files: ${theme1.affectedFiles.join(', ')}
-Confidence: ${theme1.confidence}
+**Theme 1: "${theme1.name}"**
+${theme1Details}
 
-**Theme 2:**
-Name: "${theme2.name}"  
-Description: "${theme2.description}"
-Files: ${theme2.affectedFiles.join(', ')}
-Confidence: ${theme2.confidence}
+**Theme 2: "${theme2.name}"**
+${theme2Details}
 
-Analyze semantic similarity considering:
-- Are they the same logical change/feature?
-- Do they serve the same business purpose?
-- Are they part of the same refactoring effort?
-- Would a developer naturally group them together?
+IMPORTANT CONTEXT:
+- Look at the actual code changes, not just descriptions
+- Consider if these are truly part of the same change or just happen to be similar
+- Think about how a developer would organize these changes in their mind
+- Consider file relationships and dependencies
 
-Respond in this exact JSON format (no other text):
+Questions to answer:
+1. Are these solving the same problem or different problems?
+2. Would combining them make the theme clearer or more confusing?
+3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
+4. Do they have logical dependencies on each other?
+
+Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
+It's better to have more specific themes than overly broad ones.
+
+CRITICAL: Respond with ONLY valid JSON.
+
 {
-  "nameScore": 0.85,
-  "descriptionScore": 0.72,
-  "patternScore": 0.68,
-  "businessScore": 0.91,
-  "semanticScore": 0.79,
   "shouldMerge": true,
-  "confidence": 0.88,
-  "reasoning": "Both themes relate to removing authentication scaffolding - semantically identical despite different wording"
+  "confidence": 0.85,
+  "reasoning": "Both themes implement the same email validation improvement for user data integrity"
 }`;
   }
 
-  private parseAISimilarityResponse(output: string): AISimilarityResult {
-    try {
-      const jsonMatch = output.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          nameScore: parsed.nameScore || 0,
-          descriptionScore: parsed.descriptionScore || 0,
-          patternScore: parsed.patternScore || 0,
-          businessScore: parsed.businessScore || 0,
-          semanticScore: parsed.semanticScore || 0,
-          shouldMerge: parsed.shouldMerge || false,
-          confidence: parsed.confidence || 0,
-          reasoning: parsed.reasoning || 'No reasoning provided',
-        };
+  private buildThemeDetails(theme: Theme): string {
+    let details = `Description: ${theme.description}`;
+
+    // Add detailed description if available
+    if (theme.detailedDescription) {
+      details += `\nDetailed: ${theme.detailedDescription}`;
+    }
+
+    // Add technical summary if available
+    if (theme.technicalSummary) {
+      details += `\nTechnical: ${theme.technicalSummary}`;
+    }
+
+    // Add key changes if available
+    if (theme.keyChanges && theme.keyChanges.length > 0) {
+      details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
+    }
+
+    // Add files
+    details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
+
+    // Add code metrics if available
+    if (theme.codeMetrics) {
+      const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+      details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+    }
+
+    // Add main functions/classes if available
+    if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+      details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
+    }
+
+    if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+      details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
+    }
+
+    // Add code snippets (limit to avoid token overflow)
+    const snippets = theme.codeSnippets.slice(0, 2).join('\n\n');
+    if (snippets) {
+      details += `\n\nActual Code Changes:\n${snippets}`;
+      if (theme.codeSnippets.length > 2) {
+        details += `\n... (${theme.codeSnippets.length - 2} more code snippets)`;
       }
-    } catch (error) {
-      console.warn('Failed to parse AI similarity response:', error);
+    }
+
+    return details;
+  }
+
+  private parseAISimilarityResponse(output: string): AISimilarityResult {
+    const extractionResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'object',
+      ['shouldMerge', 'confidence', 'reasoning']
+    );
+
+    if (extractionResult.success) {
+      const parsed = extractionResult.data as {
+        shouldMerge?: boolean;
+        confidence?: number;
+        reasoning?: string;
+      };
+
+      // Map the simple response to the full AISimilarityResult interface
+      const shouldMerge = parsed.shouldMerge || false;
+      const confidence = parsed.confidence || 0;
+
+      return {
+        shouldMerge,
+        confidence,
+        reasoning: parsed.reasoning || 'No reasoning provided',
+        // Derive a semantic score from the decision and confidence
+        semanticScore: shouldMerge ? confidence : 1 - confidence,
+        // Legacy scores - set to 0 as they're not used anymore
+        nameScore: 0,
+        descriptionScore: 0,
+        patternScore: 0,
+        businessScore: 0,
+      };
+    }
+
+    // Log the extraction failure for debugging
+    console.warn(
+      '[AI-SIMILARITY] JSON extraction failed:',
+      extractionResult.error
+    );
+    if (extractionResult.originalResponse) {
+      console.debug(
+        '[AI-SIMILARITY] Original response:',
+        extractionResult.originalResponse?.substring(0, 200) + '...'
+      );
     }
 
     return {
@@ -118,7 +192,7 @@ Respond in this exact JSON format (no other text):
       semanticScore: 0,
       shouldMerge: false,
       confidence: 0,
-      reasoning: 'Failed to parse AI response',
+      reasoning: `Failed to parse AI response: ${extractionResult.error}`,
     };
   }
 
@@ -126,25 +200,26 @@ Respond in this exact JSON format (no other text):
     theme1: Theme,
     theme2: Theme
   ): AISimilarityResult {
-    // Fallback to basic string matching when AI fails
+    // Fallback when AI fails - conservative approach
     const nameScore = this.similarityCalculator.calculateNameSimilarity(
       theme1.name,
       theme2.name
     );
-    const descScore = this.similarityCalculator.calculateDescriptionSimilarity(
-      theme1.description,
-      theme2.description
-    );
+
+    // Only merge if names are extremely similar (fallback is conservative)
+    const shouldMerge = nameScore > 0.9;
 
     return {
-      nameScore,
-      descriptionScore: descScore,
-      patternScore: 0.3,
-      businessScore: 0.3,
-      semanticScore: (nameScore + descScore) / 2,
-      shouldMerge: nameScore > 0.7,
-      confidence: 0.4,
-      reasoning: 'AI analysis failed, used basic string matching fallback',
+      shouldMerge,
+      confidence: 0.3, // Low confidence for fallback
+      reasoning:
+        'AI analysis failed - conservative fallback based on name similarity only',
+      semanticScore: shouldMerge ? 0.6 : 0.2,
+      // Legacy scores - not used
+      nameScore: 0,
+      descriptionScore: 0,
+      patternScore: 0,
+      businessScore: 0,
     };
   }
 }

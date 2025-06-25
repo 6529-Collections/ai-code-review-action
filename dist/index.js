@@ -30083,6 +30083,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AISimilarityService = void 0;
 const similarity_calculator_1 = __nccwpck_require__(7831);
+const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
@@ -30107,7 +30108,7 @@ class AISimilarityService {
             });
             fs.unlinkSync(tempFile);
             const result = this.parseAISimilarityResponse(output);
-            console.log(`[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.semanticScore.toFixed(2)} (${result.shouldMerge ? 'MERGE' : 'SEPARATE'})`);
+            console.log(`[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
             console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
             return result;
         }
@@ -30118,59 +30119,102 @@ class AISimilarityService {
         }
     }
     buildSimilarityPrompt(theme1, theme2) {
-        return `You are an expert code reviewer analyzing theme similarity for consolidation.
+        // Include rich details if available
+        const theme1Details = this.buildThemeDetails(theme1);
+        const theme2Details = this.buildThemeDetails(theme2);
+        return `Analyze these code changes to determine if they should be grouped together.
 
-Compare these two code change themes and determine if they should be merged:
+**Theme 1: "${theme1.name}"**
+${theme1Details}
 
-**Theme 1:**
-Name: "${theme1.name}"
-Description: "${theme1.description}"
-Files: ${theme1.affectedFiles.join(', ')}
-Confidence: ${theme1.confidence}
+**Theme 2: "${theme2.name}"**
+${theme2Details}
 
-**Theme 2:**
-Name: "${theme2.name}"  
-Description: "${theme2.description}"
-Files: ${theme2.affectedFiles.join(', ')}
-Confidence: ${theme2.confidence}
+IMPORTANT CONTEXT:
+- Look at the actual code changes, not just descriptions
+- Consider if these are truly part of the same change or just happen to be similar
+- Think about how a developer would organize these changes in their mind
+- Consider file relationships and dependencies
 
-Analyze semantic similarity considering:
-- Are they the same logical change/feature?
-- Do they serve the same business purpose?
-- Are they part of the same refactoring effort?
-- Would a developer naturally group them together?
+Questions to answer:
+1. Are these solving the same problem or different problems?
+2. Would combining them make the theme clearer or more confusing?
+3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
+4. Do they have logical dependencies on each other?
 
-Respond in this exact JSON format (no other text):
+Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
+It's better to have more specific themes than overly broad ones.
+
+CRITICAL: Respond with ONLY valid JSON.
+
 {
-  "nameScore": 0.85,
-  "descriptionScore": 0.72,
-  "patternScore": 0.68,
-  "businessScore": 0.91,
-  "semanticScore": 0.79,
   "shouldMerge": true,
-  "confidence": 0.88,
-  "reasoning": "Both themes relate to removing authentication scaffolding - semantically identical despite different wording"
+  "confidence": 0.85,
+  "reasoning": "Both themes implement the same email validation improvement for user data integrity"
 }`;
     }
-    parseAISimilarityResponse(output) {
-        try {
-            const jsonMatch = output.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                return {
-                    nameScore: parsed.nameScore || 0,
-                    descriptionScore: parsed.descriptionScore || 0,
-                    patternScore: parsed.patternScore || 0,
-                    businessScore: parsed.businessScore || 0,
-                    semanticScore: parsed.semanticScore || 0,
-                    shouldMerge: parsed.shouldMerge || false,
-                    confidence: parsed.confidence || 0,
-                    reasoning: parsed.reasoning || 'No reasoning provided',
-                };
+    buildThemeDetails(theme) {
+        let details = `Description: ${theme.description}`;
+        // Add detailed description if available
+        if (theme.detailedDescription) {
+            details += `\nDetailed: ${theme.detailedDescription}`;
+        }
+        // Add technical summary if available
+        if (theme.technicalSummary) {
+            details += `\nTechnical: ${theme.technicalSummary}`;
+        }
+        // Add key changes if available
+        if (theme.keyChanges && theme.keyChanges.length > 0) {
+            details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
+        }
+        // Add files
+        details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
+        // Add code metrics if available
+        if (theme.codeMetrics) {
+            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+        }
+        // Add main functions/classes if available
+        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+            details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
+        }
+        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+            details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
+        }
+        // Add code snippets (limit to avoid token overflow)
+        const snippets = theme.codeSnippets.slice(0, 2).join('\n\n');
+        if (snippets) {
+            details += `\n\nActual Code Changes:\n${snippets}`;
+            if (theme.codeSnippets.length > 2) {
+                details += `\n... (${theme.codeSnippets.length - 2} more code snippets)`;
             }
         }
-        catch (error) {
-            console.warn('Failed to parse AI similarity response:', error);
+        return details;
+    }
+    parseAISimilarityResponse(output) {
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['shouldMerge', 'confidence', 'reasoning']);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            // Map the simple response to the full AISimilarityResult interface
+            const shouldMerge = parsed.shouldMerge || false;
+            const confidence = parsed.confidence || 0;
+            return {
+                shouldMerge,
+                confidence,
+                reasoning: parsed.reasoning || 'No reasoning provided',
+                // Derive a semantic score from the decision and confidence
+                semanticScore: shouldMerge ? confidence : 1 - confidence,
+                // Legacy scores - set to 0 as they're not used anymore
+                nameScore: 0,
+                descriptionScore: 0,
+                patternScore: 0,
+                businessScore: 0,
+            };
+        }
+        // Log the extraction failure for debugging
+        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
         return {
             nameScore: 0,
@@ -30180,22 +30224,24 @@ Respond in this exact JSON format (no other text):
             semanticScore: 0,
             shouldMerge: false,
             confidence: 0,
-            reasoning: 'Failed to parse AI response',
+            reasoning: `Failed to parse AI response: ${extractionResult.error}`,
         };
     }
     createFallbackSimilarity(theme1, theme2) {
-        // Fallback to basic string matching when AI fails
+        // Fallback when AI fails - conservative approach
         const nameScore = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
-        const descScore = this.similarityCalculator.calculateDescriptionSimilarity(theme1.description, theme2.description);
+        // Only merge if names are extremely similar (fallback is conservative)
+        const shouldMerge = nameScore > 0.9;
         return {
-            nameScore,
-            descriptionScore: descScore,
-            patternScore: 0.3,
-            businessScore: 0.3,
-            semanticScore: (nameScore + descScore) / 2,
-            shouldMerge: nameScore > 0.7,
-            confidence: 0.4,
-            reasoning: 'AI analysis failed, used basic string matching fallback',
+            shouldMerge,
+            confidence: 0.3, // Low confidence for fallback
+            reasoning: 'AI analysis failed - conservative fallback based on name similarity only',
+            semanticScore: shouldMerge ? 0.6 : 0.2,
+            // Legacy scores - not used
+            nameScore: 0,
+            descriptionScore: 0,
+            patternScore: 0,
+            businessScore: 0,
         };
     }
 }
@@ -30244,6 +30290,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BatchProcessor = void 0;
+const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
@@ -30330,74 +30377,54 @@ Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis
     parseBatchSimilarityResponse(output, pairs) {
         console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
         console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
-        try {
-            // Try to find JSON array in the output
-            let jsonMatch = output.match(/\[[\s\S]*\]/);
-            // If no match, try to extract from code blocks
-            if (!jsonMatch) {
-                const codeBlockMatch = output.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/);
-                if (codeBlockMatch) {
-                    jsonMatch = [codeBlockMatch[1]];
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
+            // Handle case where AI returns fewer results than expected
+            const results = [];
+            for (let i = 0; i < pairs.length; i++) {
+                const item = parsed[i];
+                const pair = pairs[i];
+                if (item && typeof item === 'object') {
+                    results.push({
+                        pairId: item.pairId || pair.id,
+                        similarity: {
+                            nameScore: this.clampScore(item.nameScore),
+                            descriptionScore: this.clampScore(item.descriptionScore),
+                            patternScore: this.clampScore(item.patternScore),
+                            businessScore: this.clampScore(item.businessScore),
+                            semanticScore: this.clampScore(item.semanticScore),
+                            shouldMerge: Boolean(item.shouldMerge),
+                            confidence: this.clampScore(item.confidence),
+                            reasoning: String(item.reasoning || 'No reasoning provided'),
+                        },
+                    });
+                }
+                else {
+                    // Missing or invalid item - create fallback
+                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
+                    results.push({
+                        pairId: pair.id,
+                        similarity: this.createFallbackSimilarity(),
+                        error: `Missing AI response for pair ${i + 1}`,
+                    });
                 }
             }
-            // If still no match, try to find any array-like structure
-            if (!jsonMatch) {
-                const arrayStart = output.indexOf('[');
-                const arrayEnd = output.lastIndexOf(']');
-                if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
-                    jsonMatch = [output.substring(arrayStart, arrayEnd + 1)];
-                }
-            }
-            if (jsonMatch) {
-                console.log(`[BATCH-DEBUG] Extracted JSON:`, jsonMatch[0].substring(0, 300));
-                const parsed = JSON.parse(jsonMatch[0]);
-                console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
-                if (Array.isArray(parsed)) {
-                    // Handle case where AI returns fewer results than expected
-                    const results = [];
-                    for (let i = 0; i < pairs.length; i++) {
-                        const item = parsed[i];
-                        const pair = pairs[i];
-                        if (item && typeof item === 'object') {
-                            results.push({
-                                pairId: item.pairId || pair.id,
-                                similarity: {
-                                    nameScore: this.clampScore(item.nameScore),
-                                    descriptionScore: this.clampScore(item.descriptionScore),
-                                    patternScore: this.clampScore(item.patternScore),
-                                    businessScore: this.clampScore(item.businessScore),
-                                    semanticScore: this.clampScore(item.semanticScore),
-                                    shouldMerge: Boolean(item.shouldMerge),
-                                    confidence: this.clampScore(item.confidence),
-                                    reasoning: String(item.reasoning || 'No reasoning provided'),
-                                },
-                            });
-                        }
-                        else {
-                            // Missing or invalid item - create fallback
-                            console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
-                            results.push({
-                                pairId: pair.id,
-                                similarity: this.createFallbackSimilarity(),
-                                error: `Missing AI response for pair ${i + 1}`,
-                            });
-                        }
-                    }
-                    console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
-                    return results;
-                }
-            }
+            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
+            return results;
         }
-        catch (error) {
-            console.error('[BATCH-DEBUG] JSON parsing failed:', error);
-            console.log('[BATCH-DEBUG] Full output for debugging:', output.substring(0, 1000));
+        // JSON extraction failed
+        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
         }
         console.warn('[BATCH-DEBUG] Using fallback for all pairs');
         // Fallback: create error results for all pairs
         return pairs.map((pair) => ({
             pairId: pair.id,
             similarity: this.createFallbackSimilarity(),
-            error: 'Failed to parse batch AI response',
+            error: `Failed to parse batch AI response: ${extractionResult.error}`,
         }));
     }
     clampScore(value) {
@@ -30737,6 +30764,16 @@ class GitService {
     }
     constructor(githubToken) {
         this.githubToken = githubToken;
+        this.octokit = null;
+        // Initialize GitHub API client if token is available
+        if (this.githubToken) {
+            try {
+                this.octokit = github.getOctokit(this.githubToken);
+            }
+            catch (error) {
+                console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
+            }
+        }
     }
     async getEnhancedChangedFiles() {
         console.log('[GIT-SERVICE] Getting enhanced changed files with code analysis');
@@ -30761,6 +30798,7 @@ class GitService {
         if (github.context.eventName === 'pull_request') {
             const pr = github.context.payload.pull_request;
             if (pr) {
+                console.log(`[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`);
                 return {
                     number: pr.number,
                     title: pr.title,
@@ -30772,8 +30810,49 @@ class GitService {
                 };
             }
         }
-        // Dev mode: create synthetic PR context from local git
+        // Dev mode: First try to find existing PR for current branch
+        const currentBranch = await this.getCurrentBranch();
+        const existingPR = await this.getPullRequestForBranch(currentBranch);
+        if (existingPR) {
+            console.log(`[GIT-SERVICE] Using existing PR #${existingPR.number} context for local testing`);
+            return existingPR;
+        }
+        // Fallback: create synthetic PR context from local git
+        console.log('[GIT-SERVICE] No PR found, using branch comparison mode');
         return await this.createDevModeContext();
+    }
+    async getPullRequestForBranch(branchName) {
+        if (!this.octokit) {
+            console.log('[GIT-SERVICE] No GitHub token available, cannot check for existing PR');
+            return null;
+        }
+        try {
+            console.log(`[GIT-SERVICE] Checking for open PR for branch: ${branchName}`);
+            const { data: pulls } = await this.octokit.rest.pulls.list({
+                ...github.context.repo,
+                head: `${github.context.repo.owner}:${branchName}`,
+                state: 'open',
+            });
+            if (pulls.length > 0) {
+                const pr = pulls[0]; // Take the first matching PR
+                console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${branchName}`);
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+            console.log(`[GIT-SERVICE] No open PR found for branch ${branchName}`);
+            return null;
+        }
+        catch (error) {
+            console.warn(`[GIT-SERVICE] Failed to check for PR on branch ${branchName}:`, error);
+            return null;
+        }
     }
     async createDevModeContext() {
         try {
@@ -30848,15 +30927,21 @@ class GitService {
         }
         console.log(`[GIT-DEBUG] PR Context: number=${prContext.number}, event=${github.context.eventName}, hasToken=${!!this.githubToken}`);
         console.log(`[GIT-DEBUG] baseBranch=${prContext.baseBranch}, headBranch=${prContext.headBranch}`);
-        // Always use git commands for accurate branch comparison
-        // GitHub API only shows files in PR commits, not full branch diff
-        console.log(`[GIT-DEBUG] Using git commands method for accurate branch comparison`);
+        // Use GitHub API for real PRs (in GitHub Actions or when PR found locally)
+        if (prContext.number > 0 && this.octokit) {
+            console.log(`[GIT-DEBUG] Using GitHub API for PR #${prContext.number} (exact same as live)`);
+            return await this.getChangedFilesFromGitHub(prContext.number);
+        }
+        // Fallback to git commands for synthetic dev mode (no PR)
+        console.log(`[GIT-DEBUG] Using git commands method for branch comparison`);
         return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
     }
     async getChangedFilesFromGitHub(prNumber) {
         try {
-            const octokit = github.getOctokit(this.githubToken);
-            const { data: files } = await octokit.rest.pulls.listFiles({
+            if (!this.octokit) {
+                throw new Error('GitHub API client not initialized');
+            }
+            const { data: files } = await this.octokit.rest.pulls.listFiles({
                 ...github.context.repo,
                 pull_number: prNumber,
             });
@@ -30869,7 +30954,7 @@ class GitService {
                 deletions: file.deletions,
                 patch: file.patch,
             }));
-            console.log(`[GIT-SERVICE] Filtered ${files.length} files down to ${changedFiles.length} for analysis`);
+            console.log(`[GIT-SERVICE] GitHub API: Filtered ${files.length} files down to ${changedFiles.length} for analysis`);
             return changedFiles;
         }
         catch (error) {
@@ -31037,6 +31122,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HierarchicalSimilarityService = void 0;
 const generic_cache_1 = __nccwpck_require__(9267);
 const claude_client_1 = __nccwpck_require__(3831);
+const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
@@ -31072,8 +31158,15 @@ class HierarchicalSimilarityService {
             }
         }
         (0, utils_1.logInfo)(`Generated ${comparisons.length} cross-level comparisons`);
+        if (comparisons.length > 100) {
+            (0, utils_1.logInfo)(`WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`);
+        }
         // Process comparisons directly
-        const results = await Promise.all(comparisons.map((comparison) => this.analyzeCrossLevelSimilarityPair(comparison)));
+        console.log(`[HIERARCHICAL] Starting ${comparisons.length} parallel Claude API calls`);
+        const results = await Promise.all(comparisons.map((comparison, index) => {
+            console.log(`[HIERARCHICAL] Starting comparison ${index + 1}/${comparisons.length}`);
+            return this.analyzeCrossLevelSimilarityPair(comparison);
+        }));
         (0, utils_1.logInfo)(`Completed cross-level similarity analysis: ${results.length} results`);
         return results;
     }
@@ -31177,7 +31270,7 @@ class HierarchicalSimilarityService {
         }
         // Don't compare themes that are too far apart in the hierarchy
         const levelDifference = Math.abs(theme1.level - theme2.level);
-        if (levelDifference > 2) {
+        if (levelDifference > 1) {
             return false;
         }
         return true;
@@ -31238,23 +31331,67 @@ Return JSON:
 Focus on business value and avoid merging themes with distinct business purposes.
 `;
         try {
+            console.log(`[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`);
             const response = await this.claudeClient.callClaude(prompt);
-            const analysis = JSON.parse(response.trim());
+            console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'similarityScore',
+                'relationshipType',
+                'action',
+                'confidence',
+                'reasoning',
+            ]);
+            if (!extractionResult.success) {
+                console.warn(`[HIERARCHICAL] Failed to parse AI response: ${extractionResult.error}`);
+                console.debug(`[HIERARCHICAL] Original response: ${extractionResult.originalResponse?.substring(0, 200)}...`);
+                // Return conservative default
+                const fallbackResult = {
+                    theme1,
+                    theme2,
+                    levelDifference,
+                    similarityScore: 0.2,
+                    relationshipType: 'distinct',
+                    action: 'keep_separate',
+                    confidence: 0.3,
+                    reasoning: `AI response parsing failed: ${extractionResult.error}`,
+                };
+                this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
+                return fallbackResult;
+            }
+            const analysis = extractionResult.data;
             const result = {
                 theme1,
                 theme2,
                 levelDifference,
-                similarityScore: analysis.similarityScore,
-                relationshipType: analysis.relationshipType,
-                action: analysis.action,
-                confidence: analysis.confidence,
-                reasoning: analysis.reasoning,
+                similarityScore: analysis.similarityScore || 0.2,
+                relationshipType: analysis.relationshipType || 'distinct',
+                action: analysis.action || 'keep_separate',
+                confidence: analysis.confidence || 0.3,
+                reasoning: analysis.reasoning || 'No reasoning provided',
             };
             this.cache.set(cacheKey, result, 1800000); // Cache for 30 minutes
             return result;
         }
         catch (error) {
-            throw new Error(`AI analysis failed: ${error}`);
+            console.error(`[HIERARCHICAL] AI analysis failed for ${theme1.name} vs ${theme2.name}:`, error);
+            console.error(`[HIERARCHICAL] Error details:`, {
+                message: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+                name: error instanceof Error ? error.name : undefined,
+            });
+            // Return conservative default on any error
+            const fallbackResult = {
+                theme1,
+                theme2,
+                levelDifference,
+                similarityScore: 0.2,
+                relationshipType: 'distinct',
+                action: 'keep_separate',
+                confidence: 0.3,
+                reasoning: `AI analysis failed: ${error}`,
+            };
+            this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
+            return fallbackResult;
         }
     }
     mergeThemes(theme1, theme2, action) {
@@ -31379,6 +31516,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
 const generic_cache_1 = __nccwpck_require__(9267);
 const claude_client_1 = __nccwpck_require__(3831);
+const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 4,
@@ -31440,9 +31578,14 @@ class ThemeExpansionService {
         const expandedSubThemes = await Promise.all(result.subThemes.map((subTheme) => this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme)));
         // Also expand existing child themes
         const expandedExistingChildren = await Promise.all(result.expandedTheme.childThemes.map((child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme)));
+        // Combine all child themes
+        const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
+        // Deduplicate child themes using AI
+        const deduplicatedChildren = await this.deduplicateSubThemes(allChildThemes);
         return {
             ...result.expandedTheme,
-            childThemes: [...expandedExistingChildren, ...expandedSubThemes],
+            childThemes: deduplicatedChildren,
+            isExpanded: true,
         };
     }
     /**
@@ -31489,6 +31632,280 @@ class ThemeExpansionService {
         return Math.min(score, 1.0);
     }
     /**
+     * Deduplicate sub-themes using AI to identify duplicates
+     */
+    async deduplicateSubThemes(subThemes) {
+        if (subThemes.length <= 1) {
+            return subThemes;
+        }
+        (0, utils_1.logInfo)(`Deduplicating ${subThemes.length} sub-themes using AI`);
+        // Process in batches of 4-8 themes
+        const batchSize = 6;
+        const batches = [];
+        for (let i = 0; i < subThemes.length; i += batchSize) {
+            batches.push(subThemes.slice(i, i + batchSize));
+        }
+        // Process each batch in parallel
+        const deduplicationResults = await Promise.all(batches.map((batch) => this.deduplicateBatch(batch)));
+        // Flatten and combine results
+        const allGroups = deduplicationResults.flat();
+        // Merge groups that span batches
+        const finalThemes = [];
+        const processedIds = new Set();
+        for (const group of allGroups) {
+            if (group.length === 1) {
+                // Single theme, no duplicates
+                if (!processedIds.has(group[0].id)) {
+                    finalThemes.push(group[0]);
+                    processedIds.add(group[0].id);
+                }
+            }
+            else {
+                // Multiple themes to merge
+                const unprocessedThemes = group.filter((t) => !processedIds.has(t.id));
+                if (unprocessedThemes.length > 0) {
+                    const mergedTheme = await this.mergeSubThemes(unprocessedThemes);
+                    finalThemes.push(mergedTheme);
+                    unprocessedThemes.forEach((t) => processedIds.add(t.id));
+                }
+            }
+        }
+        (0, utils_1.logInfo)(`Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`);
+        // Second pass: check if any of the final themes are still duplicates
+        // This handles cases where duplicates were in different batches
+        if (finalThemes.length > 1) {
+            (0, utils_1.logInfo)(`Running second pass deduplication on ${finalThemes.length} themes`);
+            const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
+            (0, utils_1.logInfo)(`Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
+            return secondPassResult;
+        }
+        return finalThemes;
+    }
+    /**
+     * Run a second pass to catch duplicates that were in different batches
+     */
+    async runSecondPassDeduplication(themes) {
+        // Create a single batch with all themes for comprehensive comparison
+        const prompt = `
+These themes have already been deduplicated within their groups, but there might still be duplicates across groups.
+Please do a final check to identify any remaining duplicates:
+
+${themes
+            .map((theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+Files: ${theme.affectedFiles.join(', ')}
+`)
+            .join('\n')}
+
+Only identify themes that are CLEARLY duplicates. Be conservative.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "duplicateGroups": [
+    {
+      "themeIndices": [1, 4],
+      "reasoning": "Both implement the exact same testing configuration change"
+    }
+  ]
+}
+
+If no duplicates found, return: {"duplicateGroups": []}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['duplicateGroups']);
+            if (!extractionResult.success) {
+                // No duplicates found or parsing failed
+                return themes;
+            }
+            const data = extractionResult.data;
+            if (!data.duplicateGroups || data.duplicateGroups.length === 0) {
+                return themes;
+            }
+            // Process duplicate groups
+            const finalThemes = [];
+            const processedIndices = new Set();
+            for (const group of data.duplicateGroups) {
+                const duplicateThemes = [];
+                for (const index of group.themeIndices) {
+                    if (index >= 1 &&
+                        index <= themes.length &&
+                        !processedIndices.has(index - 1)) {
+                        duplicateThemes.push(themes[index - 1]);
+                        processedIndices.add(index - 1);
+                    }
+                }
+                if (duplicateThemes.length > 1) {
+                    const mergedTheme = await this.mergeSubThemes(duplicateThemes);
+                    finalThemes.push(mergedTheme);
+                }
+                else if (duplicateThemes.length === 1) {
+                    finalThemes.push(duplicateThemes[0]);
+                }
+            }
+            // Add themes that weren't in any duplicate group
+            themes.forEach((theme, index) => {
+                if (!processedIndices.has(index)) {
+                    finalThemes.push(theme);
+                }
+            });
+            return finalThemes;
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Second pass deduplication failed: ${error}`);
+            return themes;
+        }
+    }
+    /**
+     * Process a batch of themes for deduplication
+     */
+    async deduplicateBatch(themes) {
+        const prompt = `
+Analyze these sub-themes and identify which ones describe the same change or functionality:
+
+${themes
+            .map((theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+Files: ${theme.affectedFiles.join(', ')}
+${theme.keyChanges ? `Key changes: ${theme.keyChanges.join('; ')}` : ''}
+`)
+            .join('\n')}
+
+Questions:
+1. Which themes are describing the same change (even if worded differently)?
+2. Group duplicate themes together
+3. For each group, explain why they are duplicates
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "groups": [
+    {
+      "themeIndices": [1, 3],
+      "reasoning": "Both themes describe the same CI workflow change"
+    },
+    {
+      "themeIndices": [2],
+      "reasoning": "Unique theme about type definitions"
+    }
+  ]
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['groups']);
+            if (!extractionResult.success) {
+                (0, utils_1.logInfo)(`Failed to parse deduplication response: ${extractionResult.error}`);
+                // Return each theme as its own group
+                return themes.map((theme) => [theme]);
+            }
+            const data = extractionResult.data;
+            // Convert indices to theme groups
+            const groups = [];
+            const processedIndices = new Set();
+            if (data.groups) {
+                for (const group of data.groups) {
+                    const themeGroup = [];
+                    for (const index of group.themeIndices) {
+                        if (index >= 1 &&
+                            index <= themes.length &&
+                            !processedIndices.has(index - 1)) {
+                            themeGroup.push(themes[index - 1]);
+                            processedIndices.add(index - 1);
+                        }
+                    }
+                    if (themeGroup.length > 0) {
+                        groups.push(themeGroup);
+                    }
+                }
+            }
+            // Add any themes not in groups
+            themes.forEach((theme, index) => {
+                if (!processedIndices.has(index)) {
+                    groups.push([theme]);
+                }
+            });
+            return groups;
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Deduplication batch failed: ${error}`);
+            // Return each theme as its own group
+            return themes.map((theme) => [theme]);
+        }
+    }
+    /**
+     * Merge duplicate sub-themes into a single theme
+     */
+    async mergeSubThemes(themes) {
+        if (themes.length === 1) {
+            return themes[0];
+        }
+        const prompt = `
+These themes have been identified as duplicates describing the same change:
+
+${themes
+            .map((theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+${theme.technicalSummary ? `Technical: ${theme.technicalSummary}` : ''}
+`)
+            .join('\n')}
+
+Create a single, unified theme that best represents this change. Combine the best aspects of each description.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "name": "unified theme name",
+  "description": "clear, comprehensive description",
+  "detailedDescription": "detailed explanation combining all relevant details",
+  "reasoning": "why this unified version is better"
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['name', 'description']);
+            if (!extractionResult.success) {
+                // Use the first theme as fallback
+                return themes[0];
+            }
+            const data = extractionResult.data;
+            // Combine all data from duplicate themes
+            const allFiles = new Set();
+            const allSnippets = [];
+            const allKeyChanges = [];
+            let totalConfidence = 0;
+            themes.forEach((theme) => {
+                theme.affectedFiles.forEach((file) => allFiles.add(file));
+                allSnippets.push(...theme.codeSnippets);
+                if (theme.keyChanges)
+                    allKeyChanges.push(...theme.keyChanges);
+                totalConfidence += theme.confidence;
+            });
+            return {
+                ...themes[0], // Use first theme as base
+                id: `dedup-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                name: data.name || themes[0].name,
+                description: data.description || themes[0].description,
+                detailedDescription: data.detailedDescription,
+                affectedFiles: Array.from(allFiles),
+                codeSnippets: allSnippets,
+                keyChanges: [...new Set(allKeyChanges)], // Deduplicate key changes
+                confidence: totalConfidence / themes.length,
+                sourceThemes: themes.flatMap((t) => t.sourceThemes),
+                consolidationMethod: 'merge',
+                consolidationSummary: `Deduplicated ${themes.length} similar sub-themes: ${data.reasoning || 'Identified as duplicates'}`,
+            };
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Sub-theme merge failed: ${error}`);
+            return themes[0]; // Use first theme as fallback
+        }
+    }
+    /**
      * Identify distinct business patterns within a theme
      */
     async identifyBusinessPatterns(theme) {
@@ -31522,7 +31939,12 @@ Focus on business value, not technical implementation details.
 `;
         try {
             const response = await this.claudeClient.callClaude(prompt);
-            const patterns = JSON.parse(response.trim());
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'array', undefined);
+            if (!extractionResult.success) {
+                (0, utils_1.logInfo)(`Failed to parse business patterns for ${theme.name}: ${extractionResult.error}`);
+                return [];
+            }
+            const patterns = extractionResult.data;
             this.cache.set(cacheKey, patterns, 3600000); // Cache for 1 hour
             return patterns;
         }
@@ -31646,9 +32068,22 @@ Only create sub-themes if there are genuinely distinct business concerns.
 `;
         try {
             const response = await this.claudeClient.callClaude(prompt);
-            const analysis = JSON.parse(response.trim());
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'confidence', 'reasoning', 'subThemes']);
+            if (!extractionResult.success) {
+                (0, utils_1.logInfo)(`Failed to parse expansion analysis for ${theme.name}: ${extractionResult.error}`);
+                // Return no expansion
+                return {
+                    subThemes: [],
+                    shouldExpand: false,
+                    confidence: 0.3,
+                    reasoning: `Analysis parsing failed: ${extractionResult.error}`,
+                    businessLogicPatterns: [],
+                    userFlowPatterns: [],
+                };
+            }
+            const analysis = extractionResult.data;
             // Convert to ConsolidatedTheme objects
-            const subThemes = analysis.subThemes.map((subTheme, index) => ({
+            const subThemes = (analysis.subThemes || []).map((subTheme, index) => ({
                 id: `${theme.id}_sub_${index}_${Date.now()}`,
                 name: subTheme.name,
                 description: subTheme.description,
@@ -31666,9 +32101,9 @@ Only create sub-themes if there are genuinely distinct business concerns.
             }));
             return {
                 subThemes,
-                shouldExpand: analysis.shouldExpand && subThemes.length > 0,
-                confidence: analysis.confidence,
-                reasoning: analysis.reasoning,
+                shouldExpand: (analysis.shouldExpand || false) && subThemes.length > 0,
+                confidence: analysis.confidence || 0.5,
+                reasoning: analysis.reasoning || 'No reasoning provided',
                 businessLogicPatterns: analysis.businessLogicPatterns || [],
                 userFlowPatterns: analysis.userFlowPatterns || [],
             };
@@ -31731,6 +32166,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeNamingService = void 0;
+const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
@@ -31898,18 +32334,17 @@ Respond in this exact JSON format (no other text):
 }`;
     }
     parseMergedThemeNamingResponse(output) {
-        try {
-            const jsonMatch = output.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                return {
-                    name: parsed.name || 'Merged Changes',
-                    description: parsed.description || 'Consolidated related changes',
-                };
-            }
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['name', 'description']);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            return {
+                name: parsed.name || 'Merged Changes',
+                description: parsed.description || 'Consolidated related changes',
+            };
         }
-        catch (error) {
-            console.warn('Failed to parse AI naming response:', error);
+        console.warn('[THEME-NAMING] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[THEME-NAMING] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
         return {
             name: 'Merged Changes',
@@ -31984,6 +32419,7 @@ const theme_similarity_1 = __nccwpck_require__(4189);
 const theme_expansion_1 = __nccwpck_require__(7333);
 const hierarchical_similarity_1 = __nccwpck_require__(2983);
 const code_analyzer_1 = __nccwpck_require__(4579);
+const json_extractor_1 = __nccwpck_require__(2642);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
     BATCH_SIZE: 10,
@@ -32009,7 +32445,7 @@ class ClaudeService {
                     },
                 },
             });
-            const result = this.parseClaudeResponse(output);
+            const result = this.parseClaudeResponse(output, chunk);
             return result;
         }
         catch (err) {
@@ -32081,7 +32517,9 @@ Examples of good business-focused themes:
 - "Simplify configuration" (not "Update workflow files")
 - "Add pull request feedback" (not "Implement commenting system")
 
-Respond in this exact JSON format (no other text):
+CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
+
+Start your response with { and end with }. Example:
 {
   "themeName": "user/business-focused name (what value does this provide?)",
   "description": "what business problem this solves or capability it provides",
@@ -32099,51 +32537,71 @@ Respond in this exact JSON format (no other text):
             : chunk.content;
         return `${context}
 
-Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
+Analyze this code change thoroughly. Be SPECIFIC and DETAILED.
 
 File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Focus on:
-- What user experience or workflow is being improved?
-- What business capability is being added/removed/enhanced?
-- What problem is this solving for end users?
-- Think like a product manager, not a developer
+Provide a comprehensive analysis that helps developers and stakeholders understand:
+1. What EXACTLY is changing - use specific names, values, and details from the code
+2. WHY this matters - both technical and user/business impact  
+3. Important technical details - what functions, classes, configs, parameters changed
+4. How this relates to the overall system
 
-Examples of good business-focused themes:
-- "Remove demo functionality" (not "Delete greeting parameter")
-- "Improve code review automation" (not "Add AI services")
-- "Simplify configuration" (not "Update workflow files")
-- "Add pull request feedback" (not "Implement commenting system")
+Be specific! Examples of good specific analysis:
+- Instead of "Updated configuration" → "Changed pull_request.branches from ['main'] to ['**'] in CI workflow"
+- Instead of "Added new fields" → "Added detailedDescription, technicalSummary, and keyChanges fields to Theme interface"
+- Instead of "Improved error handling" → "Replaced JSON.parse() with JsonExtractor.extractAndValidateJson() in parseClaudeResponse()"
 
-Respond in this exact JSON format (no other text):
+Don't be generic. Look at the actual code and tell me:
+- What specific values changed?
+- What exact functions/methods were added or modified?
+- What configuration parameters were updated?
+- What the before/after states are?
+
+CRITICAL: Respond with ONLY valid JSON. Start with { and end with }
+
 {
-  "themeName": "user/business-focused name (what value does this provide?)",
-  "description": "what business problem this solves or capability it provides",
-  "businessImpact": "how this affects user experience or business outcomes",
+  "themeName": "what user value this provides (be specific)",
+  "description": "one clear sentence about what changed",
+  "detailedDescription": "2-3 sentences with SPECIFIC details - mention actual names, values, and changes from the code",
+  "businessImpact": "concrete impact on users with specific examples",
+  "technicalSummary": "exact technical changes - name the specific functions, fields, values that changed",
+  "keyChanges": ["specific change with actual names/values", "another specific change", "third specific change"],
+  "userScenario": "specific example: 'A developer creating a PR to the feature/xyz branch will now...'",
+  "mainFunctionsChanged": ["actualFunctionName1", "actualFunctionName2"],
+  "mainClassesChanged": ["ActualClassName1", "ActualClassName2"],
   "suggestedParent": null,
   "confidence": 0.8,
-  "codePattern": "what pattern this represents"
+  "codePattern": "what type of change this is"
 }`;
     }
-    parseClaudeResponse(output) {
-        try {
-            const jsonMatch = output.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                return JSON.parse(jsonMatch[0]);
-            }
+    parseClaudeResponse(output, chunk) {
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
+        if (extractionResult.success) {
+            const data = extractionResult.data;
+            return {
+                themeName: data.themeName || 'Unknown Theme',
+                description: data.description || 'No description provided',
+                businessImpact: data.businessImpact || 'Unknown impact',
+                confidence: data.confidence || 0.5,
+                codePattern: data.codePattern || 'Unknown pattern',
+                suggestedParent: data.suggestedParent || undefined,
+                detailedDescription: data.detailedDescription,
+                technicalSummary: data.technicalSummary,
+                keyChanges: data.keyChanges,
+                userScenario: data.userScenario,
+                mainFunctionsChanged: data.mainFunctionsChanged,
+                mainClassesChanged: data.mainClassesChanged,
+            };
         }
-        catch (error) {
-            console.warn('Failed to parse Claude response:', error);
+        console.warn('[THEME-SERVICE] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[THEME-SERVICE] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
-        return {
-            themeName: 'Parse Error',
-            description: 'Failed to parse Claude response',
-            businessImpact: 'Unknown',
-            confidence: 0.1,
-            codePattern: 'Unknown',
-        };
+        // Use the better fallback that includes filename
+        return this.createFallbackAnalysis(chunk);
     }
     createFallbackAnalysis(chunk) {
         return {
@@ -32288,6 +32746,13 @@ class ThemeContextManager {
                 },
                 codeChanges: [],
                 lastAnalysis: new Date(),
+                // New detailed fields
+                detailedDescription: analysis.detailedDescription,
+                technicalSummary: analysis.technicalSummary,
+                keyChanges: analysis.keyChanges,
+                userScenario: analysis.userScenario,
+                mainFunctionsChanged: analysis.mainFunctionsChanged,
+                mainClassesChanged: analysis.mainClassesChanged,
             };
             this.context.themes.set(newTheme.id, newTheme);
             if (newTheme.level === 0) {
@@ -32570,14 +33035,15 @@ const theme_naming_1 = __nccwpck_require__(9018);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.config = {
-            similarityThreshold: 0.6, // Lowered from 0.8 to 0.6 for better consolidation
+            similarityThreshold: 0.7, // Now represents confidence threshold for merge decision
             maxThemesPerParent: 5,
             minThemesForParent: 2,
-            confidenceWeight: 0.3,
-            businessDomainWeight: 0.4,
             maxHierarchyDepth: 4,
             expansionEnabled: true,
             crossLevelSimilarityCheck: true,
+            // Remove unused weight configurations
+            confidenceWeight: 0.3, // Keep for backwards compatibility
+            businessDomainWeight: 0.4, // Keep for backwards compatibility
             ...config,
         };
         // Initialize services
@@ -32597,26 +33063,35 @@ class ThemeSimilarityService {
             console.log(`[CACHE] Using cached similarity for "${theme1.name}" vs "${theme2.name}"`);
             return cached.similarity;
         }
-        // Check if we can skip AI with quick heuristics
-        const quickCheck = this.similarityCalculator.quickSimilarityCheck(theme1, theme2);
-        if (quickCheck.shouldSkipAI && quickCheck.similarity) {
-            console.log(`[QUICK] ${quickCheck.reason} for "${theme1.name}" vs "${theme2.name}"`);
-            this.similarityCache.cacheSimilarity(cacheKey, quickCheck.similarity);
-            return quickCheck.similarity;
-        }
-        // Use AI for semantic similarity
-        const aiSimilarity = await this.aiSimilarityService.calculateAISimilarity(theme1, theme2);
-        // Still calculate file overlap (factual)
+        // Only skip if absolutely certain they're different
         const fileOverlap = this.similarityCalculator.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
-        // Combined score: 80% AI semantic understanding + 20% file overlap
-        const combinedScore = aiSimilarity.semanticScore * 0.8 + fileOverlap * 0.2;
+        const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
+        // Skip only if NO file overlap AND completely different names
+        if (fileOverlap === 0 && nameSimilarity < 0.1) {
+            console.log(`[SKIP] No file overlap and different names for "${theme1.name}" vs "${theme2.name}"`);
+            const result = {
+                combinedScore: 0,
+                nameScore: 0,
+                descriptionScore: 0,
+                fileOverlap: 0,
+                patternScore: 0,
+                businessScore: 0,
+            };
+            this.similarityCache.cacheSimilarity(cacheKey, result);
+            return result;
+        }
+        // Ask Claude with full context
+        const aiResult = await this.aiSimilarityService.calculateAISimilarity(theme1, theme2);
+        // Convert to SimilarityMetrics using confidence as the primary score
         const result = {
-            nameScore: aiSimilarity.nameScore,
-            descriptionScore: aiSimilarity.descriptionScore,
-            fileOverlap,
-            patternScore: aiSimilarity.patternScore,
-            businessScore: aiSimilarity.businessScore,
-            combinedScore,
+            combinedScore: aiResult.shouldMerge
+                ? aiResult.confidence
+                : (1 - aiResult.confidence) * 0.3,
+            nameScore: 0, // Not used anymore
+            descriptionScore: 0, // Not used anymore
+            fileOverlap, // Keep for reference
+            patternScore: 0, // Not used anymore
+            businessScore: 0, // Not used anymore
         };
         // Cache the result
         this.similarityCache.cacheSimilarity(cacheKey, result);
@@ -32661,99 +33136,26 @@ class ThemeSimilarityService {
     }
     async calculateBatchSimilarities(pairs) {
         const similarities = new Map();
-        let aiCallsSkipped = 0;
-        let aiCallsMade = 0;
-        // First pass: Process pairs that can be resolved with quick checks or cache
-        const needsAI = [];
+        // Process all pairs through calculateSimilarity (which handles caching and skipping)
         for (const pair of pairs) {
-            const cacheKey = this.similarityCache.getCacheKey(pair.theme1, pair.theme2);
-            const cached = this.similarityCache.getCachedSimilarity(cacheKey);
-            if (cached) {
-                similarities.set(pair.id, cached.similarity);
-                continue;
+            try {
+                const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
+                similarities.set(pair.id, similarity);
             }
-            const quickCheck = this.similarityCalculator.quickSimilarityCheck(pair.theme1, pair.theme2);
-            if (quickCheck.shouldSkipAI && quickCheck.similarity) {
-                similarities.set(pair.id, quickCheck.similarity);
-                this.similarityCache.cacheSimilarity(cacheKey, quickCheck.similarity);
-                aiCallsSkipped++;
-            }
-            else {
-                needsAI.push(pair);
-            }
-        }
-        console.log(`[OPTIMIZATION] Quick resolution: ${similarities.size} pairs, AI needed: ${needsAI.length}, Skipped: ${aiCallsSkipped}`);
-        // Second pass: Process remaining pairs with AI in batches
-        if (needsAI.length > 0) {
-            // Adapt batch size based on previous failures
-            const adaptiveBatchSize = this.batchProcessor.getAdaptiveBatchSize();
-            console.log(`[BATCH] Using adaptive batch size: ${adaptiveBatchSize} (failures: ${this.batchProcessor.getFailureCount()})`);
-            const batches = this.batchProcessor.chunkArray(needsAI, adaptiveBatchSize);
-            for (let i = 0; i < batches.length; i++) {
-                const batch = batches[i];
-                console.log(`[BATCH] Processing batch ${i + 1}/${batches.length} with ${batch.length} pairs`);
-                try {
-                    const batchResults = await this.batchProcessor.processBatchSimilarity(batch);
-                    aiCallsMade++;
-                    // Check if we got valid results
-                    const validResults = batchResults.filter((r) => !r.error);
-                    if (validResults.length === 0) {
-                        throw new Error('No valid results in batch response');
-                    }
-                    // Reset failure counter on success
-                    this.batchProcessor.decrementFailures();
-                    for (const result of batchResults) {
-                        if (result.error) {
-                            console.warn(`[BATCH] Error for pair ${result.pairId}: ${result.error}`);
-                            // Use fallback similarity for errored pairs
-                            const pair = batch.find((p) => p.id === result.pairId);
-                            if (pair) {
-                                const fallback = await this.aiSimilarityService.calculateAISimilarity(pair.theme1, pair.theme2);
-                                similarities.set(result.pairId, this.aiSimilarityToMetrics(fallback, pair.theme1, pair.theme2));
-                            }
-                        }
-                        else {
-                            const pair = batch.find((p) => p.id === result.pairId);
-                            if (pair) {
-                                const metrics = this.aiSimilarityToMetrics(result.similarity, pair.theme1, pair.theme2);
-                                similarities.set(result.pairId, metrics);
-                                // Cache the result
-                                const cacheKey = this.similarityCache.getCacheKey(pair.theme1, pair.theme2);
-                                this.similarityCache.cacheSimilarity(cacheKey, metrics);
-                            }
-                        }
-                    }
-                }
-                catch (error) {
-                    this.batchProcessor.incrementFailures();
-                    console.error(`[BATCH] Batch processing failed (failures: ${this.batchProcessor.getFailureCount()}):`, error);
-                    // If too many failures, fall back to individual processing
-                    if (this.batchProcessor.getFailureCount() >= 3) {
-                        console.warn(`[BATCH] Too many failures, switching to individual processing for remaining batches`);
-                        // Process remaining pairs individually
-                        for (const pair of batch) {
-                            try {
-                                const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
-                                similarities.set(pair.id, similarity);
-                            }
-                            catch (individualError) {
-                                console.warn(`[INDIVIDUAL] Failed to process pair ${pair.id}:`, individualError);
-                                // Use minimal fallback
-                                similarities.set(pair.id, {
-                                    nameScore: 0.1,
-                                    descriptionScore: 0.1,
-                                    fileOverlap: 0,
-                                    patternScore: 0.1,
-                                    businessScore: 0.1,
-                                    combinedScore: 0.1,
-                                });
-                            }
-                        }
-                    }
-                }
+            catch (error) {
+                console.warn(`[SIMILARITY] Failed to process pair ${pair.id}:`, error);
+                // Use non-match result for failed comparisons
+                similarities.set(pair.id, {
+                    combinedScore: 0,
+                    nameScore: 0,
+                    descriptionScore: 0,
+                    fileOverlap: 0,
+                    patternScore: 0,
+                    businessScore: 0,
+                });
             }
         }
-        console.log(`[OPTIMIZATION] Processed ${similarities.size} pairs (${aiCallsSkipped} skipped, ${aiCallsMade} AI calls)`);
+        console.log(`[SIMILARITY] Processed ${similarities.size} pairs`);
         return similarities;
     }
     buildMergeGroupsFromSimilarities(themes, similarities) {
@@ -32846,19 +33248,58 @@ class ThemeSimilarityService {
             lastAnalysis: theme.lastAnalysis,
             sourceThemes: [theme.id],
             consolidationMethod: 'single',
+            // Include new detailed fields
+            detailedDescription: theme.detailedDescription,
+            technicalSummary: theme.technicalSummary,
+            keyChanges: theme.keyChanges,
+            userScenario: theme.userScenario,
+            mainFunctionsChanged: theme.mainFunctionsChanged,
+            mainClassesChanged: theme.mainClassesChanged,
+            codeMetrics: theme.codeMetrics,
+            codeExamples: theme.codeExamples,
         };
     }
     async mergeThemes(themes) {
         const allFiles = new Set();
         const allSnippets = [];
         let totalConfidence = 0;
+        // Combine all rich fields
+        const allKeyChanges = [];
+        const allFunctions = new Set();
+        const allClasses = new Set();
+        const allCodeExamples = [];
+        let totalLinesAdded = 0;
+        let totalLinesRemoved = 0;
         themes.forEach((theme) => {
             theme.affectedFiles.forEach((file) => allFiles.add(file));
             allSnippets.push(...theme.codeSnippets);
             totalConfidence += theme.confidence;
+            // Combine new fields
+            if (theme.keyChanges)
+                allKeyChanges.push(...theme.keyChanges);
+            if (theme.mainFunctionsChanged)
+                theme.mainFunctionsChanged.forEach((f) => allFunctions.add(f));
+            if (theme.mainClassesChanged)
+                theme.mainClassesChanged.forEach((c) => allClasses.add(c));
+            if (theme.codeExamples)
+                allCodeExamples.push(...theme.codeExamples);
+            if (theme.codeMetrics) {
+                totalLinesAdded += theme.codeMetrics.linesAdded;
+                totalLinesRemoved += theme.codeMetrics.linesRemoved;
+            }
         });
         // Generate AI-powered name and description for merged themes
         const { name, description } = await this.themeNamingService.generateMergedThemeNameAndDescription(themes);
+        // Combine technical summaries
+        const combinedTechnicalDetails = themes
+            .filter((t) => t.technicalSummary)
+            .map((t) => t.technicalSummary)
+            .join('. ');
+        // Combine user scenarios
+        const unifiedUserImpact = themes
+            .filter((t) => t.userScenario)
+            .map((t) => t.userScenario)
+            .join('. Additionally, ');
         return {
             id: `merged-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             name,
@@ -32873,17 +33314,21 @@ class ThemeSimilarityService {
             lastAnalysis: new Date(),
             sourceThemes: themes.map((t) => t.id),
             consolidationMethod: 'merge',
-        };
-    }
-    aiSimilarityToMetrics(aiResult, theme1, theme2) {
-        const fileOverlap = this.similarityCalculator.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
-        return {
-            nameScore: aiResult.nameScore,
-            descriptionScore: aiResult.descriptionScore,
-            fileOverlap,
-            patternScore: aiResult.patternScore,
-            businessScore: aiResult.businessScore,
-            combinedScore: aiResult.semanticScore * 0.8 + fileOverlap * 0.2,
+            // New rich fields
+            consolidationSummary: `Merged ${themes.length} similar themes: ${themes.map((t) => t.name).join(', ')}`,
+            combinedTechnicalDetails: combinedTechnicalDetails || undefined,
+            unifiedUserImpact: unifiedUserImpact || undefined,
+            keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,
+            mainFunctionsChanged: allFunctions.size > 0 ? Array.from(allFunctions) : undefined,
+            mainClassesChanged: allClasses.size > 0 ? Array.from(allClasses) : undefined,
+            codeMetrics: totalLinesAdded > 0 || totalLinesRemoved > 0
+                ? {
+                    linesAdded: totalLinesAdded,
+                    linesRemoved: totalLinesRemoved,
+                    filesChanged: allFiles.size,
+                }
+                : undefined,
+            codeExamples: allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
         };
     }
 }
@@ -33337,6 +33782,232 @@ exports.GenericCache = GenericCache;
 
 /***/ }),
 
+/***/ 2642:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Robust JSON extraction utility for handling mixed text/JSON responses from Claude AI
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.JsonExtractor = void 0;
+class JsonExtractor {
+    /**
+     * Extract JSON from Claude AI response that may contain explanatory text
+     */
+    static extractJson(response) {
+        if (!response || typeof response !== 'string') {
+            return {
+                success: false,
+                data: null,
+                error: 'Invalid response: empty or non-string input',
+                originalResponse: response,
+            };
+        }
+        const trimmedResponse = response.trim();
+        // Strategy 1: Try parsing as pure JSON first
+        try {
+            const parsed = JSON.parse(trimmedResponse);
+            return {
+                success: true,
+                data: parsed,
+                originalResponse: response,
+            };
+        }
+        catch {
+            // Continue to other strategies
+        }
+        // Strategy 2: Extract JSON from markdown code blocks
+        const jsonMarkdownMatch = trimmedResponse.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMarkdownMatch) {
+            try {
+                const parsed = JSON.parse(jsonMarkdownMatch[1].trim());
+                return {
+                    success: true,
+                    data: parsed,
+                    originalResponse: response,
+                };
+            }
+            catch (error) {
+                return {
+                    success: false,
+                    data: null,
+                    error: `JSON parsing failed in markdown block: ${error}`,
+                    originalResponse: response,
+                };
+            }
+        }
+        // Strategy 3: Extract JSON from regular code blocks
+        const codeBlockMatch = trimmedResponse.match(/```\s*([\s\S]*?)\s*```/);
+        if (codeBlockMatch) {
+            try {
+                const parsed = JSON.parse(codeBlockMatch[1].trim());
+                return {
+                    success: true,
+                    data: parsed,
+                    originalResponse: response,
+                };
+            }
+            catch {
+                // Continue to next strategy
+            }
+        }
+        // Strategy 4: Find JSON object/array in mixed text
+        const jsonPatterns = [
+            // Match JSON objects
+            /\{[\s\S]*\}/,
+            // Match JSON arrays
+            /\[[\s\S]*\]/,
+        ];
+        for (const pattern of jsonPatterns) {
+            const matches = trimmedResponse.match(pattern);
+            if (matches) {
+                for (const match of matches) {
+                    try {
+                        const parsed = JSON.parse(match);
+                        return {
+                            success: true,
+                            data: parsed,
+                            originalResponse: response,
+                        };
+                    }
+                    catch {
+                        // Try next match
+                        continue;
+                    }
+                }
+            }
+        }
+        // Strategy 5: Extract multiple potential JSON blocks and try each
+        const allJsonCandidates = this.findAllJsonCandidates(trimmedResponse);
+        for (const candidate of allJsonCandidates) {
+            try {
+                const parsed = JSON.parse(candidate);
+                return {
+                    success: true,
+                    data: parsed,
+                    originalResponse: response,
+                };
+            }
+            catch {
+                // Try next candidate
+                continue;
+            }
+        }
+        // All strategies failed
+        return {
+            success: false,
+            data: null,
+            error: 'No valid JSON found in response',
+            originalResponse: response,
+        };
+    }
+    /**
+     * Find all potential JSON candidates in text
+     */
+    static findAllJsonCandidates(text) {
+        const candidates = [];
+        // Look for balanced braces/brackets
+        let braceCount = 0;
+        let bracketCount = 0;
+        let start = -1;
+        let inString = false;
+        let escapeNext = false;
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            if (escapeNext) {
+                escapeNext = false;
+                continue;
+            }
+            if (char === '\\') {
+                escapeNext = true;
+                continue;
+            }
+            if (char === '"' && !escapeNext) {
+                inString = !inString;
+                continue;
+            }
+            if (inString)
+                continue;
+            if (char === '{') {
+                if (braceCount === 0 && bracketCount === 0) {
+                    start = i;
+                }
+                braceCount++;
+            }
+            else if (char === '}') {
+                braceCount--;
+                if (braceCount === 0 && bracketCount === 0 && start !== -1) {
+                    candidates.push(text.substring(start, i + 1));
+                    start = -1;
+                }
+            }
+            else if (char === '[') {
+                if (bracketCount === 0 && braceCount === 0) {
+                    start = i;
+                }
+                bracketCount++;
+            }
+            else if (char === ']') {
+                bracketCount--;
+                if (bracketCount === 0 && braceCount === 0 && start !== -1) {
+                    candidates.push(text.substring(start, i + 1));
+                    start = -1;
+                }
+            }
+        }
+        return candidates;
+    }
+    /**
+     * Validate that extracted JSON matches expected schema
+     */
+    static validateJsonSchema(data, expectedType, requiredFields) {
+        if (!data) {
+            return { valid: false, error: 'Data is null or undefined' };
+        }
+        if (expectedType === 'array' && !Array.isArray(data)) {
+            return { valid: false, error: 'Expected array but got ' + typeof data };
+        }
+        if (expectedType === 'object' &&
+            (typeof data !== 'object' || Array.isArray(data))) {
+            return { valid: false, error: 'Expected object but got ' + typeof data };
+        }
+        if (requiredFields && expectedType === 'object') {
+            const obj = data;
+            for (const field of requiredFields) {
+                if (!(field in obj)) {
+                    return { valid: false, error: `Missing required field: ${field}` };
+                }
+            }
+        }
+        return { valid: true };
+    }
+    /**
+     * Extract JSON with schema validation
+     */
+    static extractAndValidateJson(response, expectedType, requiredFields) {
+        const extractionResult = this.extractJson(response);
+        if (!extractionResult.success) {
+            return extractionResult;
+        }
+        const validationResult = this.validateJsonSchema(extractionResult.data, expectedType, requiredFields);
+        if (!validationResult.valid) {
+            return {
+                success: false,
+                data: extractionResult.data,
+                error: `Schema validation failed: ${validationResult.error}`,
+                originalResponse: response,
+            };
+        }
+        return extractionResult;
+    }
+}
+exports.JsonExtractor = JsonExtractor;
+
+
+/***/ }),
+
 /***/ 7831:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -33535,9 +34206,43 @@ class ThemeFormatter {
         let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}% confidence)`;
         output += `\\n${indent}   - Files: ${files}${moreFiles}`;
         output += `\\n${indent}   - ${description}`;
+        // Show detailed description if available
+        if (theme.detailedDescription) {
+            output += `\\n${indent}   - **Details**: ${theme.detailedDescription}`;
+        }
+        // Show technical summary if available
+        if (theme.technicalSummary) {
+            output += `\\n${indent}   - **Technical**: ${theme.technicalSummary}`;
+        }
+        // Show key changes as bullet points
+        if (theme.keyChanges && theme.keyChanges.length > 0) {
+            output += `\\n${indent}   - **Key Changes**:`;
+            theme.keyChanges.forEach((change) => {
+                output += `\\n${indent}     • ${change}`;
+            });
+        }
+        // Show user scenario if available
+        if (theme.userScenario) {
+            output += `\\n${indent}   - **User Impact**: ${theme.userScenario}`;
+        }
+        // Show code metrics if available
+        if (theme.codeMetrics) {
+            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+            output += `\\n${indent}   - **Code Metrics**: +${linesAdded}/-${linesRemoved} lines across ${filesChanged} files`;
+        }
+        // Show functions/classes changed if available
+        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+            output += `\\n${indent}   - **Functions**: ${theme.mainFunctionsChanged.slice(0, 3).join(', ')}${theme.mainFunctionsChanged.length > 3 ? ` (+${theme.mainFunctionsChanged.length - 3} more)` : ''}`;
+        }
+        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+            output += `\\n${indent}   - **Classes**: ${theme.mainClassesChanged.slice(0, 3).join(', ')}${theme.mainClassesChanged.length > 3 ? ` (+${theme.mainClassesChanged.length - 3} more)` : ''}`;
+        }
         // Show consolidation info
         if (theme.consolidationMethod === 'merge') {
             output += `\\n${indent}   - 🔄 Merged from ${theme.sourceThemes.length} similar themes`;
+            if (theme.consolidationSummary) {
+                output += `: ${theme.consolidationSummary}`;
+            }
         }
         else if (theme.consolidationMethod === 'expansion') {
             output += `\\n${indent}   - 🔍 Expanded from complexity analysis`;

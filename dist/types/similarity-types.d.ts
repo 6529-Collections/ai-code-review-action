@@ -37,6 +37,26 @@ export interface ConsolidatedTheme {
     businessLogicPatterns?: string[];
     userFlowPatterns?: string[];
     complexityScore?: number;
+    consolidationSummary?: string;
+    childThemeSummaries?: string[];
+    combinedTechnicalDetails?: string;
+    unifiedUserImpact?: string;
+    detailedDescription?: string;
+    technicalSummary?: string;
+    keyChanges?: string[];
+    userScenario?: string;
+    mainFunctionsChanged?: string[];
+    mainClassesChanged?: string[];
+    codeMetrics?: {
+        linesAdded: number;
+        linesRemoved: number;
+        filesChanged: number;
+    };
+    codeExamples?: Array<{
+        file: string;
+        description: string;
+        snippet: string;
+    }>;
 }
 export interface ConsolidationConfig {
     similarityThreshold: number;

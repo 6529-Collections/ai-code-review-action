@@ -1,6 +1,7 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
 import { GenericCache } from '../utils/generic-cache';
 import { ClaudeClient } from '../utils/claude-client';
+import { JsonExtractor } from '../utils/json-extractor';
 import { CodeChange, SmartContext } from '../utils/code-analyzer';
 import { logInfo } from '../utils';
 
@@ -165,9 +166,17 @@ export class ThemeExpansionService {
       )
     );
 
+    // Combine all child themes
+    const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
+
+    // Deduplicate child themes using AI
+    const deduplicatedChildren =
+      await this.deduplicateSubThemes(allChildThemes);
+
     return {
       ...result.expandedTheme!,
-      childThemes: [...expandedExistingChildren, ...expandedSubThemes],
+      childThemes: deduplicatedChildren,
+      isExpanded: true,
     };
   }
 
@@ -229,6 +238,368 @@ export class ThemeExpansionService {
   }
 
   /**
+   * Deduplicate sub-themes using AI to identify duplicates
+   */
+  private async deduplicateSubThemes(
+    subThemes: ConsolidatedTheme[]
+  ): Promise<ConsolidatedTheme[]> {
+    if (subThemes.length <= 1) {
+      return subThemes;
+    }
+
+    logInfo(`Deduplicating ${subThemes.length} sub-themes using AI`);
+
+    // Process in batches of 4-8 themes
+    const batchSize = 6;
+    const batches: ConsolidatedTheme[][] = [];
+
+    for (let i = 0; i < subThemes.length; i += batchSize) {
+      batches.push(subThemes.slice(i, i + batchSize));
+    }
+
+    // Process each batch in parallel
+    const deduplicationResults = await Promise.all(
+      batches.map((batch) => this.deduplicateBatch(batch))
+    );
+
+    // Flatten and combine results
+    const allGroups = deduplicationResults.flat();
+
+    // Merge groups that span batches
+    const finalThemes: ConsolidatedTheme[] = [];
+    const processedIds = new Set<string>();
+
+    for (const group of allGroups) {
+      if (group.length === 1) {
+        // Single theme, no duplicates
+        if (!processedIds.has(group[0].id)) {
+          finalThemes.push(group[0]);
+          processedIds.add(group[0].id);
+        }
+      } else {
+        // Multiple themes to merge
+        const unprocessedThemes = group.filter((t) => !processedIds.has(t.id));
+        if (unprocessedThemes.length > 0) {
+          const mergedTheme = await this.mergeSubThemes(unprocessedThemes);
+          finalThemes.push(mergedTheme);
+          unprocessedThemes.forEach((t) => processedIds.add(t.id));
+        }
+      }
+    }
+
+    logInfo(
+      `Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`
+    );
+
+    // Second pass: check if any of the final themes are still duplicates
+    // This handles cases where duplicates were in different batches
+    if (finalThemes.length > 1) {
+      logInfo(
+        `Running second pass deduplication on ${finalThemes.length} themes`
+      );
+      const secondPassResult =
+        await this.runSecondPassDeduplication(finalThemes);
+      logInfo(
+        `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`
+      );
+      return secondPassResult;
+    }
+
+    return finalThemes;
+  }
+
+  /**
+   * Run a second pass to catch duplicates that were in different batches
+   */
+  private async runSecondPassDeduplication(
+    themes: ConsolidatedTheme[]
+  ): Promise<ConsolidatedTheme[]> {
+    // Create a single batch with all themes for comprehensive comparison
+    const prompt = `
+These themes have already been deduplicated within their groups, but there might still be duplicates across groups.
+Please do a final check to identify any remaining duplicates:
+
+${themes
+  .map(
+    (theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+Files: ${theme.affectedFiles.join(', ')}
+`
+  )
+  .join('\n')}
+
+Only identify themes that are CLEARLY duplicates. Be conservative.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "duplicateGroups": [
+    {
+      "themeIndices": [1, 4],
+      "reasoning": "Both implement the exact same testing configuration change"
+    }
+  ]
+}
+
+If no duplicates found, return: {"duplicateGroups": []}`;
+
+    try {
+      const response = await this.claudeClient.callClaude(prompt);
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        ['duplicateGroups']
+      );
+
+      if (!extractionResult.success) {
+        // No duplicates found or parsing failed
+        return themes;
+      }
+
+      const data = extractionResult.data as {
+        duplicateGroups?: Array<{
+          themeIndices: number[];
+          reasoning: string;
+        }>;
+      };
+
+      if (!data.duplicateGroups || data.duplicateGroups.length === 0) {
+        return themes;
+      }
+
+      // Process duplicate groups
+      const finalThemes: ConsolidatedTheme[] = [];
+      const processedIndices = new Set<number>();
+
+      for (const group of data.duplicateGroups) {
+        const duplicateThemes: ConsolidatedTheme[] = [];
+
+        for (const index of group.themeIndices) {
+          if (
+            index >= 1 &&
+            index <= themes.length &&
+            !processedIndices.has(index - 1)
+          ) {
+            duplicateThemes.push(themes[index - 1]);
+            processedIndices.add(index - 1);
+          }
+        }
+
+        if (duplicateThemes.length > 1) {
+          const mergedTheme = await this.mergeSubThemes(duplicateThemes);
+          finalThemes.push(mergedTheme);
+        } else if (duplicateThemes.length === 1) {
+          finalThemes.push(duplicateThemes[0]);
+        }
+      }
+
+      // Add themes that weren't in any duplicate group
+      themes.forEach((theme, index) => {
+        if (!processedIndices.has(index)) {
+          finalThemes.push(theme);
+        }
+      });
+
+      return finalThemes;
+    } catch (error) {
+      logInfo(`Second pass deduplication failed: ${error}`);
+      return themes;
+    }
+  }
+
+  /**
+   * Process a batch of themes for deduplication
+   */
+  private async deduplicateBatch(
+    themes: ConsolidatedTheme[]
+  ): Promise<ConsolidatedTheme[][]> {
+    const prompt = `
+Analyze these sub-themes and identify which ones describe the same change or functionality:
+
+${themes
+  .map(
+    (theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+Files: ${theme.affectedFiles.join(', ')}
+${theme.keyChanges ? `Key changes: ${theme.keyChanges.join('; ')}` : ''}
+`
+  )
+  .join('\n')}
+
+Questions:
+1. Which themes are describing the same change (even if worded differently)?
+2. Group duplicate themes together
+3. For each group, explain why they are duplicates
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "groups": [
+    {
+      "themeIndices": [1, 3],
+      "reasoning": "Both themes describe the same CI workflow change"
+    },
+    {
+      "themeIndices": [2],
+      "reasoning": "Unique theme about type definitions"
+    }
+  ]
+}`;
+
+    try {
+      const response = await this.claudeClient.callClaude(prompt);
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        ['groups']
+      );
+
+      if (!extractionResult.success) {
+        logInfo(
+          `Failed to parse deduplication response: ${extractionResult.error}`
+        );
+        // Return each theme as its own group
+        return themes.map((theme) => [theme]);
+      }
+
+      const data = extractionResult.data as {
+        groups?: Array<{
+          themeIndices: number[];
+          reasoning: string;
+        }>;
+      };
+
+      // Convert indices to theme groups
+      const groups: ConsolidatedTheme[][] = [];
+      const processedIndices = new Set<number>();
+
+      if (data.groups) {
+        for (const group of data.groups) {
+          const themeGroup: ConsolidatedTheme[] = [];
+          for (const index of group.themeIndices) {
+            if (
+              index >= 1 &&
+              index <= themes.length &&
+              !processedIndices.has(index - 1)
+            ) {
+              themeGroup.push(themes[index - 1]);
+              processedIndices.add(index - 1);
+            }
+          }
+          if (themeGroup.length > 0) {
+            groups.push(themeGroup);
+          }
+        }
+      }
+
+      // Add any themes not in groups
+      themes.forEach((theme, index) => {
+        if (!processedIndices.has(index)) {
+          groups.push([theme]);
+        }
+      });
+
+      return groups;
+    } catch (error) {
+      logInfo(`Deduplication batch failed: ${error}`);
+      // Return each theme as its own group
+      return themes.map((theme) => [theme]);
+    }
+  }
+
+  /**
+   * Merge duplicate sub-themes into a single theme
+   */
+  private async mergeSubThemes(
+    themes: ConsolidatedTheme[]
+  ): Promise<ConsolidatedTheme> {
+    if (themes.length === 1) {
+      return themes[0];
+    }
+
+    const prompt = `
+These themes have been identified as duplicates describing the same change:
+
+${themes
+  .map(
+    (theme, index) => `
+Theme ${index + 1}: "${theme.name}"
+Description: ${theme.description}
+${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
+${theme.technicalSummary ? `Technical: ${theme.technicalSummary}` : ''}
+`
+  )
+  .join('\n')}
+
+Create a single, unified theme that best represents this change. Combine the best aspects of each description.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "name": "unified theme name",
+  "description": "clear, comprehensive description",
+  "detailedDescription": "detailed explanation combining all relevant details",
+  "reasoning": "why this unified version is better"
+}`;
+
+    try {
+      const response = await this.claudeClient.callClaude(prompt);
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        ['name', 'description']
+      );
+
+      if (!extractionResult.success) {
+        // Use the first theme as fallback
+        return themes[0];
+      }
+
+      const data = extractionResult.data as {
+        name?: string;
+        description?: string;
+        detailedDescription?: string;
+        reasoning?: string;
+      };
+
+      // Combine all data from duplicate themes
+      const allFiles = new Set<string>();
+      const allSnippets: string[] = [];
+      const allKeyChanges: string[] = [];
+      let totalConfidence = 0;
+
+      themes.forEach((theme) => {
+        theme.affectedFiles.forEach((file) => allFiles.add(file));
+        allSnippets.push(...theme.codeSnippets);
+        if (theme.keyChanges) allKeyChanges.push(...theme.keyChanges);
+        totalConfidence += theme.confidence;
+      });
+
+      return {
+        ...themes[0], // Use first theme as base
+        id: `dedup-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        name: data.name || themes[0].name,
+        description: data.description || themes[0].description,
+        detailedDescription: data.detailedDescription,
+        affectedFiles: Array.from(allFiles),
+        codeSnippets: allSnippets,
+        keyChanges: [...new Set(allKeyChanges)], // Deduplicate key changes
+        confidence: totalConfidence / themes.length,
+        sourceThemes: themes.flatMap((t) => t.sourceThemes),
+        consolidationMethod: 'merge' as const,
+        consolidationSummary: `Deduplicated ${themes.length} similar sub-themes: ${data.reasoning || 'Identified as duplicates'}`,
+      };
+    } catch (error) {
+      logInfo(`Sub-theme merge failed: ${error}`);
+      return themes[0]; // Use first theme as fallback
+    }
+  }
+
+  /**
    * Identify distinct business patterns within a theme
    */
   private async identifyBusinessPatterns(
@@ -267,7 +638,21 @@ Focus on business value, not technical implementation details.
 
     try {
       const response = await this.claudeClient.callClaude(prompt);
-      const patterns = JSON.parse(response.trim()) as string[];
+
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'array',
+        undefined
+      );
+
+      if (!extractionResult.success) {
+        logInfo(
+          `Failed to parse business patterns for ${theme.name}: ${extractionResult.error}`
+        );
+        return [];
+      }
+
+      const patterns = extractionResult.data as string[];
 
       this.cache.set(cacheKey, patterns, 3600000); // Cache for 1 hour
       return patterns;
@@ -408,10 +793,45 @@ Only create sub-themes if there are genuinely distinct business concerns.
 
     try {
       const response = await this.claudeClient.callClaude(prompt);
-      const analysis = JSON.parse(response.trim());
+
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        ['shouldExpand', 'confidence', 'reasoning', 'subThemes']
+      );
+
+      if (!extractionResult.success) {
+        logInfo(
+          `Failed to parse expansion analysis for ${theme.name}: ${extractionResult.error}`
+        );
+        // Return no expansion
+        return {
+          subThemes: [],
+          shouldExpand: false,
+          confidence: 0.3,
+          reasoning: `Analysis parsing failed: ${extractionResult.error}`,
+          businessLogicPatterns: [],
+          userFlowPatterns: [],
+        };
+      }
+
+      const analysis = extractionResult.data as {
+        shouldExpand?: boolean;
+        confidence?: number;
+        reasoning?: string;
+        businessLogicPatterns?: string[];
+        userFlowPatterns?: string[];
+        subThemes?: Array<{
+          name: string;
+          description: string;
+          businessImpact: string;
+          relevantFiles: string[];
+          confidence: number;
+        }>;
+      };
 
       // Convert to ConsolidatedTheme objects
-      const subThemes: ConsolidatedTheme[] = analysis.subThemes.map(
+      const subThemes: ConsolidatedTheme[] = (analysis.subThemes || []).map(
         (
           subTheme: {
             name: string;
@@ -447,9 +867,9 @@ Only create sub-themes if there are genuinely distinct business concerns.
 
       return {
         subThemes,
-        shouldExpand: analysis.shouldExpand && subThemes.length > 0,
-        confidence: analysis.confidence,
-        reasoning: analysis.reasoning,
+        shouldExpand: (analysis.shouldExpand || false) && subThemes.length > 0,
+        confidence: analysis.confidence || 0.5,
+        reasoning: analysis.reasoning || 'No reasoning provided',
         businessLogicPatterns: analysis.businessLogicPatterns || [],
         userFlowPatterns: analysis.userFlowPatterns || [],
       };

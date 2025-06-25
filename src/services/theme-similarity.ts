@@ -1,6 +1,5 @@
 import { Theme } from './theme-service';
 import {
-  AISimilarityResult,
   SimilarityMetrics,
   ConsolidatedTheme,
   ConsolidationConfig,
@@ -24,14 +23,15 @@ export class ThemeSimilarityService {
 
   constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>) {
     this.config = {
-      similarityThreshold: 0.6, // Lowered from 0.8 to 0.6 for better consolidation
+      similarityThreshold: 0.7, // Now represents confidence threshold for merge decision
       maxThemesPerParent: 5,
       minThemesForParent: 2,
-      confidenceWeight: 0.3,
-      businessDomainWeight: 0.4,
       maxHierarchyDepth: 4,
       expansionEnabled: true,
       crossLevelSimilarityCheck: true,
+      // Remove unused weight configurations
+      confidenceWeight: 0.3, // Keep for backwards compatibility
+      businessDomainWeight: 0.4, // Keep for backwards compatibility
       ...config,
     };
 
@@ -62,41 +62,49 @@ export class ThemeSimilarityService {
       return cached.similarity;
     }
 
-    // Check if we can skip AI with quick heuristics
-    const quickCheck = this.similarityCalculator.quickSimilarityCheck(
-      theme1,
-      theme2
-    );
-    if (quickCheck.shouldSkipAI && quickCheck.similarity) {
-      console.log(
-        `[QUICK] ${quickCheck.reason} for "${theme1.name}" vs "${theme2.name}"`
-      );
-      this.similarityCache.cacheSimilarity(cacheKey, quickCheck.similarity);
-      return quickCheck.similarity;
-    }
-
-    // Use AI for semantic similarity
-    const aiSimilarity = await this.aiSimilarityService.calculateAISimilarity(
-      theme1,
-      theme2
-    );
-
-    // Still calculate file overlap (factual)
+    // Only skip if absolutely certain they're different
     const fileOverlap = this.similarityCalculator.calculateFileOverlap(
       theme1.affectedFiles,
       theme2.affectedFiles
     );
+    const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(
+      theme1.name,
+      theme2.name
+    );
 
-    // Combined score: 80% AI semantic understanding + 20% file overlap
-    const combinedScore = aiSimilarity.semanticScore * 0.8 + fileOverlap * 0.2;
+    // Skip only if NO file overlap AND completely different names
+    if (fileOverlap === 0 && nameSimilarity < 0.1) {
+      console.log(
+        `[SKIP] No file overlap and different names for "${theme1.name}" vs "${theme2.name}"`
+      );
+      const result = {
+        combinedScore: 0,
+        nameScore: 0,
+        descriptionScore: 0,
+        fileOverlap: 0,
+        patternScore: 0,
+        businessScore: 0,
+      };
+      this.similarityCache.cacheSimilarity(cacheKey, result);
+      return result;
+    }
 
+    // Ask Claude with full context
+    const aiResult = await this.aiSimilarityService.calculateAISimilarity(
+      theme1,
+      theme2
+    );
+
+    // Convert to SimilarityMetrics using confidence as the primary score
     const result = {
-      nameScore: aiSimilarity.nameScore,
-      descriptionScore: aiSimilarity.descriptionScore,
-      fileOverlap,
-      patternScore: aiSimilarity.patternScore,
-      businessScore: aiSimilarity.businessScore,
-      combinedScore,
+      combinedScore: aiResult.shouldMerge
+        ? aiResult.confidence
+        : (1 - aiResult.confidence) * 0.3,
+      nameScore: 0, // Not used anymore
+      descriptionScore: 0, // Not used anymore
+      fileOverlap, // Keep for reference
+      patternScore: 0, // Not used anymore
+      businessScore: 0, // Not used anymore
     };
 
     // Cache the result
@@ -165,156 +173,30 @@ export class ThemeSimilarityService {
     pairs: ThemePair[]
   ): Promise<Map<string, SimilarityMetrics>> {
     const similarities = new Map<string, SimilarityMetrics>();
-    let aiCallsSkipped = 0;
-    let aiCallsMade = 0;
 
-    // First pass: Process pairs that can be resolved with quick checks or cache
-    const needsAI: ThemePair[] = [];
-
+    // Process all pairs through calculateSimilarity (which handles caching and skipping)
     for (const pair of pairs) {
-      const cacheKey = this.similarityCache.getCacheKey(
-        pair.theme1,
-        pair.theme2
-      );
-      const cached = this.similarityCache.getCachedSimilarity(cacheKey);
-
-      if (cached) {
-        similarities.set(pair.id, cached.similarity);
-        continue;
-      }
-
-      const quickCheck = this.similarityCalculator.quickSimilarityCheck(
-        pair.theme1,
-        pair.theme2
-      );
-      if (quickCheck.shouldSkipAI && quickCheck.similarity) {
-        similarities.set(pair.id, quickCheck.similarity);
-        this.similarityCache.cacheSimilarity(cacheKey, quickCheck.similarity);
-        aiCallsSkipped++;
-      } else {
-        needsAI.push(pair);
-      }
-    }
-
-    console.log(
-      `[OPTIMIZATION] Quick resolution: ${similarities.size} pairs, AI needed: ${needsAI.length}, Skipped: ${aiCallsSkipped}`
-    );
-
-    // Second pass: Process remaining pairs with AI in batches
-    if (needsAI.length > 0) {
-      // Adapt batch size based on previous failures
-      const adaptiveBatchSize = this.batchProcessor.getAdaptiveBatchSize();
-      console.log(
-        `[BATCH] Using adaptive batch size: ${adaptiveBatchSize} (failures: ${this.batchProcessor.getFailureCount()})`
-      );
-
-      const batches = this.batchProcessor.chunkArray(
-        needsAI,
-        adaptiveBatchSize
-      );
-
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        console.log(
-          `[BATCH] Processing batch ${i + 1}/${batches.length} with ${batch.length} pairs`
+      try {
+        const similarity = await this.calculateSimilarity(
+          pair.theme1,
+          pair.theme2
         );
-
-        try {
-          const batchResults =
-            await this.batchProcessor.processBatchSimilarity(batch);
-          aiCallsMade++;
-
-          // Check if we got valid results
-          const validResults = batchResults.filter((r) => !r.error);
-          if (validResults.length === 0) {
-            throw new Error('No valid results in batch response');
-          }
-
-          // Reset failure counter on success
-          this.batchProcessor.decrementFailures();
-
-          for (const result of batchResults) {
-            if (result.error) {
-              console.warn(
-                `[BATCH] Error for pair ${result.pairId}: ${result.error}`
-              );
-              // Use fallback similarity for errored pairs
-              const pair = batch.find((p) => p.id === result.pairId);
-              if (pair) {
-                const fallback =
-                  await this.aiSimilarityService.calculateAISimilarity(
-                    pair.theme1,
-                    pair.theme2
-                  );
-                similarities.set(
-                  result.pairId,
-                  this.aiSimilarityToMetrics(fallback, pair.theme1, pair.theme2)
-                );
-              }
-            } else {
-              const pair = batch.find((p) => p.id === result.pairId);
-              if (pair) {
-                const metrics = this.aiSimilarityToMetrics(
-                  result.similarity,
-                  pair.theme1,
-                  pair.theme2
-                );
-                similarities.set(result.pairId, metrics);
-
-                // Cache the result
-                const cacheKey = this.similarityCache.getCacheKey(
-                  pair.theme1,
-                  pair.theme2
-                );
-                this.similarityCache.cacheSimilarity(cacheKey, metrics);
-              }
-            }
-          }
-        } catch (error) {
-          this.batchProcessor.incrementFailures();
-          console.error(
-            `[BATCH] Batch processing failed (failures: ${this.batchProcessor.getFailureCount()}):`,
-            error
-          );
-
-          // If too many failures, fall back to individual processing
-          if (this.batchProcessor.getFailureCount() >= 3) {
-            console.warn(
-              `[BATCH] Too many failures, switching to individual processing for remaining batches`
-            );
-
-            // Process remaining pairs individually
-            for (const pair of batch) {
-              try {
-                const similarity = await this.calculateSimilarity(
-                  pair.theme1,
-                  pair.theme2
-                );
-                similarities.set(pair.id, similarity);
-              } catch (individualError) {
-                console.warn(
-                  `[INDIVIDUAL] Failed to process pair ${pair.id}:`,
-                  individualError
-                );
-                // Use minimal fallback
-                similarities.set(pair.id, {
-                  nameScore: 0.1,
-                  descriptionScore: 0.1,
-                  fileOverlap: 0,
-                  patternScore: 0.1,
-                  businessScore: 0.1,
-                  combinedScore: 0.1,
-                });
-              }
-            }
-          }
-        }
+        similarities.set(pair.id, similarity);
+      } catch (error) {
+        console.warn(`[SIMILARITY] Failed to process pair ${pair.id}:`, error);
+        // Use non-match result for failed comparisons
+        similarities.set(pair.id, {
+          combinedScore: 0,
+          nameScore: 0,
+          descriptionScore: 0,
+          fileOverlap: 0,
+          patternScore: 0,
+          businessScore: 0,
+        });
       }
     }
 
-    console.log(
-      `[OPTIMIZATION] Processed ${similarities.size} pairs (${aiCallsSkipped} skipped, ${aiCallsMade} AI calls)`
-    );
+    console.log(`[SIMILARITY] Processed ${similarities.size} pairs`);
     return similarities;
   }
 
@@ -443,6 +325,15 @@ export class ThemeSimilarityService {
       lastAnalysis: theme.lastAnalysis,
       sourceThemes: [theme.id],
       consolidationMethod: 'single',
+      // Include new detailed fields
+      detailedDescription: theme.detailedDescription,
+      technicalSummary: theme.technicalSummary,
+      keyChanges: theme.keyChanges,
+      userScenario: theme.userScenario,
+      mainFunctionsChanged: theme.mainFunctionsChanged,
+      mainClassesChanged: theme.mainClassesChanged,
+      codeMetrics: theme.codeMetrics,
+      codeExamples: theme.codeExamples,
     };
   }
 
@@ -451,10 +342,34 @@ export class ThemeSimilarityService {
     const allSnippets: string[] = [];
     let totalConfidence = 0;
 
+    // Combine all rich fields
+    const allKeyChanges: string[] = [];
+    const allFunctions = new Set<string>();
+    const allClasses = new Set<string>();
+    const allCodeExamples: Array<{
+      file: string;
+      description: string;
+      snippet: string;
+    }> = [];
+    let totalLinesAdded = 0;
+    let totalLinesRemoved = 0;
+
     themes.forEach((theme) => {
       theme.affectedFiles.forEach((file) => allFiles.add(file));
       allSnippets.push(...theme.codeSnippets);
       totalConfidence += theme.confidence;
+
+      // Combine new fields
+      if (theme.keyChanges) allKeyChanges.push(...theme.keyChanges);
+      if (theme.mainFunctionsChanged)
+        theme.mainFunctionsChanged.forEach((f) => allFunctions.add(f));
+      if (theme.mainClassesChanged)
+        theme.mainClassesChanged.forEach((c) => allClasses.add(c));
+      if (theme.codeExamples) allCodeExamples.push(...theme.codeExamples);
+      if (theme.codeMetrics) {
+        totalLinesAdded += theme.codeMetrics.linesAdded;
+        totalLinesRemoved += theme.codeMetrics.linesRemoved;
+      }
     });
 
     // Generate AI-powered name and description for merged themes
@@ -462,6 +377,18 @@ export class ThemeSimilarityService {
       await this.themeNamingService.generateMergedThemeNameAndDescription(
         themes
       );
+
+    // Combine technical summaries
+    const combinedTechnicalDetails = themes
+      .filter((t) => t.technicalSummary)
+      .map((t) => t.technicalSummary)
+      .join('. ');
+
+    // Combine user scenarios
+    const unifiedUserImpact = themes
+      .filter((t) => t.userScenario)
+      .map((t) => t.userScenario)
+      .join('. Additionally, ');
 
     return {
       id: `merged-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
@@ -477,26 +404,26 @@ export class ThemeSimilarityService {
       lastAnalysis: new Date(),
       sourceThemes: themes.map((t) => t.id),
       consolidationMethod: 'merge',
-    };
-  }
 
-  private aiSimilarityToMetrics(
-    aiResult: AISimilarityResult,
-    theme1: Theme,
-    theme2: Theme
-  ): SimilarityMetrics {
-    const fileOverlap = this.similarityCalculator.calculateFileOverlap(
-      theme1.affectedFiles,
-      theme2.affectedFiles
-    );
-
-    return {
-      nameScore: aiResult.nameScore,
-      descriptionScore: aiResult.descriptionScore,
-      fileOverlap,
-      patternScore: aiResult.patternScore,
-      businessScore: aiResult.businessScore,
-      combinedScore: aiResult.semanticScore * 0.8 + fileOverlap * 0.2,
+      // New rich fields
+      consolidationSummary: `Merged ${themes.length} similar themes: ${themes.map((t) => t.name).join(', ')}`,
+      combinedTechnicalDetails: combinedTechnicalDetails || undefined,
+      unifiedUserImpact: unifiedUserImpact || undefined,
+      keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,
+      mainFunctionsChanged:
+        allFunctions.size > 0 ? Array.from(allFunctions) : undefined,
+      mainClassesChanged:
+        allClasses.size > 0 ? Array.from(allClasses) : undefined,
+      codeMetrics:
+        totalLinesAdded > 0 || totalLinesRemoved > 0
+          ? {
+              linesAdded: totalLinesAdded,
+              linesRemoved: totalLinesRemoved,
+              filesChanged: allFiles.size,
+            }
+          : undefined,
+      codeExamples:
+        allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
     };
   }
 }

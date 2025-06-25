@@ -15,6 +15,22 @@ export interface Theme {
     enhancedContext: SmartContext;
     codeChanges: CodeChange[];
     lastAnalysis: Date;
+    detailedDescription?: string;
+    technicalSummary?: string;
+    keyChanges?: string[];
+    userScenario?: string;
+    mainFunctionsChanged?: string[];
+    mainClassesChanged?: string[];
+    codeMetrics?: {
+        linesAdded: number;
+        linesRemoved: number;
+        filesChanged: number;
+    };
+    codeExamples?: Array<{
+        file: string;
+        description: string;
+        snippet: string;
+    }>;
 }
 export interface CodeChunk {
     id: string;
@@ -31,6 +47,12 @@ export interface ChunkAnalysis {
     suggestedParent?: string | null;
     confidence: number;
     codePattern: string;
+    detailedDescription?: string;
+    technicalSummary?: string;
+    keyChanges?: string[];
+    userScenario?: string;
+    mainFunctionsChanged?: string[];
+    mainClassesChanged?: string[];
 }
 export interface ThemePlacement {
     action: 'merge' | 'create';

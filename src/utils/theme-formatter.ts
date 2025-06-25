@@ -53,9 +53,50 @@ export class ThemeFormatter {
     output += `\\n${indent}   - Files: ${files}${moreFiles}`;
     output += `\\n${indent}   - ${description}`;
 
+    // Show detailed description if available
+    if (theme.detailedDescription) {
+      output += `\\n${indent}   - **Details**: ${theme.detailedDescription}`;
+    }
+
+    // Show technical summary if available
+    if (theme.technicalSummary) {
+      output += `\\n${indent}   - **Technical**: ${theme.technicalSummary}`;
+    }
+
+    // Show key changes as bullet points
+    if (theme.keyChanges && theme.keyChanges.length > 0) {
+      output += `\\n${indent}   - **Key Changes**:`;
+      theme.keyChanges.forEach((change) => {
+        output += `\\n${indent}     • ${change}`;
+      });
+    }
+
+    // Show user scenario if available
+    if (theme.userScenario) {
+      output += `\\n${indent}   - **User Impact**: ${theme.userScenario}`;
+    }
+
+    // Show code metrics if available
+    if (theme.codeMetrics) {
+      const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+      output += `\\n${indent}   - **Code Metrics**: +${linesAdded}/-${linesRemoved} lines across ${filesChanged} files`;
+    }
+
+    // Show functions/classes changed if available
+    if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+      output += `\\n${indent}   - **Functions**: ${theme.mainFunctionsChanged.slice(0, 3).join(', ')}${theme.mainFunctionsChanged.length > 3 ? ` (+${theme.mainFunctionsChanged.length - 3} more)` : ''}`;
+    }
+
+    if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+      output += `\\n${indent}   - **Classes**: ${theme.mainClassesChanged.slice(0, 3).join(', ')}${theme.mainClassesChanged.length > 3 ? ` (+${theme.mainClassesChanged.length - 3} more)` : ''}`;
+    }
+
     // Show consolidation info
     if (theme.consolidationMethod === 'merge') {
       output += `\\n${indent}   - 🔄 Merged from ${theme.sourceThemes.length} similar themes`;
+      if (theme.consolidationSummary) {
+        output += `: ${theme.consolidationSummary}`;
+      }
     } else if (theme.consolidationMethod === 'expansion') {
       output += `\\n${indent}   - 🔍 Expanded from complexity analysis`;
     }

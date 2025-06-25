@@ -5,6 +5,7 @@ import {
 } from '../types/expansion-types';
 import { GenericCache } from '../utils/generic-cache';
 import { ClaudeClient } from '../utils/claude-client';
+import { JsonExtractor } from '../utils/json-extractor';
 import { logInfo } from '../utils';
 
 /**
@@ -52,11 +53,23 @@ export class HierarchicalSimilarityService {
 
     logInfo(`Generated ${comparisons.length} cross-level comparisons`);
 
+    if (comparisons.length > 100) {
+      logInfo(
+        `WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`
+      );
+    }
+
     // Process comparisons directly
+    console.log(
+      `[HIERARCHICAL] Starting ${comparisons.length} parallel Claude API calls`
+    );
     const results = await Promise.all(
-      comparisons.map((comparison) =>
-        this.analyzeCrossLevelSimilarityPair(comparison)
-      )
+      comparisons.map((comparison, index) => {
+        console.log(
+          `[HIERARCHICAL] Starting comparison ${index + 1}/${comparisons.length}`
+        );
+        return this.analyzeCrossLevelSimilarityPair(comparison);
+      })
     );
 
     logInfo(
@@ -177,7 +190,7 @@ export class HierarchicalSimilarityService {
   ): ConsolidatedTheme[] {
     const flattened: ConsolidatedTheme[] = [];
 
-    const traverse = (themes: ConsolidatedTheme[]) => {
+    const traverse = (themes: ConsolidatedTheme[]): void => {
       for (const theme of themes) {
         flattened.push(theme);
         if (theme.childThemes.length > 0) {
@@ -206,7 +219,7 @@ export class HierarchicalSimilarityService {
 
     // Don't compare themes that are too far apart in the hierarchy
     const levelDifference = Math.abs(theme1.level - theme2.level);
-    if (levelDifference > 2) {
+    if (levelDifference > 1) {
       return false;
     }
 
@@ -274,24 +287,94 @@ Focus on business value and avoid merging themes with distinct business purposes
 `;
 
     try {
+      console.log(
+        `[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`
+      );
       const response = await this.claudeClient.callClaude(prompt);
-      const analysis = JSON.parse(response.trim());
+      console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
+
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        [
+          'similarityScore',
+          'relationshipType',
+          'action',
+          'confidence',
+          'reasoning',
+        ]
+      );
+
+      if (!extractionResult.success) {
+        console.warn(
+          `[HIERARCHICAL] Failed to parse AI response: ${extractionResult.error}`
+        );
+        console.debug(
+          `[HIERARCHICAL] Original response: ${extractionResult.originalResponse?.substring(0, 200)}...`
+        );
+
+        // Return conservative default
+        const fallbackResult: CrossLevelSimilarity = {
+          theme1,
+          theme2,
+          levelDifference,
+          similarityScore: 0.2,
+          relationshipType: 'distinct',
+          action: 'keep_separate',
+          confidence: 0.3,
+          reasoning: `AI response parsing failed: ${extractionResult.error}`,
+        };
+
+        this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
+        return fallbackResult;
+      }
+
+      const analysis = extractionResult.data as {
+        similarityScore?: number;
+        relationshipType?: 'duplicate' | 'overlap' | 'related' | 'distinct';
+        action?: 'merge_up' | 'merge_down' | 'merge_sibling' | 'keep_separate';
+        confidence?: number;
+        reasoning?: string;
+      };
 
       const result: CrossLevelSimilarity = {
         theme1,
         theme2,
         levelDifference,
-        similarityScore: analysis.similarityScore,
-        relationshipType: analysis.relationshipType,
-        action: analysis.action,
-        confidence: analysis.confidence,
-        reasoning: analysis.reasoning,
+        similarityScore: analysis.similarityScore || 0.2,
+        relationshipType: analysis.relationshipType || 'distinct',
+        action: analysis.action || 'keep_separate',
+        confidence: analysis.confidence || 0.3,
+        reasoning: analysis.reasoning || 'No reasoning provided',
       };
 
       this.cache.set(cacheKey, result, 1800000); // Cache for 30 minutes
       return result;
     } catch (error) {
-      throw new Error(`AI analysis failed: ${error}`);
+      console.error(
+        `[HIERARCHICAL] AI analysis failed for ${theme1.name} vs ${theme2.name}:`,
+        error
+      );
+      console.error(`[HIERARCHICAL] Error details:`, {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        name: error instanceof Error ? error.name : undefined,
+      });
+
+      // Return conservative default on any error
+      const fallbackResult: CrossLevelSimilarity = {
+        theme1,
+        theme2,
+        levelDifference,
+        similarityScore: 0.2,
+        relationshipType: 'distinct',
+        action: 'keep_separate',
+        confidence: 0.3,
+        reasoning: `AI analysis failed: ${error}`,
+      };
+
+      this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
+      return fallbackResult;
     }
   }
 
