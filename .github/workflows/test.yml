@@ -29,6 +29,8 @@ jobs:
       id: review
       with:
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+      env:
+        SKIP_CROSS_LEVEL_DEDUP: true
     
     - name: Comment PR
       if: github.event_name == 'pull_request'
