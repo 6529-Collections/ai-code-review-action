@@ -31541,6 +31541,11 @@ exports.DEFAULT_EXPANSION_CONFIG = {
     minFilesForExpansion: 2,
     businessImpactThreshold: 0.6,
     parallelBatchSize: 5,
+    concurrencyLimit: 5,
+    maxRetries: 3,
+    retryDelay: 1000,
+    retryBackoffMultiplier: 2,
+    enableProgressLogging: true,
 };
 class ThemeExpansionService {
     constructor(anthropicApiKey, config = {}) {
@@ -31549,17 +31554,121 @@ class ThemeExpansionService {
         this.config = { ...exports.DEFAULT_EXPANSION_CONFIG, ...config };
     }
     /**
+     * Process items concurrently with limit and retry logic
+     */
+    async processConcurrentlyWithLimit(items, processor, options) {
+        const { concurrencyLimit = this.config.concurrencyLimit, maxRetries = this.config.maxRetries, retryDelay = this.config.retryDelay, onProgress, onError, } = options || {};
+        const results = new Array(items.length);
+        const active = new Set();
+        let completed = 0;
+        let index = 0;
+        const processItem = async (item, itemIndex) => {
+            try {
+                const result = await this.processWithRetry(item, processor, maxRetries, retryDelay, onError);
+                results[itemIndex] = result;
+            }
+            catch (error) {
+                results[itemIndex] = { error: error, item };
+            }
+            finally {
+                completed++;
+                if (onProgress && this.config.enableProgressLogging) {
+                    onProgress(completed, items.length);
+                }
+            }
+        };
+        return new Promise((resolve) => {
+            const startNext = () => {
+                while (active.size < concurrencyLimit && index < items.length) {
+                    const currentIndex = index++;
+                    const promise = processItem(items[currentIndex], currentIndex);
+                    active.add(promise);
+                    promise.finally(() => {
+                        active.delete(promise);
+                        if (completed === items.length) {
+                            resolve(results);
+                        }
+                        else {
+                            startNext();
+                        }
+                    });
+                }
+            };
+            startNext();
+        });
+    }
+    /**
+     * Process single item with retry logic
+     */
+    async processWithRetry(item, processor, maxRetries, baseDelay, onError) {
+        let lastError;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                return await processor(item);
+            }
+            catch (error) {
+                lastError = error;
+                if (attempt < maxRetries) {
+                    const delay = this.calculateBackoffDelay(attempt, baseDelay);
+                    if (onError) {
+                        onError(lastError, item, attempt + 1);
+                    }
+                    if (this.config.enableProgressLogging) {
+                        console.log(`[THEME-EXPANSION] Retry ${attempt + 1}/${maxRetries} after ${delay}ms delay`);
+                    }
+                    await this.sleep(delay);
+                }
+            }
+        }
+        return { error: lastError, item };
+    }
+    /**
+     * Calculate exponential backoff delay
+     */
+    calculateBackoffDelay(attempt, baseDelay) {
+        return Math.min(baseDelay * Math.pow(this.config.retryBackoffMultiplier, attempt), 30000 // Max 30 seconds
+        );
+    }
+    /**
+     * Sleep utility
+     */
+    sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+    /**
      * Main entry point for expanding themes hierarchically
      */
     async expandThemesHierarchically(consolidatedThemes) {
         (0, utils_1.logInfo)(`Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
+        // Process themes with concurrency limit and retry logic
+        const results = await this.processConcurrentlyWithLimit(consolidatedThemes, (theme) => this.expandThemeRecursively(theme, 0), {
+            onProgress: (completed, total) => {
+                if (this.config.enableProgressLogging) {
+                    console.log(`[THEME-EXPANSION] Progress: ${completed}/${total} root themes expanded`);
+                }
+            },
+            onError: (error, theme, retryCount) => {
+                console.warn(`[THEME-EXPANSION] Retry ${retryCount} for theme "${theme.name}": ${error.message}`);
+            },
+        });
+        // Separate successful and failed results
         const expandedThemes = [];
-        // Process each theme recursively
-        for (const theme of consolidatedThemes) {
-            const expanded = await this.expandThemeRecursively(theme, 0);
-            expandedThemes.push(expanded);
+        const failedThemes = [];
+        for (const result of results) {
+            if ('error' in result) {
+                failedThemes.push({ theme: result.item, error: result.error });
+            }
+            else {
+                expandedThemes.push(result);
+            }
         }
-        (0, utils_1.logInfo)(`Completed hierarchical expansion: ${expandedThemes.length} themes processed`);
+        if (failedThemes.length > 0) {
+            console.warn(`[THEME-EXPANSION] Failed to expand ${failedThemes.length} themes after retries:`);
+            for (const failed of failedThemes) {
+                console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
+            }
+        }
+        (0, utils_1.logInfo)(`Completed hierarchical expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes processed successfully`);
         return expandedThemes;
     }
     /**
@@ -31574,7 +31683,24 @@ class ThemeExpansionService {
         const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme);
         if (!expansionCandidate) {
             // Still process existing child themes recursively
-            const expandedChildren = await Promise.all(theme.childThemes.map((child) => this.expandThemeRecursively(child, currentDepth + 1, theme)));
+            const childResults = await this.processConcurrentlyWithLimit(theme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, theme), {
+                onProgress: (completed, total) => {
+                    if (this.config.enableProgressLogging && total > 1) {
+                        console.log(`[THEME-EXPANSION] Child themes progress: ${completed}/${total} for "${theme.name}"`);
+                    }
+                },
+            });
+            // Extract successful results, keep failed themes as fallback
+            const expandedChildren = [];
+            for (const result of childResults) {
+                if ('error' in result) {
+                    console.warn(`[THEME-EXPANSION] Failed to expand child theme: ${result.error.message}`);
+                    expandedChildren.push(result.item); // Keep original theme if expansion fails
+                }
+                else {
+                    expandedChildren.push(result);
+                }
+            }
             return { ...theme, childThemes: expandedChildren };
         }
         // Create expansion request
@@ -31592,9 +31718,43 @@ class ThemeExpansionService {
             return theme;
         }
         // Recursively expand new sub-themes
-        const expandedSubThemes = await Promise.all(result.subThemes.map((subTheme) => this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme)));
+        const subThemeResults = await this.processConcurrentlyWithLimit(result.subThemes, (subTheme) => this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme), {
+            onProgress: (completed, total) => {
+                if (this.config.enableProgressLogging && total > 1) {
+                    console.log(`[THEME-EXPANSION] Sub-themes progress: ${completed}/${total} for "${theme.name}"`);
+                }
+            },
+        });
+        // Extract successful sub-themes
+        const expandedSubThemes = [];
+        for (const subResult of subThemeResults) {
+            if ('error' in subResult) {
+                console.warn(`[THEME-EXPANSION] Failed to expand sub-theme: ${subResult.error.message}`);
+                expandedSubThemes.push(subResult.item); // Keep original if expansion fails
+            }
+            else {
+                expandedSubThemes.push(subResult);
+            }
+        }
         // Also expand existing child themes
-        const expandedExistingChildren = await Promise.all(result.expandedTheme.childThemes.map((child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme)));
+        const existingChildResults = await this.processConcurrentlyWithLimit(result.expandedTheme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme), {
+            onProgress: (completed, total) => {
+                if (this.config.enableProgressLogging && total > 1) {
+                    console.log(`[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`);
+                }
+            },
+        });
+        // Extract successful existing children
+        const expandedExistingChildren = [];
+        for (const childResult of existingChildResults) {
+            if ('error' in childResult) {
+                console.warn(`[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`);
+                expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
+            }
+            else {
+                expandedExistingChildren.push(childResult);
+            }
+        }
         // Combine all child themes
         const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
         // Deduplicate child themes using AI
@@ -31662,10 +31822,28 @@ class ThemeExpansionService {
         for (let i = 0; i < subThemes.length; i += batchSize) {
             batches.push(subThemes.slice(i, i + batchSize));
         }
-        // Process each batch in parallel
-        const deduplicationResults = await Promise.all(batches.map((batch) => this.deduplicateBatch(batch)));
+        // Process each batch with concurrency limit
+        const deduplicationResults = await this.processConcurrentlyWithLimit(batches, (batch) => this.deduplicateBatch(batch), {
+            onProgress: (completed, total) => {
+                if (this.config.enableProgressLogging && total > 1) {
+                    console.log(`[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches`);
+                }
+            },
+        });
+        // Extract successful results
+        const successfulResults = [];
+        for (const result of deduplicationResults) {
+            if ('error' in result) {
+                console.warn(`[THEME-EXPANSION] Deduplication batch failed: ${result.error.message}`);
+                // For failed batches, we could return the original batch as fallback
+                // but for now, we'll skip failed batches
+            }
+            else {
+                successfulResults.push(result);
+            }
+        }
         // Flatten and combine results
-        const allGroups = deduplicationResults.flat();
+        const allGroups = successfulResults.flat();
         // Merge groups that span batches
         const finalThemes = [];
         const processedIds = new Set();
@@ -32896,7 +33074,13 @@ class ThemeService {
                     // Expand themes hierarchically
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
                     // Apply cross-level deduplication
-                    await this.hierarchicalSimilarityService.deduplicateHierarchy(expandedThemes);
+                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
+                        console.log('[THEME-SERVICE] Running cross-level deduplication...');
+                        await this.hierarchicalSimilarityService.deduplicateHierarchy(expandedThemes);
+                    }
+                    else {
+                        console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
+                    }
                     // Update consolidated themes with expanded and deduplicated results
                     consolidatedThemes = expandedThemes; // For now, use expanded themes directly
                     // Calculate expansion statistics

@@ -760,7 +760,9 @@ export class ThemeService {
               expandedThemes
             );
           } else {
-            console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
+            console.log(
+              '[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)'
+            );
           }
 
           // Update consolidated themes with expanded and deduplicated results
