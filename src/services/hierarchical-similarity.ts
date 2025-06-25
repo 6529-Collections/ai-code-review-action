@@ -207,7 +207,7 @@ export class HierarchicalSimilarityService {
 
     // Don't compare themes that are too far apart in the hierarchy
     const levelDifference = Math.abs(theme1.level - theme2.level);
-    if (levelDifference > 2) {
+    if (levelDifference > 1) {
       return false;
     }
 
