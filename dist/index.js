@@ -30737,6 +30737,16 @@ class GitService {
     }
     constructor(githubToken) {
         this.githubToken = githubToken;
+        this.octokit = null;
+        // Initialize GitHub API client if token is available
+        if (this.githubToken) {
+            try {
+                this.octokit = github.getOctokit(this.githubToken);
+            }
+            catch (error) {
+                console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
+            }
+        }
     }
     async getEnhancedChangedFiles() {
         console.log('[GIT-SERVICE] Getting enhanced changed files with code analysis');
@@ -30761,6 +30771,7 @@ class GitService {
         if (github.context.eventName === 'pull_request') {
             const pr = github.context.payload.pull_request;
             if (pr) {
+                console.log(`[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`);
                 return {
                     number: pr.number,
                     title: pr.title,
@@ -30772,8 +30783,49 @@ class GitService {
                 };
             }
         }
-        // Dev mode: create synthetic PR context from local git
+        // Dev mode: First try to find existing PR for current branch
+        const currentBranch = await this.getCurrentBranch();
+        const existingPR = await this.getPullRequestForBranch(currentBranch);
+        if (existingPR) {
+            console.log(`[GIT-SERVICE] Using existing PR #${existingPR.number} context for local testing`);
+            return existingPR;
+        }
+        // Fallback: create synthetic PR context from local git
+        console.log('[GIT-SERVICE] No PR found, using branch comparison mode');
         return await this.createDevModeContext();
+    }
+    async getPullRequestForBranch(branchName) {
+        if (!this.octokit) {
+            console.log('[GIT-SERVICE] No GitHub token available, cannot check for existing PR');
+            return null;
+        }
+        try {
+            console.log(`[GIT-SERVICE] Checking for open PR for branch: ${branchName}`);
+            const { data: pulls } = await this.octokit.rest.pulls.list({
+                ...github.context.repo,
+                head: `${github.context.repo.owner}:${branchName}`,
+                state: 'open',
+            });
+            if (pulls.length > 0) {
+                const pr = pulls[0]; // Take the first matching PR
+                console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${branchName}`);
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+            console.log(`[GIT-SERVICE] No open PR found for branch ${branchName}`);
+            return null;
+        }
+        catch (error) {
+            console.warn(`[GIT-SERVICE] Failed to check for PR on branch ${branchName}:`, error);
+            return null;
+        }
     }
     async createDevModeContext() {
         try {
@@ -30848,15 +30900,21 @@ class GitService {
         }
         console.log(`[GIT-DEBUG] PR Context: number=${prContext.number}, event=${github.context.eventName}, hasToken=${!!this.githubToken}`);
         console.log(`[GIT-DEBUG] baseBranch=${prContext.baseBranch}, headBranch=${prContext.headBranch}`);
-        // Always use git commands for accurate branch comparison
-        // GitHub API only shows files in PR commits, not full branch diff
-        console.log(`[GIT-DEBUG] Using git commands method for accurate branch comparison`);
+        // Use GitHub API for real PRs (in GitHub Actions or when PR found locally)
+        if (prContext.number > 0 && this.octokit) {
+            console.log(`[GIT-DEBUG] Using GitHub API for PR #${prContext.number} (exact same as live)`);
+            return await this.getChangedFilesFromGitHub(prContext.number);
+        }
+        // Fallback to git commands for synthetic dev mode (no PR)
+        console.log(`[GIT-DEBUG] Using git commands method for branch comparison`);
         return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
     }
     async getChangedFilesFromGitHub(prNumber) {
         try {
-            const octokit = github.getOctokit(this.githubToken);
-            const { data: files } = await octokit.rest.pulls.listFiles({
+            if (!this.octokit) {
+                throw new Error('GitHub API client not initialized');
+            }
+            const { data: files } = await this.octokit.rest.pulls.listFiles({
                 ...github.context.repo,
                 pull_number: prNumber,
             });
@@ -30869,7 +30927,7 @@ class GitService {
                 deletions: file.deletions,
                 patch: file.patch,
             }));
-            console.log(`[GIT-SERVICE] Filtered ${files.length} files down to ${changedFiles.length} for analysis`);
+            console.log(`[GIT-SERVICE] GitHub API: Filtered ${files.length} files down to ${changedFiles.length} for analysis`);
             return changedFiles;
         }
         catch (error) {
