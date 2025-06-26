@@ -1,6 +1,6 @@
 import { ChangedFile } from './git-service';
 import { ConsolidatedTheme, ConsolidationConfig } from '../types/similarity-types';
-import { CodeChange, SmartContext } from '../utils/code-analyzer';
+import { CodeChange, SmartContext } from '../utils/ai-code-analyzer';
 export interface Theme {
     id: string;
     name: string;

@@ -10,7 +10,11 @@ import {
   ConsolidatedTheme,
   ConsolidationConfig,
 } from '../types/similarity-types';
-import { CodeAnalyzer, CodeChange, SmartContext } from '../utils/code-analyzer';
+import {
+  AICodeAnalyzer,
+  CodeChange,
+  SmartContext,
+} from '../utils/ai-code-analyzer';
 import { JsonExtractor } from '../utils/json-extractor';
 import { ConcurrencyManager } from '../utils/concurrency-manager';
 
@@ -135,7 +139,7 @@ export interface ThemeAnalysisResult {
 }
 
 class ClaudeService {
-  constructor(private readonly apiKey: string) {}
+  constructor(private readonly _apiKey: string) {}
 
   async analyzeChunk(
     chunk: CodeChunk,
@@ -184,7 +188,7 @@ class ClaudeService {
     }
   }
 
-  private buildEnhancedAnalysisPrompt(
+  private _buildEnhancedAnalysisPrompt(
     chunk: CodeChunk,
     context: string,
     codeChange?: CodeChange,
@@ -537,6 +541,8 @@ class ThemeContextManager {
             removedImports: [],
             newClasses: [],
             modifiedClasses: [],
+            architecturalPatterns: [],
+            businessDomains: [],
           },
           contextSummary: `Single chunk: ${chunk.filename}`,
           significantChanges: [],
@@ -645,10 +651,11 @@ export class ThemeService {
       `[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`
     );
 
-    // Analyze the code changes to build smart context
-    const smartContext = CodeAnalyzer.analyzeCodeChanges(codeChanges);
+    // Analyze the code changes to build smart context with AI
+    const aiAnalyzer = new AICodeAnalyzer(this.anthropicApiKey);
+    const smartContext = await aiAnalyzer.analyzeCodeChanges(codeChanges);
     console.log(
-      `[THEME-SERVICE] Smart context: ${smartContext.contextSummary}`
+      `[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`
     );
 
     // Convert to the legacy format temporarily while we transition
@@ -660,12 +667,7 @@ export class ThemeService {
       patch: change.diffHunk,
     }));
 
-    return this.analyzeThemesInternal(
-      changedFiles,
-      codeChanges,
-      smartContext,
-      startTime
-    );
+    return this.analyzeThemesInternal(changedFiles, [], null, startTime);
   }
 
   async analyzeThemes(
@@ -678,8 +680,8 @@ export class ThemeService {
 
   private async analyzeThemesInternal(
     changedFiles: ChangedFile[],
-    codeChanges: CodeChange[],
-    smartContext: SmartContext | null,
+    _codeChanges: CodeChange[],
+    _smartContext: SmartContext | null,
     startTime: number
   ): Promise<ThemeAnalysisResult> {
     const analysisResult: ThemeAnalysisResult = {
@@ -934,6 +936,8 @@ export class ThemeService {
             removedImports: [],
             newClasses: [],
             modifiedClasses: [],
+            architecturalPatterns: [],
+            businessDomains: [],
           },
           contextSummary: `Fallback analysis: ${changedFiles.length} files changed`,
           significantChanges: [

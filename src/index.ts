@@ -32,8 +32,8 @@ export async function run(): Promise<void> {
 
     logInfo('Starting AI code review analysis...');
 
-    // Initialize services
-    const gitService = new GitService(inputs.githubToken || '');
+    // Initialize services with AI code analysis
+    const gitService = new GitService(inputs.githubToken || '', inputs.anthropicApiKey);
     const themeService = new ThemeService(inputs.anthropicApiKey);
 
     // Get PR context and changed files

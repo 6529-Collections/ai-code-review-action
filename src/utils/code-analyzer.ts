@@ -1,3 +1,5 @@
+// DEPRECATED: Use AICodeAnalyzer instead
+// This interface is kept for backwards compatibility during migration
 export interface CodeChange {
   file: string;
   diffHunk: string;
@@ -5,17 +7,25 @@ export interface CodeChange {
   linesAdded: number;
   linesRemoved: number;
 
-  // Algorithmic extractions
+  // Algorithmic extractions (deprecated - now AI-powered)
   functionsChanged: string[];
   classesChanged: string[];
   importsChanged: string[];
   fileType: string;
   isTestFile: boolean;
   isConfigFile: boolean;
+
+  // New AI-enhanced fields (optional for backwards compatibility)
+  architecturalPatterns?: string[];
+  businessDomain?: string;
+  codeComplexity?: 'low' | 'medium' | 'high';
+  semanticDescription?: string;
 }
 
+// DEPRECATED: Use AICodeAnalyzer's SmartContext instead
+// This interface is kept for backwards compatibility during migration
 export interface SmartContext {
-  // Algorithmic facts
+  // File metrics (now AI-enhanced)
   fileMetrics: {
     totalFiles: number;
     fileTypes: string[];
@@ -24,7 +34,7 @@ export interface SmartContext {
     codeComplexity: 'low' | 'medium' | 'high';
   };
 
-  // Algorithmic patterns
+  // Change patterns (now AI-enhanced)
   changePatterns: {
     newFunctions: string[];
     modifiedFunctions: string[];
@@ -32,6 +42,9 @@ export interface SmartContext {
     removedImports: string[];
     newClasses: string[];
     modifiedClasses: string[];
+    // New AI-enhanced fields (optional for backwards compatibility)
+    architecturalPatterns?: string[];
+    businessDomains?: string[];
   };
 
   // Raw data for AI
@@ -39,6 +52,8 @@ export interface SmartContext {
   significantChanges: string[];
 }
 
+// DEPRECATED: Use AICodeAnalyzer instead
+// This class is kept for backwards compatibility during migration
 export class CodeAnalyzer {
   private static readonly FUNCTION_PATTERNS = [
     /(?:^|\n)[-+]\s*(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
