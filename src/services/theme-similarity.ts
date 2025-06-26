@@ -11,6 +11,7 @@ import { AISimilarityService } from './ai-similarity';
 import { BatchProcessor } from './batch-processor';
 import { BusinessDomainService } from './business-domain';
 import { ThemeNamingService } from './theme-naming';
+import { ConcurrencyManager } from '../utils/concurrency-manager';
 
 export class ThemeSimilarityService {
   private config: ConsolidationConfig;
@@ -206,57 +207,63 @@ export class ThemeSimilarityService {
     pairs: ThemePair[]
   ): Promise<Map<string, SimilarityMetrics>> {
     const similarities = new Map<string, SimilarityMetrics>();
-    const CONCURRENT_BATCH_SIZE = 10; // Process 10 similarities concurrently
 
     console.log(
-      `[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of ${CONCURRENT_BATCH_SIZE}`
+      `[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of 10`
     );
 
-    // Process in concurrent batches
-    for (let i = 0; i < pairs.length; i += CONCURRENT_BATCH_SIZE) {
-      const batch = pairs.slice(i, i + CONCURRENT_BATCH_SIZE);
-      const batchPromises = batch.map(async (pair) => {
-        try {
-          const similarity = await this.calculateSimilarity(
-            pair.theme1,
-            pair.theme2
+    // Process all pairs concurrently with controlled parallelism
+    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
+      pairs,
+      async (pair) => {
+        const similarity = await this.calculateSimilarity(
+          pair.theme1,
+          pair.theme2
+        );
+        return { id: pair.id, similarity };
+      },
+      {
+        concurrencyLimit: 10,
+        maxRetries: 3,
+        enableLogging: true,
+        onProgress: (completed, total) => {
+          console.log(
+            `[SIMILARITY] Progress: ${completed}/${total} pairs processed`
           );
-          return { id: pair.id, similarity, success: true };
-        } catch (error) {
+        },
+        onError: (error, pair, retryCount) => {
           console.warn(
-            `[SIMILARITY] Failed to process pair ${pair.id}:`,
-            error
+            `[SIMILARITY] Retry ${retryCount} for pair ${pair.id}: ${error.message}`
           );
-          // Use non-match result for failed comparisons
-          return {
-            id: pair.id,
-            similarity: {
-              combinedScore: 0,
-              nameScore: 0,
-              descriptionScore: 0,
-              fileOverlap: 0,
-              patternScore: 0,
-              businessScore: 0,
-            },
-            success: false,
-          };
-        }
-      });
+        },
+      }
+    );
 
-      const batchResults = await Promise.all(batchPromises);
+    // Store successful results
+    let successCount = 0;
+    let failedCount = 0;
 
-      // Store results
-      for (const result of batchResults) {
+    for (const result of results) {
+      if (result && typeof result === 'object' && 'error' in result) {
+        failedCount++;
+        // Use non-match result for failed comparisons
+        similarities.set(result.item.id, {
+          combinedScore: 0,
+          nameScore: 0,
+          descriptionScore: 0,
+          fileOverlap: 0,
+          patternScore: 0,
+          businessScore: 0,
+        });
+      } else {
+        successCount++;
         similarities.set(result.id, result.similarity);
       }
-
-      const successCount = batchResults.filter((r) => r.success).length;
-      console.log(
-        `[SIMILARITY] Batch ${Math.floor(i / CONCURRENT_BATCH_SIZE) + 1}/${Math.ceil(pairs.length / CONCURRENT_BATCH_SIZE)} completed: ${successCount}/${batch.length} successful`
-      );
     }
 
-    console.log(`[SIMILARITY] Processed ${similarities.size} pairs`);
+    console.log(
+      `[SIMILARITY] Completed: ${successCount} successful, ${failedCount} failed`
+    );
     return similarities;
   }
 

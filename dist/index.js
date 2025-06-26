@@ -30512,16 +30512,45 @@ const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
 const os = __importStar(__nccwpck_require__(857));
+const concurrency_manager_1 = __nccwpck_require__(8692);
 class BusinessDomainService {
     async groupByBusinessDomain(themes) {
         const domains = new Map();
-        for (const theme of themes) {
-            const domain = await this.extractBusinessDomain(theme.name, theme.description);
-            console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
-            if (!domains.has(domain)) {
-                domains.set(domain, []);
+        console.log(`[DOMAIN] Extracting business domains for ${themes.length} themes`);
+        // Extract domains concurrently
+        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(themes, async (theme) => ({
+            theme,
+            domain: await this.extractBusinessDomain(theme.name, theme.description),
+        }), {
+            concurrencyLimit: 5, // Lower limit for domain extraction
+            maxRetries: 3,
+            enableLogging: true,
+            onProgress: (completed, total) => {
+                console.log(`[DOMAIN] Domain extraction progress: ${completed}/${total} themes`);
+            },
+            onError: (error, theme, retryCount) => {
+                console.warn(`[DOMAIN] Retry ${retryCount} for theme "${theme.name}": ${error.message}`);
+            },
+        });
+        // Group results by domain
+        for (const result of results) {
+            if (result && typeof result === 'object' && 'error' in result) {
+                // Use fallback domain for failed extractions
+                const fallbackDomain = this.extractBusinessDomainFallback(result.item.name, result.item.description);
+                console.warn(`[DOMAIN] Using fallback domain "${fallbackDomain}" for "${result.item.name}"`);
+                if (!domains.has(fallbackDomain)) {
+                    domains.set(fallbackDomain, []);
+                }
+                domains.get(fallbackDomain).push(result.item);
             }
-            domains.get(domain).push(theme);
+            else {
+                const { theme, domain } = result;
+                console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
+                if (!domains.has(domain)) {
+                    domains.set(domain, []);
+                }
+                domains.get(domain).push(theme);
+            }
         }
         return domains;
     }
@@ -31175,6 +31204,7 @@ const generic_cache_1 = __nccwpck_require__(9267);
 const claude_client_1 = __nccwpck_require__(3831);
 const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
+const concurrency_manager_1 = __nccwpck_require__(8692);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
  * Handles cross-level duplicate detection and hierarchy optimization
@@ -31212,14 +31242,38 @@ class HierarchicalSimilarityService {
         if (comparisons.length > 100) {
             (0, utils_1.logInfo)(`WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`);
         }
-        // Process comparisons directly
-        console.log(`[HIERARCHICAL] Starting ${comparisons.length} parallel Claude API calls`);
-        const results = await Promise.all(comparisons.map((comparison, index) => {
-            console.log(`[HIERARCHICAL] Starting comparison ${index + 1}/${comparisons.length}`);
-            return this.analyzeCrossLevelSimilarityPair(comparison);
-        }));
-        (0, utils_1.logInfo)(`Completed cross-level similarity analysis: ${results.length} results`);
-        return results;
+        // Process comparisons with controlled concurrency
+        console.log(`[HIERARCHICAL] Starting ${comparisons.length} Claude API calls with concurrency limit of 10`);
+        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(comparisons, async (comparison) => {
+            return await this.analyzeCrossLevelSimilarityPair(comparison);
+        }, {
+            concurrencyLimit: 10,
+            maxRetries: 5,
+            enableLogging: true,
+            onProgress: (completed, total) => {
+                console.log(`[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`);
+            },
+            onError: (error, comparison, retryCount) => {
+                console.warn(`[HIERARCHICAL] Retry ${retryCount} for comparison ${comparison.id}: ${error.message}`);
+            },
+        });
+        // Extract successful results
+        const successfulResults = [];
+        let failedCount = 0;
+        for (const result of results) {
+            if (result && typeof result === 'object' && 'error' in result) {
+                failedCount++;
+                console.warn(`[HIERARCHICAL] Failed comparison after all retries: ${result.item.id}`);
+            }
+            else {
+                successfulResults.push(result);
+            }
+        }
+        if (failedCount > 0) {
+            console.warn(`[HIERARCHICAL] ${failedCount}/${comparisons.length} comparisons failed after retries`);
+        }
+        (0, utils_1.logInfo)(`Completed cross-level similarity analysis: ${successfulResults.length} successful results`);
+        return successfulResults;
     }
     /**
      * Deduplicate themes across hierarchy levels
@@ -32591,9 +32645,9 @@ const json_extractor_1 = __nccwpck_require__(2642);
 const concurrency_manager_1 = __nccwpck_require__(8692);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
-    BATCH_SIZE: 10,
+    CONCURRENCY_LIMIT: 10,
     CHUNK_TIMEOUT: 120000, // 2 minutes
-    MAX_RETRIES: 3,
+    MAX_RETRIES: 5,
 };
 class ClaudeService {
     constructor(_apiKey) {
@@ -32943,27 +32997,6 @@ class ThemeContextManager {
         this.context.processingState = state;
     }
 }
-// Legacy batch processing - use ConcurrencyManager.processConcurrentlyWithLimit instead
-async function processBatches(items, batchSize, processor) {
-    console.warn('[THEME-SERVICE] Using legacy processBatches - consider migrating to ConcurrencyManager');
-    const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(items, processor, {
-        concurrencyLimit: batchSize,
-        maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-        enableLogging: true,
-    });
-    // Extract successful results and log failures
-    const successful = [];
-    for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        if (result && typeof result === 'object' && 'error' in result) {
-            console.warn(`Batch item ${i} failed:`, result.error.message);
-        }
-        else {
-            successful.push(result);
-        }
-    }
-    return successful;
-}
 class ThemeService {
     constructor(anthropicApiKey, consolidationConfig) {
         this.anthropicApiKey = anthropicApiKey;
@@ -33030,7 +33063,44 @@ class ThemeService {
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
             // Parallel processing: analyze all chunks concurrently, then update context sequentially
-            const analysisResults = await processBatches(chunks, PARALLEL_CONFIG.BATCH_SIZE, (chunk) => contextManager.analyzeChunkOnly(chunk));
+            console.log(`[THEME-SERVICE] Starting concurrent analysis of ${chunks.length} chunks`);
+            const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(chunks, (chunk) => contextManager.analyzeChunkOnly(chunk), {
+                concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
+                maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
+                enableLogging: true,
+                onProgress: (completed, total) => {
+                    console.log(`[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`);
+                },
+                onError: (error, chunk, retryCount) => {
+                    console.warn(`[THEME-SERVICE] Retry ${retryCount} for chunk ${chunk.filename}: ${error.message}`);
+                },
+            });
+            // Transform results to handle ConcurrencyManager's mixed return types
+            const analysisResults = [];
+            for (let i = 0; i < results.length; i++) {
+                const result = results[i];
+                if (result && typeof result === 'object' && 'error' in result) {
+                    // Convert ConcurrencyManager error format to ChunkAnalysisResult format
+                    const errorResult = result;
+                    console.warn(`[THEME-SERVICE] Chunk analysis failed for ${errorResult.item.filename}: ${errorResult.error.message}`);
+                    analysisResults.push({
+                        chunk: errorResult.item,
+                        analysis: {
+                            themeName: `Changes in ${errorResult.item.filename}`,
+                            description: 'Analysis failed - using fallback',
+                            businessImpact: 'Unknown impact',
+                            confidence: 0.3,
+                            codePattern: 'File modification',
+                            suggestedParent: undefined,
+                        },
+                        error: errorResult.error.message,
+                    });
+                }
+                else {
+                    analysisResults.push(result);
+                }
+            }
+            console.log(`[THEME-SERVICE] Analysis completed: ${analysisResults.length} chunks processed`);
             // Sequential context updates to maintain thread safety
             contextManager.processBatchResults(analysisResults);
             contextManager.setProcessingState('complete');
@@ -33213,6 +33283,7 @@ const ai_similarity_1 = __nccwpck_require__(270);
 const batch_processor_1 = __nccwpck_require__(325);
 const business_domain_1 = __nccwpck_require__(8133);
 const theme_naming_1 = __nccwpck_require__(9018);
+const concurrency_manager_1 = __nccwpck_require__(8692);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.pendingCalculations = new Map();
@@ -33336,42 +33407,44 @@ class ThemeSimilarityService {
     }
     async calculateBatchSimilarities(pairs) {
         const similarities = new Map();
-        const CONCURRENT_BATCH_SIZE = 10; // Process 10 similarities concurrently
-        console.log(`[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of ${CONCURRENT_BATCH_SIZE}`);
-        // Process in concurrent batches
-        for (let i = 0; i < pairs.length; i += CONCURRENT_BATCH_SIZE) {
-            const batch = pairs.slice(i, i + CONCURRENT_BATCH_SIZE);
-            const batchPromises = batch.map(async (pair) => {
-                try {
-                    const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
-                    return { id: pair.id, similarity, success: true };
-                }
-                catch (error) {
-                    console.warn(`[SIMILARITY] Failed to process pair ${pair.id}:`, error);
-                    // Use non-match result for failed comparisons
-                    return {
-                        id: pair.id,
-                        similarity: {
-                            combinedScore: 0,
-                            nameScore: 0,
-                            descriptionScore: 0,
-                            fileOverlap: 0,
-                            patternScore: 0,
-                            businessScore: 0,
-                        },
-                        success: false,
-                    };
-                }
-            });
-            const batchResults = await Promise.all(batchPromises);
-            // Store results
-            for (const result of batchResults) {
+        console.log(`[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of 10`);
+        // Process all pairs concurrently with controlled parallelism
+        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(pairs, async (pair) => {
+            const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
+            return { id: pair.id, similarity };
+        }, {
+            concurrencyLimit: 10,
+            maxRetries: 3,
+            enableLogging: true,
+            onProgress: (completed, total) => {
+                console.log(`[SIMILARITY] Progress: ${completed}/${total} pairs processed`);
+            },
+            onError: (error, pair, retryCount) => {
+                console.warn(`[SIMILARITY] Retry ${retryCount} for pair ${pair.id}: ${error.message}`);
+            },
+        });
+        // Store successful results
+        let successCount = 0;
+        let failedCount = 0;
+        for (const result of results) {
+            if (result && typeof result === 'object' && 'error' in result) {
+                failedCount++;
+                // Use non-match result for failed comparisons
+                similarities.set(result.item.id, {
+                    combinedScore: 0,
+                    nameScore: 0,
+                    descriptionScore: 0,
+                    fileOverlap: 0,
+                    patternScore: 0,
+                    businessScore: 0,
+                });
+            }
+            else {
+                successCount++;
                 similarities.set(result.id, result.similarity);
             }
-            const successCount = batchResults.filter((r) => r.success).length;
-            console.log(`[SIMILARITY] Batch ${Math.floor(i / CONCURRENT_BATCH_SIZE) + 1}/${Math.ceil(pairs.length / CONCURRENT_BATCH_SIZE)} completed: ${successCount}/${batch.length} successful`);
         }
-        console.log(`[SIMILARITY] Processed ${similarities.size} pairs`);
+        console.log(`[SIMILARITY] Completed: ${successCount} successful, ${failedCount} failed`);
         return similarities;
     }
     buildMergeGroupsFromSimilarities(themes, similarities) {

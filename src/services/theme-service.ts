@@ -20,9 +20,9 @@ import { ConcurrencyManager } from '../utils/concurrency-manager';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
-  BATCH_SIZE: 10,
+  CONCURRENCY_LIMIT: 10,
   CHUNK_TIMEOUT: 120000, // 2 minutes
-  MAX_RETRIES: 3,
+  MAX_RETRIES: 5,
 } as const;
 
 export interface Theme {
@@ -580,40 +580,6 @@ class ThemeContextManager {
   }
 }
 
-// Legacy batch processing - use ConcurrencyManager.processConcurrentlyWithLimit instead
-async function processBatches<T, R>(
-  items: T[],
-  batchSize: number,
-  processor: (item: T) => Promise<R>
-): Promise<R[]> {
-  console.warn(
-    '[THEME-SERVICE] Using legacy processBatches - consider migrating to ConcurrencyManager'
-  );
-
-  const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-    items,
-    processor,
-    {
-      concurrencyLimit: batchSize,
-      maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-      enableLogging: true,
-    }
-  );
-
-  // Extract successful results and log failures
-  const successful: R[] = [];
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    if (result && typeof result === 'object' && 'error' in result) {
-      console.warn(`Batch item ${i} failed:`, result.error.message);
-    } else {
-      successful.push(result as R);
-    }
-  }
-
-  return successful;
-}
-
 export class ThemeService {
   private similarityService: ThemeSimilarityService;
   private expansionService: ThemeExpansionService;
@@ -719,10 +685,59 @@ export class ThemeService {
       const chunks = chunkProcessor.splitChangedFiles(changedFiles);
 
       // Parallel processing: analyze all chunks concurrently, then update context sequentially
-      const analysisResults = await processBatches(
+      console.log(
+        `[THEME-SERVICE] Starting concurrent analysis of ${chunks.length} chunks`
+      );
+
+      const results = await ConcurrencyManager.processConcurrentlyWithLimit(
         chunks,
-        PARALLEL_CONFIG.BATCH_SIZE,
-        (chunk) => contextManager.analyzeChunkOnly(chunk)
+        (chunk) => contextManager.analyzeChunkOnly(chunk),
+        {
+          concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
+          maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
+          enableLogging: true,
+          onProgress: (completed, total) => {
+            console.log(
+              `[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`
+            );
+          },
+          onError: (error, chunk, retryCount) => {
+            console.warn(
+              `[THEME-SERVICE] Retry ${retryCount} for chunk ${chunk.filename}: ${error.message}`
+            );
+          },
+        }
+      );
+
+      // Transform results to handle ConcurrencyManager's mixed return types
+      const analysisResults: ChunkAnalysisResult[] = [];
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result && typeof result === 'object' && 'error' in result) {
+          // Convert ConcurrencyManager error format to ChunkAnalysisResult format
+          const errorResult = result as { error: Error; item: CodeChunk };
+          console.warn(
+            `[THEME-SERVICE] Chunk analysis failed for ${errorResult.item.filename}: ${errorResult.error.message}`
+          );
+          analysisResults.push({
+            chunk: errorResult.item,
+            analysis: {
+              themeName: `Changes in ${errorResult.item.filename}`,
+              description: 'Analysis failed - using fallback',
+              businessImpact: 'Unknown impact',
+              confidence: 0.3,
+              codePattern: 'File modification',
+              suggestedParent: undefined,
+            },
+            error: errorResult.error.message,
+          });
+        } else {
+          analysisResults.push(result as ChunkAnalysisResult);
+        }
+      }
+
+      console.log(
+        `[THEME-SERVICE] Analysis completed: ${analysisResults.length} chunks processed`
       );
 
       // Sequential context updates to maintain thread safety

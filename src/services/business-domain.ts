@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { ConcurrencyManager } from '../utils/concurrency-manager';
 
 export class BusinessDomainService {
   async groupByBusinessDomain(
@@ -11,17 +12,59 @@ export class BusinessDomainService {
   ): Promise<Map<string, ConsolidatedTheme[]>> {
     const domains = new Map<string, ConsolidatedTheme[]>();
 
-    for (const theme of themes) {
-      const domain = await this.extractBusinessDomain(
-        theme.name,
-        theme.description
-      );
-      console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
+    console.log(
+      `[DOMAIN] Extracting business domains for ${themes.length} themes`
+    );
 
-      if (!domains.has(domain)) {
-        domains.set(domain, []);
+    // Extract domains concurrently
+    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
+      themes,
+      async (theme) => ({
+        theme,
+        domain: await this.extractBusinessDomain(theme.name, theme.description),
+      }),
+      {
+        concurrencyLimit: 5, // Lower limit for domain extraction
+        maxRetries: 3,
+        enableLogging: true,
+        onProgress: (completed, total) => {
+          console.log(
+            `[DOMAIN] Domain extraction progress: ${completed}/${total} themes`
+          );
+        },
+        onError: (error, theme, retryCount) => {
+          console.warn(
+            `[DOMAIN] Retry ${retryCount} for theme "${theme.name}": ${error.message}`
+          );
+        },
       }
-      domains.get(domain)!.push(theme);
+    );
+
+    // Group results by domain
+    for (const result of results) {
+      if (result && typeof result === 'object' && 'error' in result) {
+        // Use fallback domain for failed extractions
+        const fallbackDomain = this.extractBusinessDomainFallback(
+          result.item.name,
+          result.item.description
+        );
+        console.warn(
+          `[DOMAIN] Using fallback domain "${fallbackDomain}" for "${result.item.name}"`
+        );
+
+        if (!domains.has(fallbackDomain)) {
+          domains.set(fallbackDomain, []);
+        }
+        domains.get(fallbackDomain)!.push(result.item);
+      } else {
+        const { theme, domain } = result;
+        console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
+
+        if (!domains.has(domain)) {
+          domains.set(domain, []);
+        }
+        domains.get(domain)!.push(theme);
+      }
     }
 
     return domains;
