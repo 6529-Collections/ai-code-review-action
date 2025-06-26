@@ -1,4 +1,4 @@
-import { CodeChange } from '../utils/code-analyzer';
+import { CodeChange } from '../utils/ai-code-analyzer';
 export interface ChangedFile {
     filename: string;
     status: 'added' | 'modified' | 'removed' | 'renamed';
@@ -19,8 +19,9 @@ export declare class GitService {
     private readonly githubToken;
     private static readonly EXCLUDED_PATTERNS;
     private octokit;
+    private aiAnalyzer;
     private shouldIncludeFile;
-    constructor(githubToken: string);
+    constructor(githubToken: string, anthropicApiKey?: string);
     getEnhancedChangedFiles(): Promise<CodeChange[]>;
     getPullRequestContext(): Promise<PullRequestContext | null>;
     private getPullRequestForBranch;

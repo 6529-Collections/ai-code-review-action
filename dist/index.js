@@ -29983,8 +29983,8 @@ async function run() {
         await exec.exec('bash', ['-c', `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`]);
         (0, utils_1.logInfo)('Claude CLI configuration initialized');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
-        // Initialize services
-        const gitService = new git_service_1.GitService(inputs.githubToken || '');
+        // Initialize services with AI code analysis
+        const gitService = new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
         // Get PR context and changed files
         const prContext = await gitService.getPullRequestContext();
@@ -30774,14 +30774,14 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GitService = void 0;
 const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
-const code_analyzer_1 = __nccwpck_require__(4579);
+const ai_code_analyzer_1 = __nccwpck_require__(9840);
 class GitService {
     shouldIncludeFile(filename) {
         const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
         console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
         return !isExcluded;
     }
-    constructor(githubToken) {
+    constructor(githubToken, anthropicApiKey) {
         this.githubToken = githubToken;
         this.octokit = null;
         // Initialize GitHub API client if token is available
@@ -30793,23 +30793,38 @@ class GitService {
                 console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
             }
         }
+        // Initialize AI analyzer - use environment variable if not provided
+        const apiKey = anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+        if (!apiKey) {
+            throw new Error('[GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
+        }
+        this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(apiKey);
     }
     async getEnhancedChangedFiles() {
-        console.log('[GIT-SERVICE] Getting enhanced changed files with code analysis');
+        console.log('[GIT-SERVICE] Getting enhanced changed files with AI code analysis');
         // Get basic changed files first
         const changedFiles = await this.getChangedFiles();
-        // Convert to enhanced CodeChange objects
-        const codeChanges = [];
-        for (const file of changedFiles) {
-            console.log(`[GIT-SERVICE] Processing ${file.filename} for enhanced analysis`);
-            // Map GitHub status to our type system
-            const changeType = file.status === 'removed'
-                ? 'deleted'
-                : file.status;
-            const codeChange = code_analyzer_1.CodeAnalyzer.processChangedFile(file.filename, file.patch || '', changeType, file.additions, file.deletions);
-            codeChanges.push(codeChange);
+        if (changedFiles.length === 0) {
+            console.log('[GIT-SERVICE] No changed files to analyze');
+            return [];
         }
-        console.log(`[GIT-SERVICE] Processed ${codeChanges.length} files with enhanced context`);
+        // Prepare files for concurrent AI analysis
+        const filesToAnalyze = changedFiles.map((file) => ({
+            filename: file.filename,
+            diffPatch: file.patch || '',
+            changeType: file.status === 'removed'
+                ? 'deleted'
+                : file.status,
+            linesAdded: file.additions,
+            linesRemoved: file.deletions,
+        }));
+        console.log(`[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
+        // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+        const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
+        console.log(`[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
+        // Log cache statistics
+        const cacheStats = this.aiAnalyzer.getCacheStats();
+        console.log(`[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
         return codeChanges;
     }
     async getPullRequestContext() {
@@ -31560,9 +31575,8 @@ exports.DEFAULT_EXPANSION_CONFIG = {
     minComplexityScore: 0.7,
     minFilesForExpansion: 2,
     businessImpactThreshold: 0.6,
-    parallelBatchSize: 5,
-    concurrencyLimit: 5,
-    maxRetries: 3,
+    concurrencyLimit: 10,
+    maxRetries: 5,
     retryDelay: 1000,
     retryBackoffMultiplier: 2,
     enableProgressLogging: true,
@@ -32572,7 +32586,7 @@ const os = __importStar(__nccwpck_require__(857));
 const theme_similarity_1 = __nccwpck_require__(4189);
 const theme_expansion_1 = __nccwpck_require__(7333);
 const hierarchical_similarity_1 = __nccwpck_require__(2983);
-const code_analyzer_1 = __nccwpck_require__(4579);
+const ai_code_analyzer_1 = __nccwpck_require__(9840);
 const json_extractor_1 = __nccwpck_require__(2642);
 const concurrency_manager_1 = __nccwpck_require__(8692);
 // Concurrency configuration
@@ -32582,8 +32596,8 @@ const PARALLEL_CONFIG = {
     MAX_RETRIES: 3,
 };
 class ClaudeService {
-    constructor(apiKey) {
-        this.apiKey = apiKey;
+    constructor(_apiKey) {
+        this._apiKey = _apiKey;
     }
     async analyzeChunk(chunk, context) {
         const prompt = this.buildAnalysisPrompt(chunk, context);
@@ -32622,7 +32636,7 @@ class ClaudeService {
             }
         }
     }
-    buildEnhancedAnalysisPrompt(chunk, context, codeChange, smartContext) {
+    _buildEnhancedAnalysisPrompt(chunk, context, codeChange, smartContext) {
         // Limit content length to avoid overwhelming Claude
         const maxContentLength = 2000;
         const truncatedContent = chunk.content.length > maxContentLength
@@ -32895,6 +32909,8 @@ class ThemeContextManager {
                         removedImports: [],
                         newClasses: [],
                         modifiedClasses: [],
+                        architecturalPatterns: [],
+                        businessDomains: [],
                     },
                     contextSummary: `Single chunk: ${chunk.filename}`,
                     significantChanges: [],
@@ -32964,9 +32980,10 @@ class ThemeService {
         // Get enhanced code changes instead of basic changed files
         const codeChanges = await gitService.getEnhancedChangedFiles();
         console.log(`[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`);
-        // Analyze the code changes to build smart context
-        const smartContext = code_analyzer_1.CodeAnalyzer.analyzeCodeChanges(codeChanges);
-        console.log(`[THEME-SERVICE] Smart context: ${smartContext.contextSummary}`);
+        // Analyze the code changes to build smart context with AI
+        const aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(this.anthropicApiKey);
+        const smartContext = await aiAnalyzer.analyzeCodeChanges(codeChanges);
+        console.log(`[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`);
         // Convert to the legacy format temporarily while we transition
         const changedFiles = codeChanges.map((change) => ({
             filename: change.file,
@@ -32975,14 +32992,14 @@ class ThemeService {
             deletions: change.linesRemoved,
             patch: change.diffHunk,
         }));
-        return this.analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime);
+        return this.analyzeThemesInternal(changedFiles, [], null, startTime);
     }
     async analyzeThemes(changedFiles) {
         console.log('[THEME-SERVICE] Starting legacy theme analysis');
         const startTime = Date.now();
         return this.analyzeThemesInternal(changedFiles, [], null, startTime);
     }
-    async analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime) {
+    async analyzeThemesInternal(changedFiles, _codeChanges, _smartContext, startTime) {
         const analysisResult = {
             themes: [],
             originalThemes: [],
@@ -33164,6 +33181,8 @@ class ThemeService {
                         removedImports: [],
                         newClasses: [],
                         modifiedClasses: [],
+                        architecturalPatterns: [],
+                        businessDomains: [],
                     },
                     contextSummary: `Fallback analysis: ${changedFiles.length} files changed`,
                     significantChanges: [
@@ -33592,6 +33611,426 @@ function setOutput(name, value) {
 
 /***/ }),
 
+/***/ 9840:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AICodeAnalyzer = void 0;
+const path = __importStar(__nccwpck_require__(6928));
+const claude_client_1 = __nccwpck_require__(3831);
+const json_extractor_1 = __nccwpck_require__(2642);
+const code_analysis_cache_1 = __nccwpck_require__(8940);
+const concurrency_manager_1 = __nccwpck_require__(8692);
+/**
+ * AI-powered code analyzer that replaces regex-based analysis
+ * Uses Claude to understand code structure across all programming languages
+ */
+class AICodeAnalyzer {
+    constructor(anthropicApiKey) {
+        this.cache = new code_analysis_cache_1.CodeAnalysisCache(86400000); // 24 hour TTL
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
+    }
+    /**
+     * Analyze multiple code changes with AI and build smart context
+     * Replaces the static analyzeCodeChanges method
+     */
+    async analyzeCodeChanges(changes) {
+        console.log(`[AI-CODE-ANALYZER] Analyzing ${changes.length} code changes with AI aggregation`);
+        const fileMetrics = this.analyzeFileMetrics(changes);
+        const changePatterns = this.extractChangePatterns(changes);
+        const contextSummary = this.buildContextSummary(changes, fileMetrics, changePatterns);
+        const significantChanges = this.extractSignificantChanges(changes);
+        return {
+            fileMetrics,
+            changePatterns,
+            contextSummary,
+            significantChanges,
+        };
+    }
+    /**
+     * Process a single changed file with AI analysis
+     * Replaces the static processChangedFile method
+     */
+    async processChangedFile(filename, diffPatch, changeType, linesAdded, linesRemoved) {
+        console.log(`[AI-CODE-ANALYZER] Processing ${filename} (${changeType}) with AI`);
+        return await this.cache.getOrAnalyze(filename, diffPatch, async () => {
+            try {
+                const aiAnalysis = await this.analyzeWithAI(filename, diffPatch, changeType);
+                return {
+                    file: filename,
+                    diffHunk: diffPatch,
+                    changeType,
+                    linesAdded,
+                    linesRemoved,
+                    functionsChanged: aiAnalysis.functionsChanged,
+                    classesChanged: aiAnalysis.classesChanged,
+                    importsChanged: aiAnalysis.importsChanged,
+                    fileType: aiAnalysis.fileType,
+                    isTestFile: aiAnalysis.isTestFile,
+                    isConfigFile: aiAnalysis.isConfigFile,
+                    architecturalPatterns: aiAnalysis.architecturalPatterns,
+                    businessDomain: aiAnalysis.businessDomain,
+                    codeComplexity: aiAnalysis.codeComplexity,
+                    semanticDescription: aiAnalysis.semanticDescription,
+                };
+            }
+            catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                console.warn(`[AI-CODE-ANALYZER] AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`);
+                return this.createMinimalAnalysis(filename, diffPatch, changeType, linesAdded, linesRemoved);
+            }
+        });
+    }
+    /**
+     * Process multiple files concurrently using ConcurrencyManager
+     */
+    async processChangedFilesConcurrently(files) {
+        console.log(`[AI-CODE-ANALYZER] Processing ${files.length} files concurrently`);
+        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(files, async (file) => {
+            return await this.processChangedFile(file.filename, file.diffPatch, file.changeType, file.linesAdded, file.linesRemoved);
+        }, {
+            concurrencyLimit: 10,
+            maxRetries: 5,
+            enableLogging: true,
+            onProgress: (completed, total) => console.log(`[AI-CODE-ANALYZER] Progress: ${completed}/${total} files analyzed`),
+            onError: (error, item, retryCount) => console.warn(`[AI-CODE-ANALYZER] Retry ${retryCount} for ${item.filename}: ${error.message}`),
+        });
+        const { successful, failed } = concurrency_manager_1.ConcurrencyManager.separateResults(results);
+        if (failed.length > 0) {
+            console.warn(`[AI-CODE-ANALYZER] ${failed.length} files failed all retry attempts`);
+            for (const failure of failed) {
+                console.warn(`[AI-CODE-ANALYZER] Failed: ${failure.item.filename} - ${failure.error.message}`);
+            }
+        }
+        console.log(`[AI-CODE-ANALYZER] Successfully analyzed ${successful.length}/${files.length} files`);
+        return successful;
+    }
+    /**
+     * Perform AI analysis on a single file
+     */
+    async analyzeWithAI(filename, diffContent, changeType) {
+        const prompt = this.buildCodeAnalysisPrompt(filename, diffContent, changeType);
+        const response = await this.claudeClient.callClaude(prompt);
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['functionsChanged', 'classesChanged', 'importsChanged', 'fileType']);
+        if (!extractionResult.success) {
+            throw new Error(`Failed to parse AI response: ${extractionResult.error}`);
+        }
+        const data = extractionResult.data;
+        return {
+            functionsChanged: Array.isArray(data.functionsChanged)
+                ? data.functionsChanged
+                : [],
+            classesChanged: Array.isArray(data.classesChanged)
+                ? data.classesChanged
+                : [],
+            importsChanged: Array.isArray(data.importsChanged)
+                ? data.importsChanged
+                : [],
+            fileType: data.fileType || this.getFileType(filename),
+            isTestFile: data.isTestFile ?? this.isTestFile(filename),
+            isConfigFile: data.isConfigFile ?? this.isConfigFile(filename),
+            architecturalPatterns: Array.isArray(data.architecturalPatterns)
+                ? data.architecturalPatterns
+                : [],
+            businessDomain: data.businessDomain || 'unknown',
+            codeComplexity: data.codeComplexity || 'medium',
+            semanticDescription: data.semanticDescription || 'Code changes detected',
+        };
+    }
+    /**
+     * Build AI prompt for code analysis
+     */
+    buildCodeAnalysisPrompt(filename, diffContent, changeType) {
+        const language = this.detectLanguage(filename);
+        return `Analyze this code change and extract structural information:
+
+File: ${filename}
+Change Type: ${changeType}
+Language: ${language}
+
+Code Diff:
+${diffContent}
+
+Extract the following information as JSON. Be accurate and specific - if you can't determine something, use empty arrays or null values:
+
+{
+  "functionsChanged": ["function1", "method2"], // All function/method names that were added/modified/removed
+  "classesChanged": ["Class1", "Interface2"], // Classes, interfaces, types, enums that were added/modified/removed  
+  "importsChanged": ["module1", "package2"], // Import/dependency changes (module names only)
+  "fileType": "${path.extname(filename)}", // File extension
+  "isTestFile": false, // Is this a test file?
+  "isConfigFile": false, // Is this a configuration file?
+  "architecturalPatterns": ["MVC", "Repository"], // Design patterns you can identify
+  "businessDomain": "authentication", // Business domain/feature area (one word)
+  "codeComplexity": "medium", // low/medium/high based on complexity of changes
+  "semanticDescription": "Added user authentication with JWT tokens" // Brief description of what changed
+}
+
+Rules:
+- Extract exact names from the code, don't invent them
+- For imports, only include the module/package name (e.g., "express", not the full path)
+- Be conservative - empty arrays are better than wrong information
+- Focus on structural changes, not just formatting
+- Complexity: low (simple changes), medium (moderate logic), high (complex algorithms/architectures)
+
+Respond with ONLY the JSON object, no explanations.`;
+    }
+    /**
+     * Create minimal analysis when AI fails
+     */
+    createMinimalAnalysis(filename, diffPatch, changeType, linesAdded, linesRemoved) {
+        return {
+            file: filename,
+            diffHunk: diffPatch,
+            changeType,
+            linesAdded,
+            linesRemoved,
+            functionsChanged: [],
+            classesChanged: [],
+            importsChanged: [],
+            fileType: this.getFileType(filename),
+            isTestFile: this.isTestFile(filename),
+            isConfigFile: this.isConfigFile(filename),
+            architecturalPatterns: [],
+            businessDomain: 'unknown',
+            codeComplexity: 'medium',
+            semanticDescription: `Changes in ${filename} (AI analysis failed)`,
+        };
+    }
+    // Helper methods from original CodeAnalyzer
+    detectLanguage(filename) {
+        const ext = path.extname(filename).toLowerCase();
+        const languageMap = {
+            '.ts': 'TypeScript',
+            '.js': 'JavaScript',
+            '.py': 'Python',
+            '.java': 'Java',
+            '.go': 'Go',
+            '.rs': 'Rust',
+            '.cpp': 'C++',
+            '.c': 'C',
+            '.cs': 'C#',
+            '.php': 'PHP',
+            '.rb': 'Ruby',
+            '.swift': 'Swift',
+            '.kt': 'Kotlin',
+            '.scala': 'Scala',
+            '.sh': 'Shell',
+            '.sql': 'SQL',
+            '.json': 'JSON',
+            '.yaml': 'YAML',
+            '.yml': 'YAML',
+            '.xml': 'XML',
+            '.html': 'HTML',
+            '.css': 'CSS',
+            '.scss': 'SCSS',
+            '.md': 'Markdown',
+        };
+        return languageMap[ext] || 'Unknown';
+    }
+    getFileType(filename) {
+        const ext = path.extname(filename).toLowerCase();
+        return ext || 'unknown';
+    }
+    isTestFile(filename) {
+        const testPatterns = [
+            /\.test\./,
+            /\.spec\./,
+            /^tests?\//,
+            /^spec\//,
+            /__tests__\//,
+            /\.test$/,
+            /\.spec$/,
+        ];
+        return testPatterns.some((pattern) => pattern.test(filename));
+    }
+    isConfigFile(filename) {
+        const configPatterns = [
+            /\.config\./,
+            /^package\.json$/,
+            /^tsconfig/,
+            /^jest\.config/,
+            /^webpack\.config/,
+            /^\.env/,
+            /^\.eslintrc/,
+            /^\.prettierrc/,
+            /^docker/i,
+            /^makefile$/i,
+            /\.ya?ml$/,
+            /\.toml$/,
+            /\.ini$/,
+        ];
+        return configPatterns.some((pattern) => pattern.test(filename));
+    }
+    // Analysis methods adapted from original CodeAnalyzer
+    analyzeFileMetrics(changes) {
+        const fileTypes = [
+            ...new Set(changes.map((c) => c.fileType).filter((type) => type)),
+        ];
+        const totalLines = changes.reduce((sum, c) => sum + c.linesAdded + c.linesRemoved, 0);
+        const fileCount = changes.length;
+        // Enhanced complexity scoring using AI results
+        const complexityScores = changes.map((c) => c.codeComplexity);
+        const highComplexity = complexityScores.filter((c) => c === 'high').length;
+        const mediumComplexity = complexityScores.filter((c) => c === 'medium').length;
+        let codeComplexity = 'low';
+        if (highComplexity > 0 || fileCount > 10 || totalLines > 500) {
+            codeComplexity = 'high';
+        }
+        else if (mediumComplexity > 1 || fileCount > 3 || totalLines > 100) {
+            codeComplexity = 'medium';
+        }
+        return {
+            totalFiles: fileCount,
+            fileTypes: fileTypes.filter((type) => type !== 'unknown'),
+            hasTests: changes.some((c) => c.isTestFile),
+            hasConfig: changes.some((c) => c.isConfigFile),
+            codeComplexity,
+        };
+    }
+    extractChangePatterns(changes) {
+        // Categorize by change type
+        const newFunctions = changes
+            .filter((c) => c.changeType === 'added')
+            .flatMap((c) => c.functionsChanged);
+        const modifiedFunctions = changes
+            .filter((c) => c.changeType === 'modified')
+            .flatMap((c) => c.functionsChanged);
+        const newClasses = changes
+            .filter((c) => c.changeType === 'added')
+            .flatMap((c) => c.classesChanged);
+        const modifiedClasses = changes
+            .filter((c) => c.changeType === 'modified')
+            .flatMap((c) => c.classesChanged);
+        // Enhanced AI-based pattern extraction
+        const architecturalPatterns = [
+            ...new Set(changes.flatMap((c) => c.architecturalPatterns || [])),
+        ];
+        const businessDomains = [
+            ...new Set(changes
+                .map((c) => c.businessDomain)
+                .filter((d) => d !== undefined && d !== 'unknown')),
+        ];
+        // Import analysis (simplified - could be enhanced with AI)
+        const newImports = changes
+            .filter((c) => c.changeType === 'added')
+            .flatMap((c) => c.importsChanged);
+        const removedImports = changes
+            .filter((c) => c.changeType === 'deleted')
+            .flatMap((c) => c.importsChanged);
+        return {
+            newFunctions: [...new Set(newFunctions)],
+            modifiedFunctions: [...new Set(modifiedFunctions)],
+            newImports: [...new Set(newImports)],
+            removedImports: [...new Set(removedImports)],
+            newClasses: [...new Set(newClasses)],
+            modifiedClasses: [...new Set(modifiedClasses)],
+            architecturalPatterns,
+            businessDomains,
+        };
+    }
+    buildContextSummary(changes, metrics, patterns) {
+        const summary = [];
+        // File overview
+        summary.push(`${metrics.totalFiles} files changed`);
+        if (metrics.fileTypes.length > 0) {
+            summary.push(`Types: ${metrics.fileTypes.join(', ')}`);
+        }
+        // Function changes
+        if (patterns.newFunctions.length > 0) {
+            summary.push(`New functions: ${patterns.newFunctions.slice(0, 3).join(', ')}${patterns.newFunctions.length > 3 ? '...' : ''}`);
+        }
+        if (patterns.modifiedFunctions.length > 0) {
+            summary.push(`Modified functions: ${patterns.modifiedFunctions.slice(0, 3).join(', ')}${patterns.modifiedFunctions.length > 3 ? '...' : ''}`);
+        }
+        // AI-enhanced insights
+        if (patterns.architecturalPatterns.length > 0) {
+            summary.push(`Patterns: ${patterns.architecturalPatterns.join(', ')}`);
+        }
+        if (patterns.businessDomains.length > 0) {
+            summary.push(`Domains: ${patterns.businessDomains.join(', ')}`);
+        }
+        // Import changes
+        if (patterns.newImports.length > 0) {
+            summary.push(`New imports: ${patterns.newImports.slice(0, 2).join(', ')}${patterns.newImports.length > 2 ? '...' : ''}`);
+        }
+        // Complexity
+        summary.push(`Complexity: ${metrics.codeComplexity}`);
+        return summary.join(' | ');
+    }
+    extractSignificantChanges(changes) {
+        const significant = [];
+        // Large files
+        const largeChanges = changes.filter((c) => c.linesAdded + c.linesRemoved > 50);
+        for (const change of largeChanges) {
+            significant.push(`Large change in ${change.file} (+${change.linesAdded}/-${change.linesRemoved})`);
+        }
+        // New files
+        const newFiles = changes.filter((c) => c.changeType === 'added');
+        for (const file of newFiles) {
+            significant.push(`New file: ${file.file}`);
+        }
+        // Deleted files
+        const deletedFiles = changes.filter((c) => c.changeType === 'deleted');
+        for (const file of deletedFiles) {
+            significant.push(`Deleted file: ${file.file}`);
+        }
+        // AI-detected significant patterns
+        const complexChanges = changes.filter((c) => c.codeComplexity === 'high');
+        for (const change of complexChanges) {
+            if (change.semanticDescription) {
+                significant.push(`Complex change: ${change.semanticDescription}`);
+            }
+        }
+        return significant;
+    }
+    /**
+     * Get cache statistics for monitoring
+     */
+    getCacheStats() {
+        return this.cache.getStats();
+    }
+}
+exports.AICodeAnalyzer = AICodeAnalyzer;
+
+
+/***/ }),
+
 /***/ 3831:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -33684,230 +34123,106 @@ exports.ClaudeClient = ClaudeClient;
 
 /***/ }),
 
-/***/ 4579:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ 8940:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CodeAnalyzer = void 0;
-class CodeAnalyzer {
-    static analyzeCodeChanges(changes) {
-        console.log(`[CODE-ANALYZER] Analyzing ${changes.length} code changes`);
-        const fileMetrics = this.analyzeFileMetrics(changes);
-        const changePatterns = this.extractChangePatterns(changes);
-        const contextSummary = this.buildContextSummary(changes, fileMetrics, changePatterns);
-        const significantChanges = this.extractSignificantChanges(changes);
+exports.CodeAnalysisCache = void 0;
+const crypto = __importStar(__nccwpck_require__(6982));
+const generic_cache_1 = __nccwpck_require__(9267);
+/**
+ * Specialized cache for AI-based code analysis results
+ * Uses content-based hashing for cache keys to ensure cache hits on identical diffs
+ */
+class CodeAnalysisCache extends generic_cache_1.GenericCache {
+    constructor(ttlMs = 86400000) {
+        // 24 hour default TTL
+        super(ttlMs);
+    }
+    /**
+     * Generate a cache key based on filename and diff content
+     * Uses SHA-256 hash for deterministic, collision-resistant keys
+     */
+    generateCacheKey(filename, diffContent) {
+        const content = `${filename}:${diffContent}`;
+        return crypto
+            .createHash('sha256')
+            .update(content)
+            .digest('hex')
+            .substring(0, 16); // Use first 16 chars for memory efficiency
+    }
+    /**
+     * Get cached analysis result or execute the processor function
+     * Provides transparent caching for AI code analysis
+     */
+    async getOrAnalyze(filename, diffContent, processor) {
+        const key = this.generateCacheKey(filename, diffContent);
+        const cached = this.get(key);
+        if (cached) {
+            console.log(`[CODE-ANALYSIS-CACHE] Cache HIT for ${filename} (key: ${key})`);
+            return cached;
+        }
+        console.log(`[CODE-ANALYSIS-CACHE] Cache MISS for ${filename} (key: ${key}) - analyzing with AI`);
+        const result = await processor();
+        // Store in cache with default TTL
+        this.set(key, result);
+        console.log(`[CODE-ANALYSIS-CACHE] Cached result for ${filename} (key: ${key})`);
+        return result;
+    }
+    /**
+     * Get cache statistics for monitoring
+     */
+    getStats() {
         return {
-            fileMetrics,
-            changePatterns,
-            contextSummary,
-            significantChanges,
+            size: this.size(),
+            ttlMs: this['defaultTtlMs'], // Access private property for stats
         };
     }
-    static processChangedFile(filename, diffPatch, changeType, linesAdded, linesRemoved) {
-        console.log(`[CODE-ANALYZER] Processing ${filename} (${changeType})`);
-        return {
-            file: filename,
-            diffHunk: diffPatch,
-            changeType,
-            linesAdded,
-            linesRemoved,
-            functionsChanged: this.extractFunctions(diffPatch),
-            classesChanged: this.extractClasses(diffPatch),
-            importsChanged: this.extractImports(diffPatch),
-            fileType: this.getFileType(filename),
-            isTestFile: this.isTestFile(filename),
-            isConfigFile: this.isConfigFile(filename),
-        };
-    }
-    static analyzeFileMetrics(changes) {
-        const fileTypes = [...new Set(changes.map((c) => c.fileType))];
-        const totalLines = changes.reduce((sum, c) => sum + c.linesAdded + c.linesRemoved, 0);
-        const fileCount = changes.length;
-        // Complexity scoring based on file count and line changes
-        let codeComplexity = 'low';
-        if (fileCount > 5 || totalLines > 200) {
-            codeComplexity = 'high';
-        }
-        else if (fileCount > 2 || totalLines > 50) {
-            codeComplexity = 'medium';
-        }
-        return {
-            totalFiles: fileCount,
-            fileTypes: fileTypes.filter((type) => type !== 'unknown'),
-            hasTests: changes.some((c) => c.isTestFile),
-            hasConfig: changes.some((c) => c.isConfigFile),
-            codeComplexity,
-        };
-    }
-    static extractChangePatterns(changes) {
-        // Categorize by change type
-        const newFunctions = changes
-            .filter((c) => c.changeType === 'added')
-            .flatMap((c) => c.functionsChanged);
-        const modifiedFunctions = changes
-            .filter((c) => c.changeType === 'modified')
-            .flatMap((c) => c.functionsChanged);
-        const newClasses = changes
-            .filter((c) => c.changeType === 'added')
-            .flatMap((c) => c.classesChanged);
-        const modifiedClasses = changes
-            .filter((c) => c.changeType === 'modified')
-            .flatMap((c) => c.classesChanged);
-        // Import analysis
-        const addedImports = this.extractImportChanges(changes, 'added');
-        const removedImports = this.extractImportChanges(changes, 'removed');
-        return {
-            newFunctions: [...new Set(newFunctions)],
-            modifiedFunctions: [...new Set(modifiedFunctions)],
-            newImports: addedImports,
-            removedImports: removedImports,
-            newClasses: [...new Set(newClasses)],
-            modifiedClasses: [...new Set(modifiedClasses)],
-        };
-    }
-    static extractFunctions(diffContent) {
-        const functions = new Set();
-        for (const pattern of this.FUNCTION_PATTERNS) {
-            let match;
-            while ((match = pattern.exec(diffContent)) !== null) {
-                if (match[1] && match[1].length > 0) {
-                    functions.add(match[1]);
-                }
-            }
-            pattern.lastIndex = 0; // Reset regex state
-        }
-        return Array.from(functions);
-    }
-    static extractClasses(diffContent) {
-        const classes = new Set();
-        for (const pattern of this.CLASS_PATTERNS) {
-            let match;
-            while ((match = pattern.exec(diffContent)) !== null) {
-                if (match[1] && match[1].length > 0) {
-                    classes.add(match[1]);
-                }
-            }
-            pattern.lastIndex = 0; // Reset regex state
-        }
-        return Array.from(classes);
-    }
-    static extractImports(diffContent) {
-        const imports = new Set();
-        for (const pattern of this.IMPORT_PATTERNS) {
-            let match;
-            while ((match = pattern.exec(diffContent)) !== null) {
-                if (match[1] && match[1].length > 0) {
-                    imports.add(match[1]);
-                }
-            }
-            pattern.lastIndex = 0; // Reset regex state
-        }
-        return Array.from(imports);
-    }
-    static extractImportChanges(changes, changeType) {
-        const imports = new Set();
-        for (const change of changes) {
-            const lines = change.diffHunk.split('\n');
-            const prefix = changeType === 'added' ? '+' : '-';
-            for (const line of lines) {
-                if (line.startsWith(prefix) && line.includes('import')) {
-                    const importMatch = line.match(/from\s+['"]([^'"]+)['"]/);
-                    if (importMatch) {
-                        imports.add(importMatch[1]);
-                    }
-                }
-            }
-        }
-        return Array.from(imports);
-    }
-    static getFileType(filename) {
-        const ext = filename.split('.').pop()?.toLowerCase();
-        return ext ? `.${ext}` : 'unknown';
-    }
-    static isTestFile(filename) {
-        const testPatterns = [
-            /\.test\./,
-            /\.spec\./,
-            /^tests?\//,
-            /^spec\//,
-            /__tests__\//,
-        ];
-        return testPatterns.some((pattern) => pattern.test(filename));
-    }
-    static isConfigFile(filename) {
-        const configPatterns = [
-            /\.config\./,
-            /^package\.json$/,
-            /^tsconfig/,
-            /^jest\.config/,
-            /^webpack\.config/,
-            /^\.env/,
-            /^\.eslintrc/,
-            /^\.prettierrc/,
-        ];
-        return configPatterns.some((pattern) => pattern.test(filename));
-    }
-    static buildContextSummary(changes, metrics, patterns) {
-        const summary = [];
-        // File overview
-        summary.push(`${metrics.totalFiles} files changed`);
-        if (metrics.fileTypes.length > 0) {
-            summary.push(`Types: ${metrics.fileTypes.join(', ')}`);
-        }
-        // Function changes
-        if (patterns.newFunctions.length > 0) {
-            summary.push(`New functions: ${patterns.newFunctions.slice(0, 3).join(', ')}${patterns.newFunctions.length > 3 ? '...' : ''}`);
-        }
-        if (patterns.modifiedFunctions.length > 0) {
-            summary.push(`Modified functions: ${patterns.modifiedFunctions.slice(0, 3).join(', ')}${patterns.modifiedFunctions.length > 3 ? '...' : ''}`);
-        }
-        // Import changes
-        if (patterns.newImports.length > 0) {
-            summary.push(`New imports: ${patterns.newImports.slice(0, 2).join(', ')}${patterns.newImports.length > 2 ? '...' : ''}`);
-        }
-        // Complexity
-        summary.push(`Complexity: ${metrics.codeComplexity}`);
-        return summary.join(' | ');
-    }
-    static extractSignificantChanges(changes) {
-        const significant = [];
-        // Large files
-        const largeChanges = changes.filter((c) => c.linesAdded + c.linesRemoved > 50);
-        for (const change of largeChanges) {
-            significant.push(`Large change in ${change.file} (+${change.linesAdded}/-${change.linesRemoved})`);
-        }
-        // New files
-        const newFiles = changes.filter((c) => c.changeType === 'added');
-        for (const file of newFiles) {
-            significant.push(`New file: ${file.file}`);
-        }
-        // Deleted files
-        const deletedFiles = changes.filter((c) => c.changeType === 'deleted');
-        for (const file of deletedFiles) {
-            significant.push(`Deleted file: ${file.file}`);
-        }
-        return significant;
+    /**
+     * Pre-warm cache with known results (useful for testing)
+     */
+    preWarm(filename, diffContent, result) {
+        const key = this.generateCacheKey(filename, diffContent);
+        this.set(key, result);
+        console.log(`[CODE-ANALYSIS-CACHE] Pre-warmed cache for ${filename} (key: ${key})`);
     }
 }
-exports.CodeAnalyzer = CodeAnalyzer;
-CodeAnalyzer.FUNCTION_PATTERNS = [
-    /(?:^|\n)[-+]\s*(?:export\s+)?(?:async\s+)?function\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
-    /(?:^|\n)[-+]\s*(?:public|private|protected)?\s*(?:async\s+)?([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\(/g,
-    /(?:^|\n)[-+]\s*const\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:async\s+)?\(/g,
-    /(?:^|\n)[-+]\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:\s*\(/g, // Interface methods
-];
-CodeAnalyzer.CLASS_PATTERNS = [
-    /(?:^|\n)[-+]\s*(?:export\s+)?(?:abstract\s+)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
-    /(?:^|\n)[-+]\s*(?:export\s+)?interface\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
-    /(?:^|\n)[-+]\s*(?:export\s+)?type\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
-    /(?:^|\n)[-+]\s*(?:export\s+)?enum\s+([a-zA-Z_$][a-zA-Z0-9_$]*)/g,
-];
-CodeAnalyzer.IMPORT_PATTERNS = [
-    /(?:^|\n)[-+]\s*import\s+.*?from\s+['"]([^'"]+)['"]/g,
-    /(?:^|\n)[-+]\s*import\s+['"]([^'"]+)['"]/g,
-];
+exports.CodeAnalysisCache = CodeAnalysisCache;
 
 
 /***/ }),

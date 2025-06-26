@@ -10,6 +10,10 @@ export interface CodeChange {
     fileType: string;
     isTestFile: boolean;
     isConfigFile: boolean;
+    architecturalPatterns?: string[];
+    businessDomain?: string;
+    codeComplexity?: 'low' | 'medium' | 'high';
+    semanticDescription?: string;
 }
 export interface SmartContext {
     fileMetrics: {
@@ -26,6 +30,8 @@ export interface SmartContext {
         removedImports: string[];
         newClasses: string[];
         modifiedClasses: string[];
+        architecturalPatterns?: string[];
+        businessDomains?: string[];
     };
     contextSummary: string;
     significantChanges: string[];

@@ -1,6 +1,6 @@
 import * as github from '@actions/github';
 import * as exec from '@actions/exec';
-import { CodeAnalyzer, CodeChange } from '../utils/code-analyzer';
+import { AICodeAnalyzer, CodeChange } from '../utils/ai-code-analyzer';
 
 export interface ChangedFile {
   filename: string;
@@ -31,6 +31,7 @@ export class GitService {
   ];
 
   private octokit: ReturnType<typeof github.getOctokit> | null = null;
+  private aiAnalyzer: AICodeAnalyzer;
 
   private shouldIncludeFile(filename: string): boolean {
     const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) =>
@@ -42,7 +43,10 @@ export class GitService {
     return !isExcluded;
   }
 
-  constructor(private readonly githubToken: string) {
+  constructor(
+    private readonly githubToken: string,
+    anthropicApiKey?: string
+  ) {
     // Initialize GitHub API client if token is available
     if (this.githubToken) {
       try {
@@ -54,44 +58,60 @@ export class GitService {
         );
       }
     }
+
+    // Initialize AI analyzer - use environment variable if not provided
+    const apiKey = anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new Error(
+        '[GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis'
+      );
+    }
+    this.aiAnalyzer = new AICodeAnalyzer(apiKey);
   }
 
   async getEnhancedChangedFiles(): Promise<CodeChange[]> {
     console.log(
-      '[GIT-SERVICE] Getting enhanced changed files with code analysis'
+      '[GIT-SERVICE] Getting enhanced changed files with AI code analysis'
     );
 
     // Get basic changed files first
     const changedFiles = await this.getChangedFiles();
 
-    // Convert to enhanced CodeChange objects
-    const codeChanges: CodeChange[] = [];
-
-    for (const file of changedFiles) {
-      console.log(
-        `[GIT-SERVICE] Processing ${file.filename} for enhanced analysis`
-      );
-
-      // Map GitHub status to our type system
-      const changeType =
-        file.status === 'removed'
-          ? 'deleted'
-          : (file.status as 'added' | 'modified' | 'renamed');
-
-      const codeChange = CodeAnalyzer.processChangedFile(
-        file.filename,
-        file.patch || '',
-        changeType,
-        file.additions,
-        file.deletions
-      );
-
-      codeChanges.push(codeChange);
+    if (changedFiles.length === 0) {
+      console.log('[GIT-SERVICE] No changed files to analyze');
+      return [];
     }
 
+    // Prepare files for concurrent AI analysis
+    const filesToAnalyze = changedFiles.map((file) => ({
+      filename: file.filename,
+      diffPatch: file.patch || '',
+      changeType:
+        file.status === 'removed'
+          ? ('deleted' as const)
+          : (file.status as 'added' | 'modified' | 'renamed'),
+      linesAdded: file.additions,
+      linesRemoved: file.deletions,
+    }));
+
     console.log(
-      `[GIT-SERVICE] Processed ${codeChanges.length} files with enhanced context`
+      `[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`
     );
+
+    // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+    const codeChanges =
+      await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
+
+    console.log(
+      `[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`
+    );
+
+    // Log cache statistics
+    const cacheStats = this.aiAnalyzer.getCacheStats();
+    console.log(
+      `[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`
+    );
+
     return codeChanges;
   }
 

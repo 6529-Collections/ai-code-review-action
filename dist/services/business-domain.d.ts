@@ -1,5 +1,5 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { CodeChange } from '../utils/code-analyzer';
+import { CodeChange } from '../utils/ai-code-analyzer';
 export declare class BusinessDomainService {
     groupByBusinessDomain(themes: ConsolidatedTheme[]): Promise<Map<string, ConsolidatedTheme[]>>;
     extractBusinessDomainWithContext(name: string, description: string, enhancedContext?: {
