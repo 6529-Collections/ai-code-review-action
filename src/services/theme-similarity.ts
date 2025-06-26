@@ -223,7 +223,7 @@ export class ThemeSimilarityService {
         return { id: pair.id, similarity };
       },
       {
-        concurrencyLimit: 10,
+        concurrencyLimit: 5,
         maxRetries: 3,
         enableLogging: true,
         onProgress: (completed, total) => {

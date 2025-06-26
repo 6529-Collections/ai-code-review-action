@@ -20,9 +20,9 @@ import { ConcurrencyManager } from '../utils/concurrency-manager';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
-  CONCURRENCY_LIMIT: 10,
+  CONCURRENCY_LIMIT: 5,
   CHUNK_TIMEOUT: 120000, // 2 minutes
-  MAX_RETRIES: 5,
+  MAX_RETRIES: 3,
 } as const;
 
 export interface Theme {
