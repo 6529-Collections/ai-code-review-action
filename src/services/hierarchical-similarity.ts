@@ -7,6 +7,7 @@ import { GenericCache } from '../utils/generic-cache';
 import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
 import { logInfo } from '../utils';
+import { ConcurrencyManager } from '../utils/concurrency-manager';
 
 /**
  * Enhanced similarity service for multi-level theme hierarchies
@@ -59,23 +60,58 @@ export class HierarchicalSimilarityService {
       );
     }
 
-    // Process comparisons directly
+    // Process comparisons with controlled concurrency
     console.log(
-      `[HIERARCHICAL] Starting ${comparisons.length} parallel Claude API calls`
-    );
-    const results = await Promise.all(
-      comparisons.map((comparison, index) => {
-        console.log(
-          `[HIERARCHICAL] Starting comparison ${index + 1}/${comparisons.length}`
-        );
-        return this.analyzeCrossLevelSimilarityPair(comparison);
-      })
+      `[HIERARCHICAL] Starting ${comparisons.length} Claude API calls with concurrency limit of 10`
     );
 
-    logInfo(
-      `Completed cross-level similarity analysis: ${results.length} results`
+    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
+      comparisons,
+      async (comparison) => {
+        return await this.analyzeCrossLevelSimilarityPair(comparison);
+      },
+      {
+        concurrencyLimit: 10,
+        maxRetries: 5,
+        enableLogging: true,
+        onProgress: (completed, total) => {
+          console.log(
+            `[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`
+          );
+        },
+        onError: (error, comparison, retryCount) => {
+          console.warn(
+            `[HIERARCHICAL] Retry ${retryCount} for comparison ${comparison.id}: ${error.message}`
+          );
+        },
+      }
     );
-    return results;
+
+    // Extract successful results
+    const successfulResults: CrossLevelSimilarity[] = [];
+    let failedCount = 0;
+
+    for (const result of results) {
+      if (result && typeof result === 'object' && 'error' in result) {
+        failedCount++;
+        console.warn(
+          `[HIERARCHICAL] Failed comparison after all retries: ${result.item.id}`
+        );
+      } else {
+        successfulResults.push(result as CrossLevelSimilarity);
+      }
+    }
+
+    if (failedCount > 0) {
+      console.warn(
+        `[HIERARCHICAL] ${failedCount}/${comparisons.length} comparisons failed after retries`
+      );
+    }
+
+    logInfo(
+      `Completed cross-level similarity analysis: ${successfulResults.length} successful results`
+    );
+    return successfulResults;
   }
 
   /**
