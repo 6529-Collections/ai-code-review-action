@@ -30115,7 +30115,7 @@ class AISimilarityService {
     async calculateAISimilarity(theme1, theme2) {
         const prompt = this.buildSimilarityPrompt(theme1, theme2);
         try {
-            const tempFile = path.join(os.tmpdir(), `claude-similarity-${Date.now()}.txt`);
+            const tempFile = path.join(os.tmpdir(), `claude-similarity-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.txt`);
             fs.writeFileSync(tempFile, prompt);
             let output = '';
             await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
@@ -31554,6 +31554,7 @@ const generic_cache_1 = __nccwpck_require__(9267);
 const claude_client_1 = __nccwpck_require__(3831);
 const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
+const concurrency_manager_1 = __nccwpck_require__(8692);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 4,
     minComplexityScore: 0.7,
@@ -31576,101 +31577,18 @@ class ThemeExpansionService {
      * Process items concurrently with limit and retry logic
      */
     async processConcurrentlyWithLimit(items, processor, options) {
-        const { concurrencyLimit = this.config.concurrencyLimit, maxRetries = this.config.maxRetries, retryDelay = this.config.retryDelay, onProgress, onError, } = options || {};
-        const results = new Array(items.length);
-        const active = new Set();
-        let completed = 0;
-        let index = 0;
-        const processItem = async (item, itemIndex) => {
-            console.log(`[DEBUG-CONCURRENCY] Processing item ${itemIndex}: starting`);
-            try {
-                const result = await this.processWithRetry(item, processor, maxRetries, retryDelay, onError);
-                console.log(`[DEBUG-CONCURRENCY] Processing item ${itemIndex}: success`);
-                results[itemIndex] = result;
-            }
-            catch (error) {
-                console.log(`[DEBUG-CONCURRENCY] Processing item ${itemIndex}: error - ${error}`);
-                results[itemIndex] = { error: error, item };
-            }
-            finally {
-                completed++;
-                console.log(`[DEBUG-CONCURRENCY] Processing item ${itemIndex}: completed (${completed}/${items.length})`);
-                if (onProgress && this.config.enableProgressLogging) {
-                    onProgress(completed, items.length);
-                }
-            }
+        const concurrencyOptions = {
+            concurrencyLimit: options?.concurrencyLimit || this.config.concurrencyLimit,
+            maxRetries: options?.maxRetries || this.config.maxRetries,
+            retryDelay: options?.retryDelay || this.config.retryDelay,
+            retryBackoffMultiplier: this.config.retryBackoffMultiplier,
+            onProgress: options?.onProgress && this.config.enableProgressLogging
+                ? options.onProgress
+                : undefined,
+            onError: options?.onError,
+            enableLogging: this.config.enableProgressLogging,
         };
-        return new Promise((resolve) => {
-            // Handle empty array case
-            if (items.length === 0) {
-                console.log(`[DEBUG-CONCURRENCY] Empty items array, resolving immediately`);
-                resolve(results);
-                return;
-            }
-            console.log(`[DEBUG-CONCURRENCY] Starting processing of ${items.length} items with limit ${concurrencyLimit}`);
-            const startNext = () => {
-                while (active.size < concurrencyLimit && index < items.length) {
-                    const currentIndex = index++;
-                    console.log(`[DEBUG-CONCURRENCY] Starting item ${currentIndex + 1}/${items.length}, active: ${active.size}`);
-                    const promise = processItem(items[currentIndex], currentIndex);
-                    active.add(promise);
-                    promise.finally(() => {
-                        active.delete(promise);
-                        console.log(`[DEBUG-CONCURRENCY] Completed item, total completed: ${completed}/${items.length}, active: ${active.size}`);
-                        if (completed === items.length) {
-                            console.log(`[DEBUG-CONCURRENCY] All items completed, resolving`);
-                            resolve(results);
-                        }
-                        else {
-                            startNext();
-                        }
-                    });
-                }
-                // If we have active promises but no more items to start, log status
-                if (index >= items.length && active.size > 0) {
-                    console.log(`[DEBUG-CONCURRENCY] No more items to start, waiting for ${active.size} active promises`);
-                }
-            };
-            startNext();
-        });
-    }
-    /**
-     * Process single item with retry logic
-     */
-    async processWithRetry(item, processor, maxRetries, baseDelay, onError) {
-        let lastError;
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            try {
-                return await processor(item);
-            }
-            catch (error) {
-                lastError = error;
-                if (attempt < maxRetries) {
-                    const delay = this.calculateBackoffDelay(attempt, baseDelay);
-                    if (onError) {
-                        onError(lastError, item, attempt + 1);
-                    }
-                    if (this.config.enableProgressLogging) {
-                        console.log(`[THEME-EXPANSION] Retry ${attempt + 1}/${maxRetries} after ${delay}ms delay`);
-                    }
-                    await this.sleep(delay);
-                }
-            }
-        }
-        return { error: lastError, item };
-    }
-    /**
-     * Calculate exponential backoff delay
-     */
-    calculateBackoffDelay(attempt, baseDelay) {
-        return Math.min(baseDelay * Math.pow(this.config.retryBackoffMultiplier, attempt), 30000 // Max 30 seconds
-        );
-    }
-    /**
-     * Sleep utility
-     */
-    sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
+        return concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(items, processor, concurrencyOptions);
     }
     /**
      * Main entry point for expanding themes hierarchically
@@ -32656,6 +32574,7 @@ const theme_expansion_1 = __nccwpck_require__(7333);
 const hierarchical_similarity_1 = __nccwpck_require__(2983);
 const code_analyzer_1 = __nccwpck_require__(4579);
 const json_extractor_1 = __nccwpck_require__(2642);
+const concurrency_manager_1 = __nccwpck_require__(8692);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
     BATCH_SIZE: 10,
@@ -33008,28 +32927,26 @@ class ThemeContextManager {
         this.context.processingState = state;
     }
 }
-// Utility function for batch processing with concurrency control
+// Legacy batch processing - use ConcurrencyManager.processConcurrentlyWithLimit instead
 async function processBatches(items, batchSize, processor) {
-    const results = [];
-    for (let i = 0; i < items.length; i += batchSize) {
-        const batch = items.slice(i, i + batchSize);
-        const batchPromises = batch.map((item) => Promise.race([
-            processor(item),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PARALLEL_CONFIG.CHUNK_TIMEOUT)),
-        ]));
-        const batchResults = await Promise.allSettled(batchPromises);
-        for (let j = 0; j < batchResults.length; j++) {
-            const result = batchResults[j];
-            if (result.status === 'fulfilled') {
-                results.push(result.value);
-            }
-            else {
-                console.warn(`Batch item ${i + j} failed:`, result.reason);
-                // Add a fallback result or skip
-            }
+    console.warn('[THEME-SERVICE] Using legacy processBatches - consider migrating to ConcurrencyManager');
+    const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(items, processor, {
+        concurrencyLimit: batchSize,
+        maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
+        enableLogging: true,
+    });
+    // Extract successful results and log failures
+    const successful = [];
+    for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result && typeof result === 'object' && 'error' in result) {
+            console.warn(`Batch item ${i} failed:`, result.error.message);
+        }
+        else {
+            successful.push(result);
         }
     }
-    return results;
+    return successful;
 }
 class ThemeService {
     constructor(anthropicApiKey, consolidationConfig) {
@@ -33279,6 +33196,7 @@ const business_domain_1 = __nccwpck_require__(8133);
 const theme_naming_1 = __nccwpck_require__(9018);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
+        this.pendingCalculations = new Map();
         this.config = {
             similarityThreshold: 0.7, // Now represents confidence threshold for merge decision
             maxThemesPerParent: 5,
@@ -33301,13 +33219,31 @@ class ThemeSimilarityService {
         console.log(`[CONFIG] Consolidation config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
     }
     async calculateSimilarity(theme1, theme2) {
-        // Check cache first
         const cacheKey = this.similarityCache.getCacheKey(theme1, theme2);
+        // Check if already calculating
+        const pending = this.pendingCalculations.get(cacheKey);
+        if (pending) {
+            console.log(`[PENDING] Waiting for pending calculation: "${theme1.name}" vs "${theme2.name}"`);
+            return pending;
+        }
+        // Check cache
         const cached = this.similarityCache.getCachedSimilarity(cacheKey);
         if (cached) {
             console.log(`[CACHE] Using cached similarity for "${theme1.name}" vs "${theme2.name}"`);
             return cached.similarity;
         }
+        // Start new calculation
+        const calculationPromise = this.doCalculateSimilarity(theme1, theme2, cacheKey);
+        this.pendingCalculations.set(cacheKey, calculationPromise);
+        try {
+            const result = await calculationPromise;
+            return result;
+        }
+        finally {
+            this.pendingCalculations.delete(cacheKey);
+        }
+    }
+    async doCalculateSimilarity(theme1, theme2, cacheKey) {
         // Only skip if absolutely certain they're different
         const fileOverlap = this.similarityCalculator.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
         const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
@@ -33381,24 +33317,40 @@ class ThemeSimilarityService {
     }
     async calculateBatchSimilarities(pairs) {
         const similarities = new Map();
-        // Process all pairs through calculateSimilarity (which handles caching and skipping)
-        for (const pair of pairs) {
-            try {
-                const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
-                similarities.set(pair.id, similarity);
+        const CONCURRENT_BATCH_SIZE = 10; // Process 10 similarities concurrently
+        console.log(`[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of ${CONCURRENT_BATCH_SIZE}`);
+        // Process in concurrent batches
+        for (let i = 0; i < pairs.length; i += CONCURRENT_BATCH_SIZE) {
+            const batch = pairs.slice(i, i + CONCURRENT_BATCH_SIZE);
+            const batchPromises = batch.map(async (pair) => {
+                try {
+                    const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
+                    return { id: pair.id, similarity, success: true };
+                }
+                catch (error) {
+                    console.warn(`[SIMILARITY] Failed to process pair ${pair.id}:`, error);
+                    // Use non-match result for failed comparisons
+                    return {
+                        id: pair.id,
+                        similarity: {
+                            combinedScore: 0,
+                            nameScore: 0,
+                            descriptionScore: 0,
+                            fileOverlap: 0,
+                            patternScore: 0,
+                            businessScore: 0,
+                        },
+                        success: false,
+                    };
+                }
+            });
+            const batchResults = await Promise.all(batchPromises);
+            // Store results
+            for (const result of batchResults) {
+                similarities.set(result.id, result.similarity);
             }
-            catch (error) {
-                console.warn(`[SIMILARITY] Failed to process pair ${pair.id}:`, error);
-                // Use non-match result for failed comparisons
-                similarities.set(pair.id, {
-                    combinedScore: 0,
-                    nameScore: 0,
-                    descriptionScore: 0,
-                    fileOverlap: 0,
-                    patternScore: 0,
-                    businessScore: 0,
-                });
-            }
+            const successCount = batchResults.filter((r) => r.success).length;
+            console.log(`[SIMILARITY] Batch ${Math.floor(i / CONCURRENT_BATCH_SIZE) + 1}/${Math.ceil(pairs.length / CONCURRENT_BATCH_SIZE)} completed: ${successCount}/${batch.length} successful`);
         }
         console.log(`[SIMILARITY] Processed ${similarities.size} pairs`);
         return similarities;
@@ -33956,6 +33908,182 @@ CodeAnalyzer.IMPORT_PATTERNS = [
     /(?:^|\n)[-+]\s*import\s+.*?from\s+['"]([^'"]+)['"]/g,
     /(?:^|\n)[-+]\s*import\s+['"]([^'"]+)['"]/g,
 ];
+
+
+/***/ }),
+
+/***/ 8692:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Concurrency management utility for processing items with controlled parallelism,
+ * retry logic, and progress tracking.
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ConcurrencyManager = void 0;
+const DEFAULT_OPTIONS = {
+    concurrencyLimit: 5,
+    maxRetries: 3,
+    retryDelay: 1000,
+    retryBackoffMultiplier: 2,
+    enableLogging: false,
+};
+class ConcurrencyManager {
+    /**
+     * Process items concurrently with controlled parallelism and retry logic.
+     *
+     * When an item finishes processing, the next item immediately starts - no waiting for batches.
+     * Failed items are retried with exponential backoff up to maxRetries times.
+     *
+     * @param items Array of items to process
+     * @param processor Function that processes each item
+     * @param options Configuration options
+     * @returns Array of results in the same order as input items
+     */
+    static async processConcurrentlyWithLimit(items, processor, options) {
+        const config = { ...DEFAULT_OPTIONS, ...options };
+        const results = new Array(items.length);
+        const active = new Set();
+        let completed = 0;
+        let index = 0;
+        const log = (message) => {
+            if (config.enableLogging) {
+                console.log(`[CONCURRENCY-MANAGER] ${message}`);
+            }
+        };
+        const processItem = async (item, itemIndex) => {
+            log(`Processing item ${itemIndex + 1}/${items.length}: starting`);
+            try {
+                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.retryBackoffMultiplier, config.onError);
+                log(`Processing item ${itemIndex + 1}/${items.length}: success`);
+                results[itemIndex] = result;
+            }
+            catch (error) {
+                log(`Processing item ${itemIndex + 1}/${items.length}: error - ${error}`);
+                results[itemIndex] = { error: error, item };
+            }
+            finally {
+                completed++;
+                log(`Processing item ${itemIndex + 1}/${items.length}: completed (${completed}/${items.length})`);
+                if (config.onProgress) {
+                    config.onProgress(completed, items.length);
+                }
+            }
+        };
+        return new Promise((resolve) => {
+            // Handle empty array case
+            if (items.length === 0) {
+                log('Empty items array, resolving immediately');
+                resolve(results);
+                return;
+            }
+            log(`Starting processing of ${items.length} items with limit ${config.concurrencyLimit}`);
+            const startNext = () => {
+                // Start new items while under concurrency limit and items remain
+                while (active.size < config.concurrencyLimit && index < items.length) {
+                    const currentIndex = index++;
+                    log(`Starting item ${currentIndex + 1}/${items.length}, active: ${active.size}`);
+                    const promise = processItem(items[currentIndex], currentIndex);
+                    active.add(promise);
+                    promise.finally(() => {
+                        active.delete(promise);
+                        log(`Completed item, total completed: ${completed}/${items.length}, active: ${active.size}`);
+                        if (completed === items.length) {
+                            log('All items completed, resolving');
+                            resolve(results);
+                        }
+                        else {
+                            startNext(); // Try to start next item immediately
+                        }
+                    });
+                }
+                // Log waiting status if all items started but some still processing
+                if (index >= items.length && active.size > 0) {
+                    log(`No more items to start, waiting for ${active.size} active promises`);
+                }
+            };
+            startNext();
+        });
+    }
+    /**
+     * Process a single item with retry logic and exponential backoff.
+     *
+     * @param item Item to process
+     * @param processor Processing function
+     * @param maxRetries Maximum number of retry attempts
+     * @param baseDelay Base delay between retries in milliseconds
+     * @param backoffMultiplier Multiplier for exponential backoff
+     * @param onError Optional error callback
+     * @returns Processed result
+     * @throws Error if all retry attempts fail
+     */
+    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, backoffMultiplier = 2, onError) {
+        let lastError;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                return await processor(item);
+            }
+            catch (error) {
+                lastError = error;
+                if (attempt < maxRetries) {
+                    const delay = ConcurrencyManager.calculateBackoffDelay(attempt, baseDelay, backoffMultiplier);
+                    if (onError) {
+                        onError(lastError, item, attempt + 1);
+                    }
+                    console.log(`[CONCURRENCY-MANAGER] Retry ${attempt + 1}/${maxRetries} after ${delay}ms delay`);
+                    await ConcurrencyManager.sleep(delay);
+                }
+            }
+        }
+        throw lastError;
+    }
+    /**
+     * Calculate exponential backoff delay with jitter and maximum cap.
+     *
+     * @param attempt Current attempt number (0-based)
+     * @param baseDelay Base delay in milliseconds
+     * @param multiplier Backoff multiplier
+     * @returns Delay in milliseconds
+     */
+    static calculateBackoffDelay(attempt, baseDelay, multiplier = 2) {
+        const exponentialDelay = baseDelay * Math.pow(multiplier, attempt);
+        const jitter = Math.random() * 0.1 * exponentialDelay; // Add 10% jitter
+        const delayWithJitter = exponentialDelay + jitter;
+        // Cap at 30 seconds maximum
+        return Math.min(delayWithJitter, 30000);
+    }
+    /**
+     * Sleep utility function.
+     *
+     * @param ms Milliseconds to sleep
+     * @returns Promise that resolves after the specified time
+     */
+    static sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+    /**
+     * Helper to separate successful results from errors.
+     *
+     * @param results Mixed array of results and errors
+     * @returns Object with separate successful and failed arrays
+     */
+    static separateResults(results) {
+        const successful = [];
+        const failed = [];
+        for (const result of results) {
+            if (result && typeof result === 'object' && 'error' in result) {
+                failed.push(result);
+            }
+            else {
+                successful.push(result);
+            }
+        }
+        return { successful, failed };
+    }
+}
+exports.ConcurrencyManager = ConcurrencyManager;
 
 
 /***/ }),
