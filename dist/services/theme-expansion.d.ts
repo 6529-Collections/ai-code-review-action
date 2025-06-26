@@ -5,7 +5,6 @@ export interface ExpansionConfig {
     minComplexityScore: number;
     minFilesForExpansion: number;
     businessImpactThreshold: number;
-    parallelBatchSize: number;
     concurrencyLimit: number;
     maxRetries: number;
     retryDelay: number;

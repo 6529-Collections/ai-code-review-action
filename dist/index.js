@@ -31575,9 +31575,8 @@ exports.DEFAULT_EXPANSION_CONFIG = {
     minComplexityScore: 0.7,
     minFilesForExpansion: 2,
     businessImpactThreshold: 0.6,
-    parallelBatchSize: 5,
-    concurrencyLimit: 5,
-    maxRetries: 3,
+    concurrencyLimit: 10,
+    maxRetries: 5,
     retryDelay: 1000,
     retryBackoffMultiplier: 2,
     enableProgressLogging: true,
@@ -33725,8 +33724,8 @@ class AICodeAnalyzer {
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(files, async (file) => {
             return await this.processChangedFile(file.filename, file.diffPatch, file.changeType, file.linesAdded, file.linesRemoved);
         }, {
-            concurrencyLimit: 5,
-            maxRetries: 3,
+            concurrencyLimit: 10,
+            maxRetries: 5,
             enableLogging: true,
             onProgress: (completed, total) => console.log(`[AI-CODE-ANALYZER] Progress: ${completed}/${total} files analyzed`),
             onError: (error, item, retryCount) => console.warn(`[AI-CODE-ANALYZER] Retry ${retryCount} for ${item.filename}: ${error.message}`),

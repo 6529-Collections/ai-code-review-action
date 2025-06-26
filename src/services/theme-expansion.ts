@@ -15,7 +15,6 @@ export interface ExpansionConfig {
   minComplexityScore: number; // Minimum complexity to warrant expansion (default: 0.7)
   minFilesForExpansion: number; // Minimum files required for expansion (default: 2)
   businessImpactThreshold: number; // Minimum business impact for expansion (default: 0.6)
-  parallelBatchSize: number; // Batch size for parallel processing (default: 5)
   concurrencyLimit: number; // Maximum concurrent operations (default: 5)
   maxRetries: number; // Maximum retry attempts (default: 3)
   retryDelay: number; // Base retry delay in ms (default: 1000)
@@ -28,9 +27,8 @@ export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
   minComplexityScore: 0.7,
   minFilesForExpansion: 2,
   businessImpactThreshold: 0.6,
-  parallelBatchSize: 5,
-  concurrencyLimit: 5,
-  maxRetries: 3,
+  concurrencyLimit: 10,
+  maxRetries: 5,
   retryDelay: 1000,
   retryBackoffMultiplier: 2,
   enableProgressLogging: true,
