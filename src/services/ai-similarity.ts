@@ -23,7 +23,7 @@ export class AISimilarityService {
     try {
       const tempFile = path.join(
         os.tmpdir(),
-        `claude-similarity-${Date.now()}.txt`
+        `claude-similarity-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.txt`
       );
       fs.writeFileSync(tempFile, prompt);
 

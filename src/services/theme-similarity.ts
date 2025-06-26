@@ -20,6 +20,8 @@ export class ThemeSimilarityService {
   private batchProcessor: BatchProcessor;
   private businessDomainService: BusinessDomainService;
   private themeNamingService: ThemeNamingService;
+  private pendingCalculations: Map<string, Promise<SimilarityMetrics>> =
+    new Map();
 
   constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>) {
     this.config = {
@@ -52,8 +54,18 @@ export class ThemeSimilarityService {
     theme1: Theme,
     theme2: Theme
   ): Promise<SimilarityMetrics> {
-    // Check cache first
     const cacheKey = this.similarityCache.getCacheKey(theme1, theme2);
+
+    // Check if already calculating
+    const pending = this.pendingCalculations.get(cacheKey);
+    if (pending) {
+      console.log(
+        `[PENDING] Waiting for pending calculation: "${theme1.name}" vs "${theme2.name}"`
+      );
+      return pending;
+    }
+
+    // Check cache
     const cached = this.similarityCache.getCachedSimilarity(cacheKey);
     if (cached) {
       console.log(
@@ -62,6 +74,27 @@ export class ThemeSimilarityService {
       return cached.similarity;
     }
 
+    // Start new calculation
+    const calculationPromise = this.doCalculateSimilarity(
+      theme1,
+      theme2,
+      cacheKey
+    );
+    this.pendingCalculations.set(cacheKey, calculationPromise);
+
+    try {
+      const result = await calculationPromise;
+      return result;
+    } finally {
+      this.pendingCalculations.delete(cacheKey);
+    }
+  }
+
+  private async doCalculateSimilarity(
+    theme1: Theme,
+    theme2: Theme,
+    cacheKey: string
+  ): Promise<SimilarityMetrics> {
     // Only skip if absolutely certain they're different
     const fileOverlap = this.similarityCalculator.calculateFileOverlap(
       theme1.affectedFiles,
@@ -173,27 +206,54 @@ export class ThemeSimilarityService {
     pairs: ThemePair[]
   ): Promise<Map<string, SimilarityMetrics>> {
     const similarities = new Map<string, SimilarityMetrics>();
+    const CONCURRENT_BATCH_SIZE = 10; // Process 10 similarities concurrently
 
-    // Process all pairs through calculateSimilarity (which handles caching and skipping)
-    for (const pair of pairs) {
-      try {
-        const similarity = await this.calculateSimilarity(
-          pair.theme1,
-          pair.theme2
-        );
-        similarities.set(pair.id, similarity);
-      } catch (error) {
-        console.warn(`[SIMILARITY] Failed to process pair ${pair.id}:`, error);
-        // Use non-match result for failed comparisons
-        similarities.set(pair.id, {
-          combinedScore: 0,
-          nameScore: 0,
-          descriptionScore: 0,
-          fileOverlap: 0,
-          patternScore: 0,
-          businessScore: 0,
-        });
+    console.log(
+      `[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of ${CONCURRENT_BATCH_SIZE}`
+    );
+
+    // Process in concurrent batches
+    for (let i = 0; i < pairs.length; i += CONCURRENT_BATCH_SIZE) {
+      const batch = pairs.slice(i, i + CONCURRENT_BATCH_SIZE);
+      const batchPromises = batch.map(async (pair) => {
+        try {
+          const similarity = await this.calculateSimilarity(
+            pair.theme1,
+            pair.theme2
+          );
+          return { id: pair.id, similarity, success: true };
+        } catch (error) {
+          console.warn(
+            `[SIMILARITY] Failed to process pair ${pair.id}:`,
+            error
+          );
+          // Use non-match result for failed comparisons
+          return {
+            id: pair.id,
+            similarity: {
+              combinedScore: 0,
+              nameScore: 0,
+              descriptionScore: 0,
+              fileOverlap: 0,
+              patternScore: 0,
+              businessScore: 0,
+            },
+            success: false,
+          };
+        }
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+
+      // Store results
+      for (const result of batchResults) {
+        similarities.set(result.id, result.similarity);
       }
+
+      const successCount = batchResults.filter((r) => r.success).length;
+      console.log(
+        `[SIMILARITY] Batch ${Math.floor(i / CONCURRENT_BATCH_SIZE) + 1}/${Math.ceil(pairs.length / CONCURRENT_BATCH_SIZE)} completed: ${successCount}/${batch.length} successful`
+      );
     }
 
     console.log(`[SIMILARITY] Processed ${similarities.size} pairs`);
