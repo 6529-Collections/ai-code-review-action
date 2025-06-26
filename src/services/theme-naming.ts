@@ -1,6 +1,6 @@
 import { Theme } from './theme-service';
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { CodeChange } from '../utils/code-analyzer';
+import { CodeChange } from '../utils/ai-code-analyzer';
 import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';

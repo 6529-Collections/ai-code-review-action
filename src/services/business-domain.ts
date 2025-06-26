@@ -1,5 +1,5 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { CodeChange } from '../utils/code-analyzer';
+import { CodeChange } from '../utils/ai-code-analyzer';
 import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';

@@ -1,6 +1,6 @@
 import { Theme } from './theme-service';
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { CodeChange } from '../utils/code-analyzer';
+import { CodeChange } from '../utils/ai-code-analyzer';
 export declare class ThemeNamingService {
     generateMergedThemeNameAndDescription(themes: Theme[]): Promise<{
         name: string;

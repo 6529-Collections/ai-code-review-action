@@ -191,8 +191,8 @@ export class AICodeAnalyzer {
         );
       },
       {
-        concurrencyLimit: 5,
-        maxRetries: 3,
+        concurrencyLimit: 10,
+        maxRetries: 5,
         enableLogging: true,
         onProgress: (completed, total) =>
           console.log(

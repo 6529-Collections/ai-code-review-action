@@ -2,7 +2,7 @@ import { ConsolidatedTheme } from '../types/similarity-types';
 import { GenericCache } from '../utils/generic-cache';
 import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
-import { CodeChange, SmartContext } from '../utils/code-analyzer';
+import { CodeChange, SmartContext } from '../utils/ai-code-analyzer';
 import { logInfo } from '../utils';
 import {
   ConcurrencyManager,
