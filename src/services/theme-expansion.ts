@@ -4,6 +4,10 @@ import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
 import { CodeChange, SmartContext } from '../utils/code-analyzer';
 import { logInfo } from '../utils';
+import {
+  ConcurrencyManager,
+  ConcurrencyOptions,
+} from '../utils/concurrency-manager';
 
 // Configuration for theme expansion
 export interface ExpansionConfig {
@@ -99,154 +103,25 @@ export class ThemeExpansionService {
       onError?: (error: Error, item: T, retryCount: number) => void;
     }
   ): Promise<Array<R | { error: Error; item: T }>> {
-    const {
-      concurrencyLimit = this.config.concurrencyLimit,
-      maxRetries = this.config.maxRetries,
-      retryDelay = this.config.retryDelay,
-      onProgress,
-      onError,
-    } = options || {};
-
-    const results: Array<R | { error: Error; item: T }> = new Array(
-      items.length
-    );
-    const active = new Set<Promise<void>>();
-    let completed = 0;
-    let index = 0;
-
-    const processItem = async (item: T, itemIndex: number): Promise<void> => {
-      console.log(`[DEBUG-CONCURRENCY] Processing item ${itemIndex}: starting`);
-      try {
-        const result = await this.processWithRetry(
-          item,
-          processor,
-          maxRetries,
-          retryDelay,
-          onError
-        );
-        console.log(
-          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: success`
-        );
-        results[itemIndex] = result;
-      } catch (error) {
-        console.log(
-          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: error - ${error}`
-        );
-        results[itemIndex] = { error: error as Error, item };
-      } finally {
-        completed++;
-        console.log(
-          `[DEBUG-CONCURRENCY] Processing item ${itemIndex}: completed (${completed}/${items.length})`
-        );
-        if (onProgress && this.config.enableProgressLogging) {
-          onProgress(completed, items.length);
-        }
-      }
+    const concurrencyOptions: ConcurrencyOptions<T> = {
+      concurrencyLimit:
+        options?.concurrencyLimit || this.config.concurrencyLimit,
+      maxRetries: options?.maxRetries || this.config.maxRetries,
+      retryDelay: options?.retryDelay || this.config.retryDelay,
+      retryBackoffMultiplier: this.config.retryBackoffMultiplier,
+      onProgress:
+        options?.onProgress && this.config.enableProgressLogging
+          ? options.onProgress
+          : undefined,
+      onError: options?.onError,
+      enableLogging: this.config.enableProgressLogging,
     };
 
-    return new Promise((resolve) => {
-      // Handle empty array case
-      if (items.length === 0) {
-        console.log(
-          `[DEBUG-CONCURRENCY] Empty items array, resolving immediately`
-        );
-        resolve(results);
-        return;
-      }
-
-      console.log(
-        `[DEBUG-CONCURRENCY] Starting processing of ${items.length} items with limit ${concurrencyLimit}`
-      );
-
-      const startNext = () => {
-        while (active.size < concurrencyLimit && index < items.length) {
-          const currentIndex = index++;
-          console.log(
-            `[DEBUG-CONCURRENCY] Starting item ${currentIndex + 1}/${items.length}, active: ${active.size}`
-          );
-          const promise = processItem(items[currentIndex], currentIndex);
-          active.add(promise);
-
-          promise.finally(() => {
-            active.delete(promise);
-            console.log(
-              `[DEBUG-CONCURRENCY] Completed item, total completed: ${completed}/${items.length}, active: ${active.size}`
-            );
-            if (completed === items.length) {
-              console.log(`[DEBUG-CONCURRENCY] All items completed, resolving`);
-              resolve(results);
-            } else {
-              startNext();
-            }
-          });
-        }
-
-        // If we have active promises but no more items to start, log status
-        if (index >= items.length && active.size > 0) {
-          console.log(
-            `[DEBUG-CONCURRENCY] No more items to start, waiting for ${active.size} active promises`
-          );
-        }
-      };
-
-      startNext();
-    });
-  }
-
-  /**
-   * Process single item with retry logic
-   */
-  private async processWithRetry<T, R>(
-    item: T,
-    processor: (item: T) => Promise<R>,
-    maxRetries: number,
-    baseDelay: number,
-    onError?: (error: Error, item: T, retryCount: number) => void
-  ): Promise<R | { error: Error; item: T }> {
-    let lastError: Error;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        return await processor(item);
-      } catch (error) {
-        lastError = error as Error;
-
-        if (attempt < maxRetries) {
-          const delay = this.calculateBackoffDelay(attempt, baseDelay);
-
-          if (onError) {
-            onError(lastError, item, attempt + 1);
-          }
-
-          if (this.config.enableProgressLogging) {
-            console.log(
-              `[THEME-EXPANSION] Retry ${attempt + 1}/${maxRetries} after ${delay}ms delay`
-            );
-          }
-
-          await this.sleep(delay);
-        }
-      }
-    }
-
-    return { error: lastError!, item };
-  }
-
-  /**
-   * Calculate exponential backoff delay
-   */
-  private calculateBackoffDelay(attempt: number, baseDelay: number): number {
-    return Math.min(
-      baseDelay * Math.pow(this.config.retryBackoffMultiplier, attempt),
-      30000 // Max 30 seconds
+    return ConcurrencyManager.processConcurrentlyWithLimit(
+      items,
+      processor,
+      concurrencyOptions
     );
-  }
-
-  /**
-   * Sleep utility
-   */
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

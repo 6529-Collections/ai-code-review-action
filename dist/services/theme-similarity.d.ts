@@ -8,8 +8,10 @@ export declare class ThemeSimilarityService {
     private batchProcessor;
     private businessDomainService;
     private themeNamingService;
+    private pendingCalculations;
     constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>);
     calculateSimilarity(theme1: Theme, theme2: Theme): Promise<SimilarityMetrics>;
+    private doCalculateSimilarity;
     consolidateThemes(themes: Theme[]): Promise<ConsolidatedTheme[]>;
     private findMergeGroups;
     private calculateBatchSimilarities;

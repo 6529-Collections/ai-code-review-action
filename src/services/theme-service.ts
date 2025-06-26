@@ -12,6 +12,7 @@ import {
 } from '../types/similarity-types';
 import { CodeAnalyzer, CodeChange, SmartContext } from '../utils/code-analyzer';
 import { JsonExtractor } from '../utils/json-extractor';
+import { ConcurrencyManager } from '../utils/concurrency-manager';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
@@ -573,41 +574,38 @@ class ThemeContextManager {
   }
 }
 
-// Utility function for batch processing with concurrency control
+// Legacy batch processing - use ConcurrencyManager.processConcurrentlyWithLimit instead
 async function processBatches<T, R>(
   items: T[],
   batchSize: number,
   processor: (item: T) => Promise<R>
 ): Promise<R[]> {
-  const results: R[] = [];
+  console.warn(
+    '[THEME-SERVICE] Using legacy processBatches - consider migrating to ConcurrencyManager'
+  );
 
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize);
-    const batchPromises = batch.map((item) =>
-      Promise.race([
-        processor(item),
-        new Promise<R>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Timeout')),
-            PARALLEL_CONFIG.CHUNK_TIMEOUT
-          )
-        ),
-      ])
-    );
+  const results = await ConcurrencyManager.processConcurrentlyWithLimit(
+    items,
+    processor,
+    {
+      concurrencyLimit: batchSize,
+      maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
+      enableLogging: true,
+    }
+  );
 
-    const batchResults = await Promise.allSettled(batchPromises);
-    for (let j = 0; j < batchResults.length; j++) {
-      const result = batchResults[j];
-      if (result.status === 'fulfilled') {
-        results.push(result.value);
-      } else {
-        console.warn(`Batch item ${i + j} failed:`, result.reason);
-        // Add a fallback result or skip
-      }
+  // Extract successful results and log failures
+  const successful: R[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result && typeof result === 'object' && 'error' in result) {
+      console.warn(`Batch item ${i} failed:`, result.error.message);
+    } else {
+      successful.push(result as R);
     }
   }
 
-  return results;
+  return successful;
 }
 
 export class ThemeService {

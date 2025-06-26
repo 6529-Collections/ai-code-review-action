@@ -60,18 +60,6 @@ export declare class ThemeExpansionService {
      */
     private processConcurrentlyWithLimit;
     /**
-     * Process single item with retry logic
-     */
-    private processWithRetry;
-    /**
-     * Calculate exponential backoff delay
-     */
-    private calculateBackoffDelay;
-    /**
-     * Sleep utility
-     */
-    private sleep;
-    /**
      * Main entry point for expanding themes hierarchically
      */
     expandThemesHierarchically(consolidatedThemes: ConsolidatedTheme[]): Promise<ConsolidatedTheme[]>;
