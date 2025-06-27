@@ -32645,8 +32645,8 @@ class ClaudeService {
     constructor(_apiKey) {
         this._apiKey = _apiKey;
     }
-    async analyzeChunk(chunk, context) {
-        const prompt = this.buildAnalysisPrompt(chunk, context);
+    async analyzeChunk(chunk, context, codeChange) {
+        const prompt = this.buildAnalysisPrompt(chunk, context, codeChange);
         let output = '';
         let tempFile = null;
         try {
@@ -32660,7 +32660,7 @@ class ClaudeService {
                     },
                 },
             });
-            const result = this.parseClaudeResponse(output, chunk);
+            const result = this.parseClaudeResponse(output, chunk, codeChange);
             return result;
         }
         catch (err) {
@@ -32682,27 +32682,27 @@ class ClaudeService {
             }
         }
     }
-    _buildEnhancedAnalysisPrompt(chunk, context, codeChange, smartContext) {
+    buildAnalysisPrompt(chunk, context, codeChange) {
         // Limit content length to avoid overwhelming Claude
         const maxContentLength = 2000;
         const truncatedContent = chunk.content.length > maxContentLength
             ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
             : chunk.content;
+        // Build enhanced context with pre-extracted data
         let enhancedContext = context;
-        // Add algorithmic context if available
-        if (codeChange && smartContext) {
-            enhancedContext += `\n\nCODE ANALYSIS CONTEXT:`;
-            enhancedContext += `\nFile: ${codeChange.file} (${codeChange.changeType})`;
-            enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
+        if (codeChange) {
+            enhancedContext += `\n\nPre-analyzed code structure:`;
             enhancedContext += `\nFile type: ${codeChange.fileType}`;
+            enhancedContext += `\nComplexity: ${codeChange.codeComplexity}`;
+            enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
             if (codeChange.functionsChanged.length > 0) {
-                enhancedContext += `\nFunctions affected: ${codeChange.functionsChanged.slice(0, 3).join(', ')}${codeChange.functionsChanged.length > 3 ? '...' : ''}`;
+                enhancedContext += `\nFunctions changed: ${codeChange.functionsChanged.join(', ')}`;
             }
             if (codeChange.classesChanged.length > 0) {
-                enhancedContext += `\nClasses/interfaces affected: ${codeChange.classesChanged.slice(0, 3).join(', ')}${codeChange.classesChanged.length > 3 ? '...' : ''}`;
+                enhancedContext += `\nClasses changed: ${codeChange.classesChanged.join(', ')}`;
             }
             if (codeChange.importsChanged.length > 0) {
-                enhancedContext += `\nImports affected: ${codeChange.importsChanged.slice(0, 2).join(', ')}${codeChange.importsChanged.length > 2 ? '...' : ''}`;
+                enhancedContext += `\nImports changed: ${codeChange.importsChanged.join(', ')}`;
             }
             if (codeChange.isTestFile) {
                 enhancedContext += `\nThis is a TEST file`;
@@ -32710,47 +32710,8 @@ class ClaudeService {
             if (codeChange.isConfigFile) {
                 enhancedContext += `\nThis is a CONFIG file`;
             }
-            enhancedContext += `\nOverall complexity: ${smartContext.fileMetrics.codeComplexity}`;
         }
         return `${enhancedContext}
-
-Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
-
-File: ${chunk.filename}
-Code changes:
-${truncatedContent}
-
-Focus on:
-- What user experience or workflow is being improved?
-- What business capability is being added/removed/enhanced?
-- What problem is this solving for end users?
-- Think like a product manager, not a developer
-
-Examples of good business-focused themes:
-- "Remove demo functionality" (not "Delete greeting parameter")
-- "Improve code review automation" (not "Add AI services")
-- "Simplify configuration" (not "Update workflow files")
-- "Add pull request feedback" (not "Implement commenting system")
-
-CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
-
-Start your response with { and end with }. Example:
-{
-  "themeName": "user/business-focused name (what value does this provide?)",
-  "description": "what business problem this solves or capability it provides",
-  "businessImpact": "how this affects user experience or business outcomes",
-  "suggestedParent": null,
-  "confidence": 0.8,
-  "codePattern": "what pattern this represents"
-}`;
-    }
-    buildAnalysisPrompt(chunk, context) {
-        // Limit content length to avoid overwhelming Claude
-        const maxContentLength = 2000;
-        const truncatedContent = chunk.content.length > maxContentLength
-            ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
-            : chunk.content;
-        return `${context}
 
 Analyze this code change. Be specific but concise.
 
@@ -32759,9 +32720,9 @@ Code changes:
 ${truncatedContent}
 
 Focus on WHAT changed with exact details:
-- Specific function/class/variable names modified
 - Exact values changed (before → after)
-- Concrete files affected
+- Business purpose of the changes
+- User impact
 
 Examples:
 ✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
@@ -32779,14 +32740,12 @@ CRITICAL: Respond with ONLY valid JSON:
   "technicalSummary": "exact technical change (max 12 words)",
   "keyChanges": ["max 3 changes, each max 10 words"],
   "userScenario": null,
-  "mainFunctionsChanged": ["exact function names only"],
-  "mainClassesChanged": ["exact class names only"],
   "suggestedParent": null,
   "confidence": 0.8,
   "codePattern": "change type (max 3 words)"
 }`;
     }
-    parseClaudeResponse(output, chunk) {
+    parseClaudeResponse(output, chunk, codeChange) {
         const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
         if (extractionResult.success) {
             const data = extractionResult.data;
@@ -32801,8 +32760,8 @@ CRITICAL: Respond with ONLY valid JSON:
                 technicalSummary: data.technicalSummary,
                 keyChanges: data.keyChanges,
                 userScenario: data.userScenario,
-                mainFunctionsChanged: data.mainFunctionsChanged,
-                mainClassesChanged: data.mainClassesChanged,
+                mainFunctionsChanged: codeChange?.functionsChanged || data.mainFunctionsChanged || [],
+                mainClassesChanged: codeChange?.classesChanged || data.mainClassesChanged || [],
             };
         }
         console.warn('[THEME-SERVICE] JSON extraction failed:', extractionResult.error);
@@ -32849,10 +32808,10 @@ class ThemeContextManager {
         const placement = this.determineThemePlacement(analysis);
         this.updateContext(placement, analysis, chunk);
     }
-    async analyzeChunkOnly(chunk) {
+    async analyzeChunkOnly(chunk, codeChange) {
         try {
             const contextString = this.buildContextForClaude();
-            const analysis = await this.claudeService.analyzeChunk(chunk, contextString);
+            const analysis = await this.claudeService.analyzeChunk(chunk, contextString, codeChange);
             return { chunk, analysis };
         }
         catch (error) {
@@ -32863,13 +32822,14 @@ class ThemeContextManager {
             };
         }
     }
-    processBatchResults(results) {
+    processBatchResults(results, codeChangeMap) {
         for (const result of results) {
             if (result.error) {
                 console.warn(`Chunk analysis failed for ${result.chunk.filename}: ${result.error}`);
             }
             const placement = this.determineThemePlacement(result.analysis);
-            this.updateContext(placement, result.analysis, result.chunk);
+            const codeChange = codeChangeMap.get(result.chunk.filename);
+            this.updateContext(placement, result.analysis, result.chunk, codeChange);
         }
     }
     createFallbackAnalysis(chunk) {
@@ -32913,7 +32873,7 @@ class ThemeContextManager {
         const commonWords = words1.filter((word) => words2.includes(word));
         return commonWords.length / Math.max(words1.length, words2.length);
     }
-    updateContext(placement, analysis, chunk) {
+    updateContext(placement, analysis, chunk, codeChange) {
         if (placement.action === 'merge' && placement.targetThemeId) {
             const existingTheme = this.context.themes.get(placement.targetThemeId);
             if (existingTheme) {
@@ -32921,6 +32881,23 @@ class ThemeContextManager {
                 existingTheme.codeSnippets.push(chunk.content);
                 existingTheme.context += `\n${analysis.description}`;
                 existingTheme.lastAnalysis = new Date();
+                // Add CodeChange data to existing theme
+                if (codeChange) {
+                    existingTheme.codeChanges.push(codeChange);
+                    // Update metrics
+                    if (existingTheme.codeMetrics && codeChange) {
+                        existingTheme.codeMetrics.linesAdded += codeChange.linesAdded;
+                        existingTheme.codeMetrics.linesRemoved += codeChange.linesRemoved;
+                        existingTheme.codeMetrics.filesChanged += 1;
+                    }
+                    else if (codeChange) {
+                        existingTheme.codeMetrics = {
+                            linesAdded: codeChange.linesAdded,
+                            linesRemoved: codeChange.linesRemoved,
+                            filesChanged: 1,
+                        };
+                    }
+                }
             }
         }
         else {
@@ -32938,24 +32915,29 @@ class ThemeContextManager {
                     fileMetrics: {
                         totalFiles: 1,
                         fileTypes: [chunk.filename.split('.').pop() || 'unknown'],
-                        hasTests: false,
-                        hasConfig: false,
-                        codeComplexity: 'low',
+                        hasTests: codeChange?.isTestFile || false,
+                        hasConfig: codeChange?.isConfigFile || false,
+                        codeComplexity: codeChange?.codeComplexity || 'low',
                     },
                     changePatterns: {
-                        newFunctions: [],
-                        modifiedFunctions: [],
-                        newImports: [],
+                        newFunctions: codeChange?.functionsChanged || [],
+                        modifiedFunctions: codeChange?.functionsChanged || [],
+                        newImports: codeChange?.importsChanged || [],
                         removedImports: [],
-                        newClasses: [],
-                        modifiedClasses: [],
-                        architecturalPatterns: [],
-                        businessDomains: [],
+                        newClasses: codeChange?.classesChanged || [],
+                        modifiedClasses: codeChange?.classesChanged || [],
+                        architecturalPatterns: codeChange?.architecturalPatterns || [],
+                        businessDomains: codeChange?.businessDomain
+                            ? [codeChange.businessDomain]
+                            : [],
                     },
-                    contextSummary: `Single chunk: ${chunk.filename}`,
-                    significantChanges: [],
+                    contextSummary: codeChange?.semanticDescription ||
+                        `Single chunk: ${chunk.filename}`,
+                    significantChanges: codeChange?.semanticDescription
+                        ? [codeChange.semanticDescription]
+                        : [],
                 },
-                codeChanges: [],
+                codeChanges: codeChange ? [codeChange] : [],
                 lastAnalysis: new Date(),
                 // New detailed fields
                 detailedDescription: analysis.detailedDescription,
@@ -32964,6 +32946,13 @@ class ThemeContextManager {
                 userScenario: analysis.userScenario,
                 mainFunctionsChanged: analysis.mainFunctionsChanged,
                 mainClassesChanged: analysis.mainClassesChanged,
+                codeMetrics: codeChange
+                    ? {
+                        linesAdded: codeChange.linesAdded,
+                        linesRemoved: codeChange.linesRemoved,
+                        filesChanged: 1,
+                    }
+                    : undefined,
             };
             this.context.themes.set(newTheme.id, newTheme);
             if (newTheme.level === 0) {
@@ -33003,7 +32992,7 @@ class ThemeService {
         const aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(this.anthropicApiKey);
         const smartContext = await aiAnalyzer.analyzeCodeChanges(codeChanges);
         console.log(`[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`);
-        // Convert to the legacy format temporarily while we transition
+        // Convert to the legacy format for ChunkProcessor compatibility
         const changedFiles = codeChanges.map((change) => ({
             filename: change.file,
             status: change.changeType,
@@ -33011,14 +33000,14 @@ class ThemeService {
             deletions: change.linesRemoved,
             patch: change.diffHunk,
         }));
-        return this.analyzeThemesInternal(changedFiles, [], null, startTime);
+        return this.analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime);
     }
     async analyzeThemes(changedFiles) {
         console.log('[THEME-SERVICE] Starting legacy theme analysis');
         const startTime = Date.now();
         return this.analyzeThemesInternal(changedFiles, [], null, startTime);
     }
-    async analyzeThemesInternal(changedFiles, _codeChanges, _smartContext, startTime) {
+    async analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime) {
         const analysisResult = {
             themes: [],
             originalThemes: [],
@@ -33044,13 +33033,21 @@ class ThemeService {
             return analysisResult;
         }
         try {
+            // Create lookup map for CodeChange data
+            const codeChangeMap = new Map();
+            codeChanges.forEach((change) => {
+                codeChangeMap.set(change.file, change);
+            });
             const contextManager = new ThemeContextManager(this.anthropicApiKey);
             const chunkProcessor = new ChunkProcessor();
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
             // Parallel processing: analyze all chunks concurrently, then update context sequentially
             console.log(`[THEME-SERVICE] Starting concurrent analysis of ${chunks.length} chunks`);
-            const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(chunks, (chunk) => contextManager.analyzeChunkOnly(chunk), {
+            const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(chunks, (chunk) => {
+                const codeChange = codeChangeMap.get(chunk.filename);
+                return contextManager.analyzeChunkOnly(chunk, codeChange);
+            }, {
                 concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
                 maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
                 enableLogging: true,
@@ -33088,7 +33085,7 @@ class ThemeService {
             }
             console.log(`[THEME-SERVICE] Analysis completed: ${analysisResults.length} chunks processed`);
             // Sequential context updates to maintain thread safety
-            contextManager.processBatchResults(analysisResults);
+            contextManager.processBatchResults(analysisResults, codeChangeMap);
             contextManager.setProcessingState('complete');
             const originalThemes = contextManager.getRootThemes();
             const consolidationStartTime = Date.now();
