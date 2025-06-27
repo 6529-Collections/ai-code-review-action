@@ -24,16 +24,22 @@ export async function run(): Promise<void> {
       allowedTools: [],
       hasTrustDialogAccepted: true,
       permissions: {
-        allow: ["*"]
-      }
+        allow: ['*'],
+      },
     };
-    await exec.exec('bash', ['-c', `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`]);
+    await exec.exec('bash', [
+      '-c',
+      `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
+    ]);
     logInfo('Claude CLI configuration initialized');
 
     logInfo('Starting AI code review analysis...');
 
     // Initialize services with AI code analysis
-    const gitService = new GitService(inputs.githubToken || '', inputs.anthropicApiKey);
+    const gitService = new GitService(
+      inputs.githubToken || '',
+      inputs.anthropicApiKey
+    );
     const themeService = new ThemeService(inputs.anthropicApiKey);
 
     // Get PR context and changed files
@@ -60,17 +66,24 @@ export async function run(): Promise<void> {
 
     // Analyze themes
     logInfo('Analyzing code themes...');
-    const themeAnalysis = await themeService.analyzeThemesWithEnhancedContext(gitService);
+    const themeAnalysis =
+      await themeService.analyzeThemesWithEnhancedContext(gitService);
 
     // Debug: Log theme analysis result
     console.log(`[DEBUG] Theme analysis completed:`);
     console.log(`[DEBUG] - Total themes: ${themeAnalysis.totalThemes}`);
-    console.log(`[DEBUG] - Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`);
+    console.log(
+      `[DEBUG] - Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`
+    );
     console.log(`[DEBUG] - Processing time: ${themeAnalysis.processingTime}ms`);
-    console.log(`[DEBUG] - Has expansion stats: ${!!themeAnalysis.expansionStats}`);
-    
+    console.log(
+      `[DEBUG] - Has expansion stats: ${!!themeAnalysis.expansionStats}`
+    );
+
     if (themeAnalysis.themes) {
-      console.log(`[DEBUG] - Theme names: ${themeAnalysis.themes.map(t => t.name).join(', ')}`);
+      console.log(
+        `[DEBUG] - Theme names: ${themeAnalysis.themes.map((t) => t.name).join(', ')}`
+      );
     } else {
       console.log(`[DEBUG] - Themes is null/undefined!`);
     }
@@ -78,13 +91,21 @@ export async function run(): Promise<void> {
     // Output results using enhanced formatter
     try {
       console.log(`[DEBUG] Starting output formatting...`);
-      
+
       // Use the new ThemeFormatter for better hierarchical display
-      const detailedThemes = ThemeFormatter.formatThemesForOutput(themeAnalysis.themes);
-      console.log(`[DEBUG] Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
-      
-      const safeSummary = ThemeFormatter.createThemeSummary(themeAnalysis.themes);
-      console.log(`[DEBUG] Summary created, length: ${safeSummary?.length || 'undefined'}`);
+      const detailedThemes = ThemeFormatter.formatThemesForOutput(
+        themeAnalysis.themes
+      );
+      console.log(
+        `[DEBUG] Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`
+      );
+
+      const safeSummary = ThemeFormatter.createThemeSummary(
+        themeAnalysis.themes
+      );
+      console.log(
+        `[DEBUG] Summary created, length: ${safeSummary?.length || 'undefined'}`
+      );
 
       console.log(`[DEBUG] Setting outputs...`);
       core.setOutput('themes', detailedThemes);
@@ -92,14 +113,19 @@ export async function run(): Promise<void> {
       console.log(`[DEBUG] Outputs set successfully`);
 
       logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
-      
+
       // Log expansion statistics if available
       if (themeAnalysis.expansionStats) {
-        logInfo(`Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
+        logInfo(
+          `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`
+        );
       }
     } catch (error) {
       console.error(`[DEBUG] Error in output formatting:`, error);
-      console.error(`[DEBUG] Error stack:`, error instanceof Error ? error.stack : 'No stack trace');
+      console.error(
+        `[DEBUG] Error stack:`,
+        error instanceof Error ? error.stack : 'No stack trace'
+      );
       logInfo(`Failed to set outputs: ${error}`);
       core.setOutput('themes', 'No themes found');
       core.setOutput('summary', 'Output generation failed');
