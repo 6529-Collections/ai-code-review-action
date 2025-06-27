@@ -276,44 +276,38 @@ Start your response with { and end with }. Example:
 
     return `${context}
 
-Analyze this code change thoroughly. Be SPECIFIC and DETAILED.
+Analyze this code change. Be specific but concise.
 
 File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Provide a comprehensive analysis that helps developers and stakeholders understand:
-1. What EXACTLY is changing - use specific names, values, and details from the code
-2. WHY this matters - both technical and user/business impact  
-3. Important technical details - what functions, classes, configs, parameters changed
-4. How this relates to the overall system
+Focus on WHAT changed with exact details:
+- Specific function/class/variable names modified
+- Exact values changed (before → after)
+- Concrete files affected
 
-Be specific! Examples of good specific analysis:
-- Instead of "Updated configuration" → "Changed pull_request.branches from ['main'] to ['**'] in CI workflow"
-- Instead of "Added new fields" → "Added detailedDescription, technicalSummary, and keyChanges fields to Theme interface"
-- Instead of "Improved error handling" → "Replaced JSON.parse() with JsonExtractor.extractAndValidateJson() in parseClaudeResponse()"
+Examples:
+✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
+✅ "Added detailedDescription field to ConsolidatedTheme interface"
+❌ "Enhanced workflow configuration for improved flexibility"
+❌ "Expanded theme structure with comprehensive analysis capabilities"
 
-Don't be generic. Look at the actual code and tell me:
-- What specific values changed?
-- What exact functions/methods were added or modified?
-- What configuration parameters were updated?
-- What the before/after states are?
-
-CRITICAL: Respond with ONLY valid JSON. Start with { and end with }
+CRITICAL: Respond with ONLY valid JSON:
 
 {
-  "themeName": "what user value this provides (be specific)",
-  "description": "one clear sentence about what changed",
-  "detailedDescription": "2-3 sentences with SPECIFIC details - mention actual names, values, and changes from the code",
-  "businessImpact": "concrete impact on users with specific examples",
-  "technicalSummary": "exact technical changes - name the specific functions, fields, values that changed",
-  "keyChanges": ["specific change with actual names/values", "another specific change", "third specific change"],
-  "userScenario": "specific example: 'A developer creating a PR to the feature/xyz branch will now...'",
-  "mainFunctionsChanged": ["actualFunctionName1", "actualFunctionName2"],
-  "mainClassesChanged": ["ActualClassName1", "ActualClassName2"],
+  "themeName": "what this accomplishes (max 10 words)",
+  "description": "one specific sentence with exact names/values (max 20 words)",
+  "detailedDescription": "additional context if needed (max 15 words, or null)",
+  "businessImpact": "user benefit in one sentence (max 15 words)",
+  "technicalSummary": "exact technical change (max 12 words)",
+  "keyChanges": ["max 3 changes, each max 10 words"],
+  "userScenario": null,
+  "mainFunctionsChanged": ["exact function names only"],
+  "mainClassesChanged": ["exact class names only"],
   "suggestedParent": null,
   "confidence": 0.8,
-  "codePattern": "what type of change this is"
+  "codePattern": "change type (max 3 words)"
 }`;
   }
 

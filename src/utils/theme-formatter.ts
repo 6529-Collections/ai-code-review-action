@@ -32,12 +32,6 @@ export class ThemeFormatter {
   ): string {
     const indent = '   '.repeat(depth);
     const confidence = (theme.confidence * 100).toFixed(0);
-    const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
-    const moreFiles =
-      theme.affectedFiles.length > this.MAX_FILES_SHOWN
-        ? ` (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
-        : '';
-
     // Create theme number (e.g., "1", "1.1", "1.1.1")
     const themeNumber = parentNumber
       ? `${parentNumber}.${number}`
@@ -49,65 +43,47 @@ export class ThemeFormatter {
       this.MAX_DESCRIPTION_LENGTH
     );
 
-    let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}% confidence)`;
-    output += `\\n${indent}   - Files: ${files}${moreFiles}`;
-    output += `\\n${indent}   - ${description}`;
+    let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
 
-    // Show detailed description if available
-    if (theme.detailedDescription) {
-      output += `\\n${indent}   - **Details**: ${theme.detailedDescription}`;
+    // Files (condensed)
+    const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
+    const fileList =
+      theme.affectedFiles.length > this.MAX_FILES_SHOWN
+        ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
+        : files;
+    output += `\\n${indent}• Files: ${fileList}`;
+
+    // Main description
+    output += `\\n${indent}• ${description}`;
+
+    // Show detailed description only if significantly different and adds value
+    if (
+      theme.detailedDescription &&
+      theme.detailedDescription.length > 20 &&
+      !theme.description
+        .toLowerCase()
+        .includes(theme.detailedDescription.toLowerCase().substring(0, 10))
+    ) {
+      output += `\\n${indent}• Details: ${theme.detailedDescription}`;
     }
 
-    // Show technical summary if available
-    if (theme.technicalSummary) {
-      output += `\\n${indent}   - **Technical**: ${theme.technicalSummary}`;
+    // Show business impact if different from description
+    if (
+      theme.businessImpact &&
+      theme.businessImpact.length > 10 &&
+      !theme.description
+        .toLowerCase()
+        .includes(theme.businessImpact.toLowerCase().substring(0, 10))
+    ) {
+      output += `\\n${indent}• Impact: ${theme.businessImpact}`;
     }
 
-    // Show key changes as bullet points
-    if (theme.keyChanges && theme.keyChanges.length > 0) {
-      output += `\\n${indent}   - **Key Changes**:`;
-      theme.keyChanges.forEach((change) => {
-        output += `\\n${indent}     • ${change}`;
-      });
-    }
-
-    // Show user scenario if available
-    if (theme.userScenario) {
-      output += `\\n${indent}   - **User Impact**: ${theme.userScenario}`;
-    }
-
-    // Show code metrics if available
-    if (theme.codeMetrics) {
-      const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-      output += `\\n${indent}   - **Code Metrics**: +${linesAdded}/-${linesRemoved} lines across ${filesChanged} files`;
-    }
-
-    // Show functions/classes changed if available
-    if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
-      output += `\\n${indent}   - **Functions**: ${theme.mainFunctionsChanged.slice(0, 3).join(', ')}${theme.mainFunctionsChanged.length > 3 ? ` (+${theme.mainFunctionsChanged.length - 3} more)` : ''}`;
-    }
-
-    if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
-      output += `\\n${indent}   - **Classes**: ${theme.mainClassesChanged.slice(0, 3).join(', ')}${theme.mainClassesChanged.length > 3 ? ` (+${theme.mainClassesChanged.length - 3} more)` : ''}`;
-    }
-
-    // Show consolidation info
-    if (theme.consolidationMethod === 'merge') {
-      output += `\\n${indent}   - 🔄 Merged from ${theme.sourceThemes.length} similar themes`;
-      if (theme.consolidationSummary) {
-        output += `: ${theme.consolidationSummary}`;
-      }
-    } else if (theme.consolidationMethod === 'expansion') {
-      output += `\\n${indent}   - 🔍 Expanded from complexity analysis`;
-    }
-
-    // Show expansion metadata if available
-    if (theme.businessLogicPatterns && theme.businessLogicPatterns.length > 0) {
-      output += `\\n${indent}   - 🎯 Business patterns: ${theme.businessLogicPatterns.slice(0, 2).join(', ')}`;
-    }
-
-    if (theme.userFlowPatterns && theme.userFlowPatterns.length > 0) {
-      output += `\\n${indent}   - 👤 User flows: ${theme.userFlowPatterns.slice(0, 2).join(', ')}`;
+    // Simplified consolidation info
+    if (
+      theme.consolidationMethod === 'merge' &&
+      theme.sourceThemes.length > 1
+    ) {
+      output += `\\n${indent}🔄 Merged ${theme.sourceThemes.length} themes`;
     }
 
     // Show child themes recursively

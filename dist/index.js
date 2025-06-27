@@ -29977,10 +29977,13 @@ async function run() {
             allowedTools: [],
             hasTrustDialogAccepted: true,
             permissions: {
-                allow: ["*"]
-            }
+                allow: ['*'],
+            },
         };
-        await exec.exec('bash', ['-c', `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`]);
+        await exec.exec('bash', [
+            '-c',
+            `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
+        ]);
         (0, utils_1.logInfo)('Claude CLI configuration initialized');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
         // Initialize services with AI code analysis
@@ -30012,7 +30015,7 @@ async function run() {
         console.log(`[DEBUG] - Processing time: ${themeAnalysis.processingTime}ms`);
         console.log(`[DEBUG] - Has expansion stats: ${!!themeAnalysis.expansionStats}`);
         if (themeAnalysis.themes) {
-            console.log(`[DEBUG] - Theme names: ${themeAnalysis.themes.map(t => t.name).join(', ')}`);
+            console.log(`[DEBUG] - Theme names: ${themeAnalysis.themes.map((t) => t.name).join(', ')}`);
         }
         else {
             console.log(`[DEBUG] - Themes is null/undefined!`);
@@ -30619,27 +30622,23 @@ class BusinessDomainService {
 Theme Name: "${name}"
 Description: "${description}"
 
-IMPORTANT: Focus on the end-user or business outcome, not the technical details. Ask:
-- What user experience is being improved?
-- What business capability is being added/enhanced/removed?
-- What problem does this solve for end users?
-- What workflow or process is being streamlined?
+Describe the user-facing change in one clear sentence (max 15 words):
+- What can users now do?
+- What workflow is now easier/faster/better?
 
-Choose from these USER-FOCUSED domains or create a similar category:
-- Remove Demo/Scaffolding Content
-- Improve Code Review Experience  
-- Streamline Development Workflow
-- Enhance Automation Capabilities
-- Simplify Configuration & Setup
-- Add User Feedback Features
-- Clean Up Legacy Code
-- Improve Documentation & Onboarding
-- Fix User-Facing Issues
-- Optimize Performance for Users
-- Enable New Integrations
-- Modernize User Interface
-
-Think like a product manager explaining value to users, not a developer describing implementation.
+Choose from these USER-FOCUSED domains or create similar (max 4 words):
+- Remove Demo Content
+- Improve Code Review  
+- Streamline Development
+- Enhance Automation
+- Simplify Configuration
+- Add User Feedback
+- Clean Up Legacy
+- Improve Documentation
+- Fix User Issues
+- Optimize Performance
+- Enable Integrations
+- Modernize Interface
 
 Respond with just the user-focused domain name (2-5 words, no extra text):`;
     }
@@ -31247,8 +31246,8 @@ class HierarchicalSimilarityService {
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(comparisons, async (comparison) => {
             return await this.analyzeCrossLevelSimilarityPair(comparison);
         }, {
-            concurrencyLimit: 10,
-            maxRetries: 5,
+            concurrencyLimit: 5,
+            maxRetries: 3,
             enableLogging: true,
             onProgress: (completed, total) => {
                 console.log(`[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`);
@@ -31629,8 +31628,8 @@ exports.DEFAULT_EXPANSION_CONFIG = {
     minComplexityScore: 0.7,
     minFilesForExpansion: 2,
     businessImpactThreshold: 0.6,
-    concurrencyLimit: 10,
-    maxRetries: 5,
+    concurrencyLimit: 5,
+    maxRetries: 3,
     retryDelay: 1000,
     retryBackoffMultiplier: 2,
     enableProgressLogging: true,
@@ -32119,7 +32118,7 @@ CRITICAL: Respond with ONLY valid JSON.
                 confidence: totalConfidence / themes.length,
                 sourceThemes: themes.flatMap((t) => t.sourceThemes),
                 consolidationMethod: 'merge',
-                consolidationSummary: `Deduplicated ${themes.length} similar sub-themes: ${data.reasoning || 'Identified as duplicates'}`,
+                consolidationSummary: `Merged ${themes.length} similar themes`,
             };
         }
         catch (error) {
@@ -32254,32 +32253,25 @@ CODE CONTEXT:
 ${theme.codeSnippets.slice(0, 5).join('\n---\n')}
 
 ANALYSIS TASK:
-Determine if this theme contains distinct sub-patterns that warrant separate sub-themes.
-Focus on:
-1. Business logic separation (different business rules/processes)
-2. User flow distinction (different user interaction patterns)
-3. Functional area separation (different system responsibilities)
-4. Data processing patterns (different data handling approaches)
+Create concise sub-themes if distinct business functions exist.
 
 EXPANSION CRITERIA:
-- Sub-themes must have distinct business value
-- Each sub-theme should represent a coherent business concept
-- Avoid technical implementation splitting
-- Maintain file scope relevance
-- Ensure no duplication with parent or sibling themes
+- Different user capabilities (not implementation details)
+- Separate workflows or processes
+- Only if genuinely distinct business value
 
 Return JSON:
 {
   "shouldExpand": boolean,
   "confidence": number (0-1),
-  "reasoning": "explanation of decision",
+  "reasoning": "brief explanation (max 15 words)",
   "businessLogicPatterns": ["pattern1", "pattern2"],
   "userFlowPatterns": ["flow1", "flow2"],
   "subThemes": [
     {
-      "name": "Sub-theme name",
-      "description": "Business-focused description",
-      "businessImpact": "User/business value",
+      "name": "Sub-theme name (max 8 words)",
+      "description": "What changed (max 15 words)",
+      "businessImpact": "User benefit (max 12 words)",
       "relevantFiles": ["file1.ts", "file2.ts"],
       "confidence": number (0-1)
     }
@@ -32645,9 +32637,9 @@ const json_extractor_1 = __nccwpck_require__(2642);
 const concurrency_manager_1 = __nccwpck_require__(8692);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
-    CONCURRENCY_LIMIT: 10,
+    CONCURRENCY_LIMIT: 5,
     CHUNK_TIMEOUT: 120000, // 2 minutes
-    MAX_RETRIES: 5,
+    MAX_RETRIES: 3,
 };
 class ClaudeService {
     constructor(_apiKey) {
@@ -32760,44 +32752,38 @@ Start your response with { and end with }. Example:
             : chunk.content;
         return `${context}
 
-Analyze this code change thoroughly. Be SPECIFIC and DETAILED.
+Analyze this code change. Be specific but concise.
 
 File: ${chunk.filename}
 Code changes:
 ${truncatedContent}
 
-Provide a comprehensive analysis that helps developers and stakeholders understand:
-1. What EXACTLY is changing - use specific names, values, and details from the code
-2. WHY this matters - both technical and user/business impact  
-3. Important technical details - what functions, classes, configs, parameters changed
-4. How this relates to the overall system
+Focus on WHAT changed with exact details:
+- Specific function/class/variable names modified
+- Exact values changed (before → after)
+- Concrete files affected
 
-Be specific! Examples of good specific analysis:
-- Instead of "Updated configuration" → "Changed pull_request.branches from ['main'] to ['**'] in CI workflow"
-- Instead of "Added new fields" → "Added detailedDescription, technicalSummary, and keyChanges fields to Theme interface"
-- Instead of "Improved error handling" → "Replaced JSON.parse() with JsonExtractor.extractAndValidateJson() in parseClaudeResponse()"
+Examples:
+✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
+✅ "Added detailedDescription field to ConsolidatedTheme interface"
+❌ "Enhanced workflow configuration for improved flexibility"
+❌ "Expanded theme structure with comprehensive analysis capabilities"
 
-Don't be generic. Look at the actual code and tell me:
-- What specific values changed?
-- What exact functions/methods were added or modified?
-- What configuration parameters were updated?
-- What the before/after states are?
-
-CRITICAL: Respond with ONLY valid JSON. Start with { and end with }
+CRITICAL: Respond with ONLY valid JSON:
 
 {
-  "themeName": "what user value this provides (be specific)",
-  "description": "one clear sentence about what changed",
-  "detailedDescription": "2-3 sentences with SPECIFIC details - mention actual names, values, and changes from the code",
-  "businessImpact": "concrete impact on users with specific examples",
-  "technicalSummary": "exact technical changes - name the specific functions, fields, values that changed",
-  "keyChanges": ["specific change with actual names/values", "another specific change", "third specific change"],
-  "userScenario": "specific example: 'A developer creating a PR to the feature/xyz branch will now...'",
-  "mainFunctionsChanged": ["actualFunctionName1", "actualFunctionName2"],
-  "mainClassesChanged": ["ActualClassName1", "ActualClassName2"],
+  "themeName": "what this accomplishes (max 10 words)",
+  "description": "one specific sentence with exact names/values (max 20 words)",
+  "detailedDescription": "additional context if needed (max 15 words, or null)",
+  "businessImpact": "user benefit in one sentence (max 15 words)",
+  "technicalSummary": "exact technical change (max 12 words)",
+  "keyChanges": ["max 3 changes, each max 10 words"],
+  "userScenario": null,
+  "mainFunctionsChanged": ["exact function names only"],
+  "mainClassesChanged": ["exact class names only"],
   "suggestedParent": null,
   "confidence": 0.8,
-  "codePattern": "what type of change this is"
+  "codePattern": "change type (max 3 words)"
 }`;
     }
     parseClaudeResponse(output, chunk) {
@@ -33413,7 +33399,7 @@ class ThemeSimilarityService {
             const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
             return { id: pair.id, similarity };
         }, {
-            concurrencyLimit: 10,
+            concurrencyLimit: 5,
             maxRetries: 3,
             enableLogging: true,
             onProgress: (completed, total) => {
@@ -33604,7 +33590,7 @@ class ThemeSimilarityService {
             sourceThemes: themes.map((t) => t.id),
             consolidationMethod: 'merge',
             // New rich fields
-            consolidationSummary: `Merged ${themes.length} similar themes: ${themes.map((t) => t.name).join(', ')}`,
+            consolidationSummary: `Merged ${themes.length} similar themes`,
             combinedTechnicalDetails: combinedTechnicalDetails || undefined,
             unifiedUserImpact: unifiedUserImpact || undefined,
             keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,
@@ -33797,8 +33783,8 @@ class AICodeAnalyzer {
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(files, async (file) => {
             return await this.processChangedFile(file.filename, file.diffPatch, file.changeType, file.linesAdded, file.linesRemoved);
         }, {
-            concurrencyLimit: 10,
-            maxRetries: 5,
+            concurrencyLimit: 5,
+            maxRetries: 3,
             enableLogging: true,
             onProgress: (completed, total) => console.log(`[AI-CODE-ANALYZER] Progress: ${completed}/${total} files analyzed`),
             onError: (error, item, retryCount) => console.warn(`[AI-CODE-ANALYZER] Retry ${retryCount} for ${item.filename}: ${error.message}`),
@@ -34954,66 +34940,41 @@ class ThemeFormatter {
     static formatThemeRecursively(theme, number, depth, parentNumber) {
         const indent = '   '.repeat(depth);
         const confidence = (theme.confidence * 100).toFixed(0);
-        const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
-        const moreFiles = theme.affectedFiles.length > this.MAX_FILES_SHOWN
-            ? ` (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
-            : '';
         // Create theme number (e.g., "1", "1.1", "1.1.1")
         const themeNumber = parentNumber
             ? `${parentNumber}.${number}`
             : `${number}`;
         // Truncate description if too long
         const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim(), this.MAX_DESCRIPTION_LENGTH);
-        let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}% confidence)`;
-        output += `\\n${indent}   - Files: ${files}${moreFiles}`;
-        output += `\\n${indent}   - ${description}`;
-        // Show detailed description if available
-        if (theme.detailedDescription) {
-            output += `\\n${indent}   - **Details**: ${theme.detailedDescription}`;
+        let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
+        // Files (condensed)
+        const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
+        const fileList = theme.affectedFiles.length > this.MAX_FILES_SHOWN
+            ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
+            : files;
+        output += `\\n${indent}• Files: ${fileList}`;
+        // Main description
+        output += `\\n${indent}• ${description}`;
+        // Show detailed description only if significantly different and adds value
+        if (theme.detailedDescription &&
+            theme.detailedDescription.length > 20 &&
+            !theme.description
+                .toLowerCase()
+                .includes(theme.detailedDescription.toLowerCase().substring(0, 10))) {
+            output += `\\n${indent}• Details: ${theme.detailedDescription}`;
         }
-        // Show technical summary if available
-        if (theme.technicalSummary) {
-            output += `\\n${indent}   - **Technical**: ${theme.technicalSummary}`;
+        // Show business impact if different from description
+        if (theme.businessImpact &&
+            theme.businessImpact.length > 10 &&
+            !theme.description
+                .toLowerCase()
+                .includes(theme.businessImpact.toLowerCase().substring(0, 10))) {
+            output += `\\n${indent}• Impact: ${theme.businessImpact}`;
         }
-        // Show key changes as bullet points
-        if (theme.keyChanges && theme.keyChanges.length > 0) {
-            output += `\\n${indent}   - **Key Changes**:`;
-            theme.keyChanges.forEach((change) => {
-                output += `\\n${indent}     • ${change}`;
-            });
-        }
-        // Show user scenario if available
-        if (theme.userScenario) {
-            output += `\\n${indent}   - **User Impact**: ${theme.userScenario}`;
-        }
-        // Show code metrics if available
-        if (theme.codeMetrics) {
-            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-            output += `\\n${indent}   - **Code Metrics**: +${linesAdded}/-${linesRemoved} lines across ${filesChanged} files`;
-        }
-        // Show functions/classes changed if available
-        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
-            output += `\\n${indent}   - **Functions**: ${theme.mainFunctionsChanged.slice(0, 3).join(', ')}${theme.mainFunctionsChanged.length > 3 ? ` (+${theme.mainFunctionsChanged.length - 3} more)` : ''}`;
-        }
-        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
-            output += `\\n${indent}   - **Classes**: ${theme.mainClassesChanged.slice(0, 3).join(', ')}${theme.mainClassesChanged.length > 3 ? ` (+${theme.mainClassesChanged.length - 3} more)` : ''}`;
-        }
-        // Show consolidation info
-        if (theme.consolidationMethod === 'merge') {
-            output += `\\n${indent}   - 🔄 Merged from ${theme.sourceThemes.length} similar themes`;
-            if (theme.consolidationSummary) {
-                output += `: ${theme.consolidationSummary}`;
-            }
-        }
-        else if (theme.consolidationMethod === 'expansion') {
-            output += `\\n${indent}   - 🔍 Expanded from complexity analysis`;
-        }
-        // Show expansion metadata if available
-        if (theme.businessLogicPatterns && theme.businessLogicPatterns.length > 0) {
-            output += `\\n${indent}   - 🎯 Business patterns: ${theme.businessLogicPatterns.slice(0, 2).join(', ')}`;
-        }
-        if (theme.userFlowPatterns && theme.userFlowPatterns.length > 0) {
-            output += `\\n${indent}   - 👤 User flows: ${theme.userFlowPatterns.slice(0, 2).join(', ')}`;
+        // Simplified consolidation info
+        if (theme.consolidationMethod === 'merge' &&
+            theme.sourceThemes.length > 1) {
+            output += `\\n${indent}🔄 Merged ${theme.sourceThemes.length} themes`;
         }
         // Show child themes recursively
         if (theme.childThemes && theme.childThemes.length > 0) {
