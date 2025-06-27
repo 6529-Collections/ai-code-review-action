@@ -31633,6 +31633,8 @@ exports.DEFAULT_EXPANSION_CONFIG = {
     retryDelay: 1000,
     retryBackoffMultiplier: 2,
     enableProgressLogging: true,
+    dynamicConcurrency: true,
+    enableJitter: true,
 };
 class ThemeExpansionService {
     constructor(anthropicApiKey, config = {}) {
@@ -31842,25 +31844,29 @@ class ThemeExpansionService {
             return subThemes;
         }
         (0, utils_1.logInfo)(`Deduplicating ${subThemes.length} sub-themes using AI`);
-        // Process in batches of 4-8 themes
-        const batchSize = 6;
+        // Calculate optimal batch size based on theme count
+        const batchSize = this.calculateOptimalBatchSize(subThemes.length);
         const batches = [];
         for (let i = 0; i < subThemes.length; i += batchSize) {
             batches.push(subThemes.slice(i, i + batchSize));
         }
-        // Process each batch with concurrency limit
-        const deduplicationResults = await this.processConcurrentlyWithLimit(batches, (batch) => this.deduplicateBatch(batch), {
+        // Process each batch with concurrency limit and context-aware settings
+        const deduplicationResults = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, (batch) => this.deduplicateBatch(batch), {
+            dynamicConcurrency: true,
+            context: 'theme_processing',
+            enableJitter: true,
+            enableLogging: this.config.enableProgressLogging,
             onProgress: (completed, total) => {
                 if (this.config.enableProgressLogging && total > 1) {
-                    console.log(`[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches`);
+                    console.log(`[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches (batch size: ${batchSize})`);
                 }
             },
         });
         // Extract successful results
         const successfulResults = [];
         for (const result of deduplicationResults) {
-            if ('error' in result) {
-                console.warn(`[THEME-EXPANSION] Deduplication batch failed: ${result.error.message}`);
+            if (result && typeof result === 'object' && 'error' in result) {
+                console.warn(`[THEME-EXPANSION] Deduplication batch failed: ${result.error?.message || 'Unknown error'}`);
                 // For failed batches, we could return the original batch as fallback
                 // but for now, we'll skip failed batches
             }
@@ -32125,6 +32131,18 @@ CRITICAL: Respond with ONLY valid JSON.
             (0, utils_1.logInfo)(`Sub-theme merge failed: ${error}`);
             return themes[0]; // Use first theme as fallback
         }
+    }
+    /**
+     * Calculate optimal batch size based on total theme count
+     */
+    calculateOptimalBatchSize(themeCount) {
+        if (themeCount < 20)
+            return 4; // Small PRs: smaller batches for faster feedback
+        if (themeCount < 50)
+            return 6; // Medium PRs: current size
+        if (themeCount < 100)
+            return 8; // Large PRs: bigger batches for efficiency
+        return 10; // Huge PRs: maximum batch size
     }
     /**
      * Identify distinct business patterns within a theme
@@ -34276,24 +34294,128 @@ exports.CodeAnalysisCache = CodeAnalysisCache;
 /***/ }),
 
 /***/ 8692:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
 /**
  * Concurrency management utility for processing items with controlled parallelism,
- * retry logic, and progress tracking.
+ * retry logic, and progress tracking with dynamic resource-based optimization.
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ConcurrencyManager = void 0;
+const os = __importStar(__nccwpck_require__(857));
 const DEFAULT_OPTIONS = {
-    concurrencyLimit: 5,
+    concurrencyLimit: 0, // Will be calculated dynamically
+    dynamicConcurrency: true,
     maxRetries: 3,
     retryDelay: 1000,
     retryBackoffMultiplier: 2,
+    enableJitter: true,
+    context: 'general',
     enableLogging: false,
 };
 class ConcurrencyManager {
+    /**
+     * Get current system metrics for dynamic concurrency calculation
+     */
+    static getSystemMetrics() {
+        const memUsage = process.memoryUsage();
+        const totalMemory = os.totalmem();
+        const freeMemory = os.freemem();
+        const heapUsedMB = memUsage.heapUsed / (1024 * 1024);
+        const memoryUsagePercent = (totalMemory - freeMemory) / totalMemory;
+        return {
+            cpuCount: os.cpus().length,
+            availableMemory: freeMemory,
+            currentHeapUsed: memUsage.heapUsed,
+            isUnderMemoryPressure: memoryUsagePercent > 0.85 || heapUsedMB > 512,
+        };
+    }
+    /**
+     * Calculate optimal concurrency limit based on system resources
+     */
+    static calculateOptimalConcurrency(metrics, context = 'general') {
+        // Base concurrency from CPU count
+        let baseConcurrency = Math.max(3, Math.ceil(metrics.cpuCount * 0.8));
+        // Adjust for memory pressure
+        if (metrics.isUnderMemoryPressure) {
+            baseConcurrency = Math.max(2, Math.floor(baseConcurrency * 0.6));
+        }
+        // Context-specific adjustments
+        switch (context) {
+            case 'theme_processing':
+                // Theme processing is memory intensive
+                baseConcurrency = Math.min(baseConcurrency, 8);
+                break;
+            case 'ai_batch':
+                // AI batch processing has API limits
+                baseConcurrency = Math.min(baseConcurrency, 10);
+                break;
+            default:
+                baseConcurrency = Math.min(baseConcurrency, 12);
+        }
+        return Math.max(2, baseConcurrency); // Minimum of 2
+    }
+    /**
+     * Get context-aware retry configuration
+     */
+    static getRetryConfig(context, error) {
+        const isRateLimit = error?.message?.includes('rate limit') || error?.message?.includes('429');
+        switch (context) {
+            case 'theme_processing':
+                return {
+                    maxRetries: isRateLimit ? 5 : 3,
+                    baseDelay: isRateLimit ? 2000 : 1000,
+                    multiplier: 1.8,
+                };
+            case 'ai_batch':
+                return {
+                    maxRetries: isRateLimit ? 6 : 2,
+                    baseDelay: isRateLimit ? 3000 : 800,
+                    multiplier: 2.2,
+                };
+            default:
+                return {
+                    maxRetries: isRateLimit ? 4 : 3,
+                    baseDelay: 1000,
+                    multiplier: 2.0,
+                };
+        }
+    }
     /**
      * Process items concurrently with controlled parallelism and retry logic.
      *
@@ -34307,6 +34429,18 @@ class ConcurrencyManager {
      */
     static async processConcurrentlyWithLimit(items, processor, options) {
         const config = { ...DEFAULT_OPTIONS, ...options };
+        // Calculate dynamic concurrency if enabled and not explicitly set
+        if (config.dynamicConcurrency && config.concurrencyLimit === 0) {
+            const metrics = ConcurrencyManager.getSystemMetrics();
+            config.concurrencyLimit = ConcurrencyManager.calculateOptimalConcurrency(metrics, config.context || 'general');
+            if (config.enableLogging) {
+                console.log(`[CONCURRENCY-MANAGER] Dynamic concurrency: ${config.concurrencyLimit} (CPUs: ${metrics.cpuCount}, Memory pressure: ${metrics.isUnderMemoryPressure})`);
+            }
+        }
+        else if (config.concurrencyLimit <= 0) {
+            // Fallback to safe default
+            config.concurrencyLimit = 5;
+        }
         const results = new Array(items.length);
         const active = new Set();
         let completed = 0;
@@ -34319,7 +34453,7 @@ class ConcurrencyManager {
         const processItem = async (item, itemIndex) => {
             log(`Processing item ${itemIndex + 1}/${items.length}: starting`);
             try {
-                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.retryBackoffMultiplier, config.onError);
+                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.retryBackoffMultiplier, config.onError, config.enableJitter, config.context);
                 log(`Processing item ${itemIndex + 1}/${items.length}: success`);
                 results[itemIndex] = result;
             }
@@ -34382,7 +34516,10 @@ class ConcurrencyManager {
      * @returns Processed result
      * @throws Error if all retry attempts fail
      */
-    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, backoffMultiplier = 2, onError) {
+    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _backoffMultiplier = 2, // Legacy parameter, now unused
+    onError, enableJitter = true, context = 'general') {
         let lastError;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
@@ -34391,12 +34528,23 @@ class ConcurrencyManager {
             catch (error) {
                 lastError = error;
                 if (attempt < maxRetries) {
-                    const delay = ConcurrencyManager.calculateBackoffDelay(attempt, baseDelay, backoffMultiplier);
-                    if (onError) {
-                        onError(lastError, item, attempt + 1);
+                    // Get context-aware retry config
+                    const retryConfig = ConcurrencyManager.getRetryConfig(context, lastError);
+                    // Use context-specific settings or fall back to provided values
+                    const effectiveMaxRetries = Math.max(maxRetries, retryConfig.maxRetries);
+                    const effectiveBaseDelay = Math.max(baseDelay, retryConfig.baseDelay);
+                    const effectiveMultiplier = retryConfig.multiplier;
+                    if (attempt < effectiveMaxRetries) {
+                        const delay = ConcurrencyManager.calculateBackoffDelay(attempt, effectiveBaseDelay, effectiveMultiplier, enableJitter);
+                        if (onError) {
+                            onError(lastError, item, attempt + 1);
+                        }
+                        console.log(`[CONCURRENCY-MANAGER] Retry ${attempt + 1}/${effectiveMaxRetries} after ${delay}ms delay (context: ${context})`);
+                        await ConcurrencyManager.sleep(delay);
                     }
-                    console.log(`[CONCURRENCY-MANAGER] Retry ${attempt + 1}/${maxRetries} after ${delay}ms delay`);
-                    await ConcurrencyManager.sleep(delay);
+                    else {
+                        break; // Exceeded max retries for this context
+                    }
                 }
             }
         }
@@ -34410,12 +34558,17 @@ class ConcurrencyManager {
      * @param multiplier Backoff multiplier
      * @returns Delay in milliseconds
      */
-    static calculateBackoffDelay(attempt, baseDelay, multiplier = 2) {
+    static calculateBackoffDelay(attempt, baseDelay, multiplier = 2, enableJitter = true) {
         const exponentialDelay = baseDelay * Math.pow(multiplier, attempt);
-        const jitter = Math.random() * 0.1 * exponentialDelay; // Add 10% jitter
-        const delayWithJitter = exponentialDelay + jitter;
-        // Cap at 30 seconds maximum
-        return Math.min(delayWithJitter, 30000);
+        let finalDelay = exponentialDelay;
+        if (enableJitter) {
+            // Add jitter: 10% random variation
+            const jitterRange = exponentialDelay * 0.1;
+            const jitter = (Math.random() - 0.5) * 2 * jitterRange;
+            finalDelay = exponentialDelay + jitter;
+        }
+        // Cap at 30 seconds maximum, minimum 100ms
+        return Math.max(100, Math.min(finalDelay, 30000));
     }
     /**
      * Sleep utility function.

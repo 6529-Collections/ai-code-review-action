@@ -19,6 +19,14 @@ export declare class AIResponseCache {
      */
     set<T>(promptType: PromptType, inputs: any, response: PromptResponse<T>): void;
     /**
+     * Get multiple responses from cache in parallel
+     */
+    getBatch<T>(promptType: PromptType, inputsArray: any[]): Array<PromptResponse<T> | null>;
+    /**
+     * Store multiple responses in cache efficiently
+     */
+    setBatch<T>(promptType: PromptType, inputsArray: any[], responses: Array<PromptResponse<T> | null>): void;
+    /**
      * Clear cache for specific prompt type or all
      */
     clear(promptType?: PromptType): void;

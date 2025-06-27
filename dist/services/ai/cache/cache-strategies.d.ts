@@ -10,6 +10,7 @@ export interface CacheStrategy {
     maxSize: number;
     keyGenerator: CacheKeyGenerator;
     shouldCache: (response: any) => boolean;
+    adaptiveTTL?: (response: any) => number;
 }
 /**
  * Default cache key generator using SHA256 hash

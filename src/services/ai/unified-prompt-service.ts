@@ -145,19 +145,46 @@ export class UnifiedPromptService {
       return batchProcessor.addBatch<T>(promptType, items);
     }
 
-    // Fallback to simple batching for unsupported types
+    // Fallback to simple batching for unsupported types with parallel cache optimization
     const batchSize = this.getOptimalBatchSize(promptType);
     const results: Array<PromptResponse<T>> = [];
 
-    // Process in batches
+    // Process in batches with parallel cache lookups
     for (let i = 0; i < batchVariables.length; i += batchSize) {
       const batch = batchVariables.slice(i, i + batchSize);
-      const batchPromises = batch.map((variables) =>
+      
+      // Check cache for entire batch in parallel
+      const cachedResults = this.cache.getBatch<T>(promptType, batch);
+      
+      // Identify uncached items
+      const uncachedIndices: number[] = [];
+      const uncachedVariables: Record<string, any>[] = [];
+      
+      cachedResults.forEach((cached, index) => {
+        if (!cached) {
+          uncachedIndices.push(index);
+          uncachedVariables.push(batch[index]);
+        }
+      });
+
+      // Execute only uncached items
+      const uncachedPromises = uncachedVariables.map((variables) =>
         this.execute<T>(promptType, variables, config)
       );
 
-      const batchResults = await Promise.all(batchPromises);
-      results.push(...batchResults);
+      const uncachedResults = await Promise.all(uncachedPromises);
+      
+      // Merge cached and fresh results
+      const mergedResults: Array<PromptResponse<T>> = cachedResults.map((cached, index) => {
+        if (cached) {
+          return cached;
+        } else {
+          const uncachedIndex = uncachedIndices.indexOf(index);
+          return uncachedResults[uncachedIndex];
+        }
+      });
+
+      results.push(...mergedResults);
     }
 
     return results;

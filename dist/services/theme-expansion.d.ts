@@ -10,6 +10,8 @@ export interface ExpansionConfig {
     retryDelay: number;
     retryBackoffMultiplier: number;
     enableProgressLogging: boolean;
+    dynamicConcurrency: boolean;
+    enableJitter: boolean;
 }
 export declare const DEFAULT_EXPANSION_CONFIG: ExpansionConfig;
 export interface ExpansionCandidate {
@@ -90,6 +92,10 @@ export declare class ThemeExpansionService {
      * Merge duplicate sub-themes into a single theme
      */
     private mergeSubThemes;
+    /**
+     * Calculate optimal batch size based on total theme count
+     */
+    private calculateOptimalBatchSize;
     /**
      * Identify distinct business patterns within a theme
      */
