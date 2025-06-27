@@ -473,7 +473,7 @@ export class ThemeSimilarityService {
       consolidationMethod: 'merge',
 
       // New rich fields
-      consolidationSummary: `Merged ${themes.length} similar themes: ${themes.map((t) => t.name).join(', ')}`,
+      consolidationSummary: `Merged ${themes.length} similar themes`,
       combinedTechnicalDetails: combinedTechnicalDetails || undefined,
       unifiedUserImpact: unifiedUserImpact || undefined,
       keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,

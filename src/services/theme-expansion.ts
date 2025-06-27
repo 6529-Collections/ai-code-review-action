@@ -776,7 +776,7 @@ CRITICAL: Respond with ONLY valid JSON.
         confidence: totalConfidence / themes.length,
         sourceThemes: themes.flatMap((t) => t.sourceThemes),
         consolidationMethod: 'merge' as const,
-        consolidationSummary: `Deduplicated ${themes.length} similar sub-themes: ${data.reasoning || 'Identified as duplicates'}`,
+        consolidationSummary: `Merged ${themes.length} similar themes`,
       };
     } catch (error) {
       logInfo(`Sub-theme merge failed: ${error}`);
@@ -941,32 +941,25 @@ CODE CONTEXT:
 ${theme.codeSnippets.slice(0, 5).join('\n---\n')}
 
 ANALYSIS TASK:
-Determine if this theme contains distinct sub-patterns that warrant separate sub-themes.
-Focus on:
-1. Business logic separation (different business rules/processes)
-2. User flow distinction (different user interaction patterns)
-3. Functional area separation (different system responsibilities)
-4. Data processing patterns (different data handling approaches)
+Create concise sub-themes if distinct business functions exist.
 
 EXPANSION CRITERIA:
-- Sub-themes must have distinct business value
-- Each sub-theme should represent a coherent business concept
-- Avoid technical implementation splitting
-- Maintain file scope relevance
-- Ensure no duplication with parent or sibling themes
+- Different user capabilities (not implementation details)
+- Separate workflows or processes
+- Only if genuinely distinct business value
 
 Return JSON:
 {
   "shouldExpand": boolean,
   "confidence": number (0-1),
-  "reasoning": "explanation of decision",
+  "reasoning": "brief explanation (max 15 words)",
   "businessLogicPatterns": ["pattern1", "pattern2"],
   "userFlowPatterns": ["flow1", "flow2"],
   "subThemes": [
     {
-      "name": "Sub-theme name",
-      "description": "Business-focused description",
-      "businessImpact": "User/business value",
+      "name": "Sub-theme name (max 8 words)",
+      "description": "What changed (max 15 words)",
+      "businessImpact": "User benefit (max 12 words)",
       "relevantFiles": ["file1.ts", "file2.ts"],
       "confidence": number (0-1)
     }

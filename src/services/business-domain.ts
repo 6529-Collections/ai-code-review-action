@@ -166,27 +166,23 @@ export class BusinessDomainService {
 Theme Name: "${name}"
 Description: "${description}"
 
-IMPORTANT: Focus on the end-user or business outcome, not the technical details. Ask:
-- What user experience is being improved?
-- What business capability is being added/enhanced/removed?
-- What problem does this solve for end users?
-- What workflow or process is being streamlined?
+Describe the user-facing change in one clear sentence (max 15 words):
+- What can users now do?
+- What workflow is now easier/faster/better?
 
-Choose from these USER-FOCUSED domains or create a similar category:
-- Remove Demo/Scaffolding Content
-- Improve Code Review Experience  
-- Streamline Development Workflow
-- Enhance Automation Capabilities
-- Simplify Configuration & Setup
-- Add User Feedback Features
-- Clean Up Legacy Code
-- Improve Documentation & Onboarding
-- Fix User-Facing Issues
-- Optimize Performance for Users
-- Enable New Integrations
-- Modernize User Interface
-
-Think like a product manager explaining value to users, not a developer describing implementation.
+Choose from these USER-FOCUSED domains or create similar (max 4 words):
+- Remove Demo Content
+- Improve Code Review  
+- Streamline Development
+- Enhance Automation
+- Simplify Configuration
+- Add User Feedback
+- Clean Up Legacy
+- Improve Documentation
+- Fix User Issues
+- Optimize Performance
+- Enable Integrations
+- Modernize Interface
 
 Respond with just the user-focused domain name (2-5 words, no extra text):`;
   }
