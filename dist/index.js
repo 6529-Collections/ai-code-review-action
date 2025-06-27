@@ -34947,43 +34947,26 @@ class ThemeFormatter {
         // Truncate description if too long
         const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim(), this.MAX_DESCRIPTION_LENGTH);
         let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
-        // Files (condensed)
+        // Files on the same line or next line depending on length
         const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
         const fileList = theme.affectedFiles.length > this.MAX_FILES_SHOWN
             ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
             : files;
-        output += `\\n${indent}• Files: ${fileList}`;
+        output += `\\n${indent}   ${fileList}`;
         // Main description
-        output += `\\n${indent}• ${description}`;
+        output += `\\n${indent}   ${description}`;
         // Show detailed description only if significantly different and adds value
         if (theme.detailedDescription &&
             theme.detailedDescription.length > 20 &&
             !theme.description
                 .toLowerCase()
                 .includes(theme.detailedDescription.toLowerCase().substring(0, 10))) {
-            output += `\\n${indent}• Details: ${theme.detailedDescription}`;
+            output += ` ${theme.detailedDescription}`;
         }
-        // Show business impact if different from description
-        if (theme.businessImpact &&
-            theme.businessImpact.length > 10 &&
-            !theme.description
-                .toLowerCase()
-                .includes(theme.businessImpact.toLowerCase().substring(0, 10))) {
-            output += `\\n${indent}• Impact: ${theme.businessImpact}`;
-        }
-        // Simplified consolidation info
-        if (theme.consolidationMethod === 'merge' &&
-            theme.sourceThemes.length > 1) {
-            output += `\\n${indent}🔄 Merged ${theme.sourceThemes.length} themes`;
-        }
-        // Show child themes recursively
+        // No merge indicators, no emoji, just content
+        // Show child themes recursively without announcement
         if (theme.childThemes && theme.childThemes.length > 0) {
-            const childLabel = depth === 0
-                ? 'sub-themes'
-                : depth === 1
-                    ? 'sub-sub-themes'
-                    : 'nested themes';
-            output += `\\n${indent}   - 📁 Contains ${theme.childThemes.length} ${childLabel}:`;
+            output += '\\n'; // Add blank line before sub-themes
             theme.childThemes.forEach((childTheme, childIndex) => {
                 output += this.formatThemeRecursively(childTheme, childIndex + 1, depth + 1, themeNumber);
             });
