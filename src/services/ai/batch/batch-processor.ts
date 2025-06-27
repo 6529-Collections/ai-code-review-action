@@ -6,6 +6,7 @@ import {
   BatchFormationStrategies,
 } from './batch-strategies';
 import { AdaptiveBatchingController, SystemMetrics } from './adaptive-batching';
+import { SecureFileNamer } from '../../../utils/secure-file-namer';
 
 interface QueueItem<T> {
   id: string;
@@ -92,7 +93,7 @@ export class BatchProcessor {
 
     return new Promise((resolve, reject) => {
       const item: QueueItem<T> = {
-        id: `${promptType}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: SecureFileNamer.generateBatchId('queue', promptType),
         promptType,
         variables,
         resolve,
@@ -279,7 +280,7 @@ export class BatchProcessor {
     promptType: PromptType,
     items: QueueItem<T>[]
   ): Promise<void> {
-    const batchId = `batch-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const batchId = SecureFileNamer.generateBatchId('batch', promptType);
     const batch: Batch<T> = {
       id: batchId,
       promptType,

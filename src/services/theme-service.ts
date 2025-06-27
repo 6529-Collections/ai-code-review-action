@@ -1,8 +1,6 @@
 import { ChangedFile } from './git-service';
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 import { ThemeSimilarityService } from './theme-similarity';
 import { ThemeExpansionService } from './theme-expansion';
 import { HierarchicalSimilarityService } from './hierarchical-similarity';
@@ -151,41 +149,31 @@ class ClaudeService {
     let tempFile: string | null = null;
 
     try {
-      // Use a unique temporary file for each concurrent request
-      tempFile = path.join(
-        os.tmpdir(),
-        `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`
+      // Use secure temporary file for each concurrent request
+      const { filePath, cleanup } = SecureFileNamer.createSecureTempFile(
+        'claude-prompt',
+        prompt
       );
-      fs.writeFileSync(tempFile, prompt);
+      tempFile = filePath;
 
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
+      try {
+        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          listeners: {
+            stdout: (data: Buffer) => {
+              output += data.toString();
+            },
           },
-        },
-      });
+        });
 
-      const result = this.parseClaudeResponse(output, chunk, codeChange);
-      return result;
+        const result = this.parseClaudeResponse(output, chunk, codeChange);
+        return result;
+      } finally {
+        cleanup(); // Use secure cleanup
+      }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       console.warn('Claude analysis failed, using fallback:', error);
       return this.createFallbackAnalysis(chunk);
-    } finally {
-      // Always attempt cleanup, but don't fail if file doesn't exist
-      if (tempFile) {
-        try {
-          if (fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-          }
-        } catch (cleanupError) {
-          console.warn(
-            `Failed to cleanup temp file ${tempFile}:`,
-            cleanupError
-          );
-        }
-      }
     }
   }
 
@@ -499,7 +487,7 @@ class ThemeContextManager {
       }
     } else {
       const newTheme: Theme = {
-        id: `theme-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        id: SecureFileNamer.generateSecureId('theme'),
         name: analysis.themeName,
         description: analysis.description,
         level: placement.level || 0,

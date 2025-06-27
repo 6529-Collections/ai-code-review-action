@@ -8,6 +8,7 @@ import {
   ConcurrencyManager,
   ConcurrencyOptions,
 } from '../utils/concurrency-manager';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 
 // Configuration for theme expansion
 export interface ExpansionConfig {
@@ -20,6 +21,8 @@ export interface ExpansionConfig {
   retryDelay: number; // Base retry delay in ms (default: 1000)
   retryBackoffMultiplier: number; // Backoff multiplier (default: 2)
   enableProgressLogging: boolean; // Enable progress logging (default: true)
+  dynamicConcurrency: boolean; // Enable dynamic concurrency (default: true)
+  enableJitter: boolean; // Enable jitter in retries (default: true)
 }
 
 export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
@@ -32,6 +35,8 @@ export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
   retryDelay: 1000,
   retryBackoffMultiplier: 2,
   enableProgressLogging: true,
+  dynamicConcurrency: true,
+  enableJitter: true,
 };
 
 export interface ExpansionCandidate {
@@ -246,7 +251,7 @@ export class ThemeExpansionService {
 
     // Create expansion request
     const expansionRequest: ExpansionRequest = {
-      id: `expansion_${theme.id}_${Date.now()}`,
+      id: SecureFileNamer.generateHierarchicalId('expansion', theme.id),
       theme,
       parentTheme,
       depth: currentDepth,
@@ -410,40 +415,45 @@ export class ThemeExpansionService {
 
     logInfo(`Deduplicating ${subThemes.length} sub-themes using AI`);
 
-    // Process in batches of 4-8 themes
-    const batchSize = 6;
+    // Calculate optimal batch size based on theme count
+    const batchSize = this.calculateOptimalBatchSize(subThemes.length);
     const batches: ConsolidatedTheme[][] = [];
 
     for (let i = 0; i < subThemes.length; i += batchSize) {
       batches.push(subThemes.slice(i, i + batchSize));
     }
 
-    // Process each batch with concurrency limit
-    const deduplicationResults = await this.processConcurrentlyWithLimit(
-      batches,
-      (batch) => this.deduplicateBatch(batch),
-      {
-        onProgress: (completed, total) => {
-          if (this.config.enableProgressLogging && total > 1) {
-            console.log(
-              `[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches`
-            );
-          }
-        },
-      }
-    );
+    // Process each batch with concurrency limit and context-aware settings
+    const deduplicationResults =
+      await ConcurrencyManager.processConcurrentlyWithLimit(
+        batches,
+        (batch) => this.deduplicateBatch(batch),
+        {
+          dynamicConcurrency: true,
+          context: 'theme_processing',
+          enableJitter: true,
+          enableLogging: this.config.enableProgressLogging,
+          onProgress: (completed, total) => {
+            if (this.config.enableProgressLogging && total > 1) {
+              console.log(
+                `[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches (batch size: ${batchSize})`
+              );
+            }
+          },
+        }
+      );
 
     // Extract successful results
     const successfulResults: ConsolidatedTheme[][][] = [];
     for (const result of deduplicationResults) {
-      if ('error' in result) {
+      if (result && typeof result === 'object' && 'error' in result) {
         console.warn(
-          `[THEME-EXPANSION] Deduplication batch failed: ${result.error.message}`
+          `[THEME-EXPANSION] Deduplication batch failed: ${(result as { error?: Error }).error?.message || 'Unknown error'}`
         );
         // For failed batches, we could return the original batch as fallback
         // but for now, we'll skip failed batches
       } else {
-        successfulResults.push(result);
+        successfulResults.push(result as ConsolidatedTheme[][]);
       }
     }
 
@@ -766,7 +776,7 @@ CRITICAL: Respond with ONLY valid JSON.
 
       return {
         ...themes[0], // Use first theme as base
-        id: `dedup-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        id: SecureFileNamer.generateSecureId('dedup'),
         name: data.name || themes[0].name,
         description: data.description || themes[0].description,
         detailedDescription: data.detailedDescription,
@@ -782,6 +792,16 @@ CRITICAL: Respond with ONLY valid JSON.
       logInfo(`Sub-theme merge failed: ${error}`);
       return themes[0]; // Use first theme as fallback
     }
+  }
+
+  /**
+   * Calculate optimal batch size based on total theme count
+   */
+  private calculateOptimalBatchSize(themeCount: number): number {
+    if (themeCount < 20) return 4; // Small PRs: smaller batches for faster feedback
+    if (themeCount < 50) return 6; // Medium PRs: current size
+    if (themeCount < 100) return 8; // Large PRs: bigger batches for efficiency
+    return 10; // Huge PRs: maximum batch size
   }
 
   /**
@@ -1020,7 +1040,7 @@ Only create sub-themes if there are genuinely distinct business concerns.
           },
           index: number
         ) => ({
-          id: `${theme.id}_sub_${index}_${Date.now()}`,
+          id: SecureFileNamer.generateHierarchicalId('sub', theme.id, index),
           name: subTheme.name,
           description: subTheme.description,
           level: theme.level + 1,

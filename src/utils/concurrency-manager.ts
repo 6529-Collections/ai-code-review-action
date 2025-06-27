@@ -1,17 +1,32 @@
 /**
  * Concurrency management utility for processing items with controlled parallelism,
- * retry logic, and progress tracking.
+ * retry logic, and progress tracking with dynamic resource-based optimization.
  */
 
+import * as os from 'os';
+
+export interface SystemMetrics {
+  cpuCount: number;
+  availableMemory: number;
+  currentHeapUsed: number;
+  isUnderMemoryPressure: boolean;
+}
+
 export interface ConcurrencyOptions<T> {
-  /** Maximum number of concurrent operations (default: 5) */
+  /** Maximum number of concurrent operations (default: dynamic based on system) */
   concurrencyLimit?: number;
+  /** Enable dynamic concurrency adjustment (default: true) */
+  dynamicConcurrency?: boolean;
   /** Maximum retry attempts for failed operations (default: 3) */
   maxRetries?: number;
   /** Base delay between retries in milliseconds (default: 1000) */
   retryDelay?: number;
   /** Multiplier for exponential backoff (default: 2) */
   retryBackoffMultiplier?: number;
+  /** Enable jitter in retry delays (default: true) */
+  enableJitter?: boolean;
+  /** Context for smart retry strategies */
+  context?: 'theme_processing' | 'ai_batch' | 'general';
   /** Callback for progress updates */
   onProgress?: (completed: number, total: number) => void;
   /** Callback for retry attempts */
@@ -39,14 +54,102 @@ export type ConcurrencyOutcome<T, R> =
   | ConcurrencyError<T>;
 
 const DEFAULT_OPTIONS = {
-  concurrencyLimit: 5,
+  concurrencyLimit: 0, // Will be calculated dynamically
+  dynamicConcurrency: true,
   maxRetries: 3,
   retryDelay: 1000,
   retryBackoffMultiplier: 2,
+  enableJitter: true,
+  context: 'general' as const,
   enableLogging: false,
 };
 
 export class ConcurrencyManager {
+  /**
+   * Get current system metrics for dynamic concurrency calculation
+   */
+  static getSystemMetrics(): SystemMetrics {
+    const memUsage = process.memoryUsage();
+    const totalMemory = os.totalmem();
+    const freeMemory = os.freemem();
+    const heapUsedMB = memUsage.heapUsed / (1024 * 1024);
+    const memoryUsagePercent = (totalMemory - freeMemory) / totalMemory;
+
+    return {
+      cpuCount: os.cpus().length,
+      availableMemory: freeMemory,
+      currentHeapUsed: memUsage.heapUsed,
+      isUnderMemoryPressure: memoryUsagePercent > 0.85 || heapUsedMB > 512,
+    };
+  }
+
+  /**
+   * Calculate optimal concurrency limit based on system resources
+   */
+  static calculateOptimalConcurrency(
+    metrics: SystemMetrics,
+    context: string = 'general'
+  ): number {
+    // Base concurrency from CPU count
+    let baseConcurrency = Math.max(3, Math.ceil(metrics.cpuCount * 0.8));
+
+    // Adjust for memory pressure
+    if (metrics.isUnderMemoryPressure) {
+      baseConcurrency = Math.max(2, Math.floor(baseConcurrency * 0.6));
+    }
+
+    // Context-specific adjustments
+    switch (context) {
+      case 'theme_processing':
+        // Theme processing is memory intensive
+        baseConcurrency = Math.min(baseConcurrency, 8);
+        break;
+      case 'ai_batch':
+        // AI batch processing has API limits
+        baseConcurrency = Math.min(baseConcurrency, 10);
+        break;
+      default:
+        baseConcurrency = Math.min(baseConcurrency, 12);
+    }
+
+    return Math.max(2, baseConcurrency); // Minimum of 2
+  }
+
+  /**
+   * Get context-aware retry configuration
+   */
+  static getRetryConfig(
+    context: string,
+    error?: Error
+  ): {
+    maxRetries: number;
+    baseDelay: number;
+    multiplier: number;
+  } {
+    const isRateLimit =
+      error?.message?.includes('rate limit') || error?.message?.includes('429');
+
+    switch (context) {
+      case 'theme_processing':
+        return {
+          maxRetries: isRateLimit ? 5 : 3,
+          baseDelay: isRateLimit ? 2000 : 1000,
+          multiplier: 1.8,
+        };
+      case 'ai_batch':
+        return {
+          maxRetries: isRateLimit ? 6 : 2,
+          baseDelay: isRateLimit ? 3000 : 800,
+          multiplier: 2.2,
+        };
+      default:
+        return {
+          maxRetries: isRateLimit ? 4 : 3,
+          baseDelay: 1000,
+          multiplier: 2.0,
+        };
+    }
+  }
   /**
    * Process items concurrently with controlled parallelism and retry logic.
    *
@@ -64,6 +167,24 @@ export class ConcurrencyManager {
     options?: ConcurrencyOptions<T>
   ): Promise<Array<R | { error: Error; item: T }>> {
     const config = { ...DEFAULT_OPTIONS, ...options };
+
+    // Calculate dynamic concurrency if enabled and not explicitly set
+    if (config.dynamicConcurrency && config.concurrencyLimit === 0) {
+      const metrics = ConcurrencyManager.getSystemMetrics();
+      config.concurrencyLimit = ConcurrencyManager.calculateOptimalConcurrency(
+        metrics,
+        config.context || 'general'
+      );
+
+      if (config.enableLogging) {
+        console.log(
+          `[CONCURRENCY-MANAGER] Dynamic concurrency: ${config.concurrencyLimit} (CPUs: ${metrics.cpuCount}, Memory pressure: ${metrics.isUnderMemoryPressure})`
+        );
+      }
+    } else if (config.concurrencyLimit <= 0) {
+      // Fallback to safe default
+      config.concurrencyLimit = 5;
+    }
     const results: Array<R | { error: Error; item: T }> = new Array(
       items.length
     );
@@ -87,7 +208,9 @@ export class ConcurrencyManager {
           config.maxRetries,
           config.retryDelay,
           config.retryBackoffMultiplier,
-          config.onError
+          config.onError,
+          config.enableJitter,
+          config.context
         );
 
         log(`Processing item ${itemIndex + 1}/${items.length}: success`);
@@ -176,8 +299,11 @@ export class ConcurrencyManager {
     processor: (item: T) => Promise<R>,
     maxRetries: number = 3,
     baseDelay: number = 1000,
-    backoffMultiplier: number = 2,
-    onError?: (error: Error, item: T, retryCount: number) => void
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _backoffMultiplier: number = 2, // Legacy parameter, now unused
+    onError?: (error: Error, item: T, retryCount: number) => void,
+    enableJitter: boolean = true,
+    context: string = 'general'
   ): Promise<R> {
     let lastError: Error;
 
@@ -188,20 +314,39 @@ export class ConcurrencyManager {
         lastError = error as Error;
 
         if (attempt < maxRetries) {
-          const delay = ConcurrencyManager.calculateBackoffDelay(
-            attempt,
-            baseDelay,
-            backoffMultiplier
+          // Get context-aware retry config
+          const retryConfig = ConcurrencyManager.getRetryConfig(
+            context,
+            lastError
           );
 
-          if (onError) {
-            onError(lastError, item, attempt + 1);
+          // Use context-specific settings or fall back to provided values
+          const effectiveMaxRetries = Math.max(
+            maxRetries,
+            retryConfig.maxRetries
+          );
+          const effectiveBaseDelay = Math.max(baseDelay, retryConfig.baseDelay);
+          const effectiveMultiplier = retryConfig.multiplier;
+
+          if (attempt < effectiveMaxRetries) {
+            const delay = ConcurrencyManager.calculateBackoffDelay(
+              attempt,
+              effectiveBaseDelay,
+              effectiveMultiplier,
+              enableJitter
+            );
+
+            if (onError) {
+              onError(lastError, item, attempt + 1);
+            }
+
+            console.log(
+              `[CONCURRENCY-MANAGER] Retry ${attempt + 1}/${effectiveMaxRetries} after ${delay}ms delay (context: ${context})`
+            );
+            await ConcurrencyManager.sleep(delay);
+          } else {
+            break; // Exceeded max retries for this context
           }
-
-          console.log(
-            `[CONCURRENCY-MANAGER] Retry ${attempt + 1}/${maxRetries} after ${delay}ms delay`
-          );
-          await ConcurrencyManager.sleep(delay);
         }
       }
     }
@@ -220,14 +365,21 @@ export class ConcurrencyManager {
   static calculateBackoffDelay(
     attempt: number,
     baseDelay: number,
-    multiplier: number = 2
+    multiplier: number = 2,
+    enableJitter: boolean = true
   ): number {
     const exponentialDelay = baseDelay * Math.pow(multiplier, attempt);
-    const jitter = Math.random() * 0.1 * exponentialDelay; // Add 10% jitter
-    const delayWithJitter = exponentialDelay + jitter;
 
-    // Cap at 30 seconds maximum
-    return Math.min(delayWithJitter, 30000);
+    let finalDelay = exponentialDelay;
+    if (enableJitter) {
+      // Add jitter: 10% random variation
+      const jitterRange = exponentialDelay * 0.1;
+      const jitter = (Math.random() - 0.5) * 2 * jitterRange;
+      finalDelay = exponentialDelay + jitter;
+    }
+
+    // Cap at 30 seconds maximum, minimum 100ms
+    return Math.max(100, Math.min(finalDelay, 30000));
   }
 
   /**

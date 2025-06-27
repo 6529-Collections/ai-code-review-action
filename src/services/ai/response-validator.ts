@@ -14,6 +14,12 @@ export class ResponseValidator {
     rawResponse: string,
     promptType: PromptType
   ): { success: boolean; data?: T; error?: string } {
+    // Early exit optimization: Quick check for obvious negative responses
+    const quickCheck = ResponseValidator.quickNegativeCheck<T>(rawResponse, promptType);
+    if (quickCheck) {
+      return quickCheck;
+    }
+
     // First extract JSON from the response
     const extractionResult = JsonExtractor.extractAndValidateJson(
       rawResponse,
@@ -200,5 +206,71 @@ export class ResponseValidator {
           `No fallback response defined for prompt type: ${promptType}`
         );
     }
+  }
+
+  /**
+   * Quick check for obvious negative responses to avoid full parsing
+   */
+  static quickNegativeCheck<T>(
+    rawResponse: string, 
+    promptType: PromptType
+  ): { success: boolean; data: T; error?: string } | null {
+    // Only apply quick checks for similarity/merge-related prompts
+    if (![
+      PromptType.SIMILARITY_CHECK, 
+      PromptType.BATCH_SIMILARITY,
+      PromptType.CROSS_LEVEL_SIMILARITY
+    ].includes(promptType)) {
+      return null; // No quick check for other types
+    }
+
+    // Quick regex checks for obvious patterns
+    const shouldMergeFalse = /"shouldMerge":\s*false/i.test(rawResponse);
+    const lowConfidence = /"confidence":\s*0\.([0-2])\d*/i.test(rawResponse);
+    const relationshipNone = /"relationship":\s*"none"/i.test(rawResponse);
+    
+    // If it's clearly a negative response with low confidence
+    if ((shouldMergeFalse && lowConfidence) || relationshipNone) {
+      try {
+        // Try to extract just the essential fields quickly
+        const confidenceMatch = rawResponse.match(/"confidence":\s*(0\.\d+)/);
+        const confidence = confidenceMatch ? parseFloat(confidenceMatch[1]) : 0.1;
+        
+        if (confidence < 0.3) {
+          // Return fast negative response
+          switch (promptType) {
+            case PromptType.SIMILARITY_CHECK:
+              return {
+                success: true,
+                data: {
+                  shouldMerge: false,
+                  confidence,
+                  reasoning: 'Quick analysis - clear non-match',
+                  nameScore: 0,
+                  descriptionScore: 0,
+                  patternScore: 0,
+                  businessScore: 0,
+                  semanticScore: 0,
+                } as T
+              };
+            
+            case PromptType.CROSS_LEVEL_SIMILARITY:
+              return {
+                success: true,
+                data: {
+                  relationship: 'none',
+                  confidence,
+                  action: 'keep_both',
+                  reasoning: 'Quick analysis - no relationship',
+                } as T
+              };
+          }
+        }
+      } catch {
+        // If quick parsing fails, fall through to full validation
+      }
+    }
+    
+    return null; // No quick check applied, proceed with full validation
   }
 }

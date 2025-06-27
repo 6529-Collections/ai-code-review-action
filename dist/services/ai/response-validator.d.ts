@@ -23,4 +23,12 @@ export declare class ResponseValidator {
      * Create a fallback response based on prompt type
      */
     static createFallbackResponse<T>(promptType: PromptType, context?: any): T;
+    /**
+     * Quick check for obvious negative responses to avoid full parsing
+     */
+    static quickNegativeCheck<T>(rawResponse: string, promptType: PromptType): {
+        success: boolean;
+        data: T;
+        error?: string;
+    } | null;
 }
