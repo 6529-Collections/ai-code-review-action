@@ -3,9 +3,7 @@ import { AISimilarityResult } from '../types/similarity-types';
 import { SimilarityCalculator } from '../utils/similarity-calculator';
 import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 
 export class AISimilarityService {
   private similarityCalculator: SimilarityCalculator;
@@ -21,30 +19,29 @@ export class AISimilarityService {
     const prompt = this.buildSimilarityPrompt(theme1, theme2);
 
     try {
-      const tempFile = path.join(
-        os.tmpdir(),
-        `claude-similarity-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.txt`
-      );
-      fs.writeFileSync(tempFile, prompt);
+      const { filePath: tempFile, cleanup } =
+        SecureFileNamer.createSecureTempFile('claude-similarity', prompt);
 
       let output = '';
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
+      try {
+        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          listeners: {
+            stdout: (data: Buffer) => {
+              output += data.toString();
+            },
           },
-        },
-      });
+        });
 
-      fs.unlinkSync(tempFile);
+        const result = this.parseAISimilarityResponse(output);
+        console.log(
+          `[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
+        );
+        console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
 
-      const result = this.parseAISimilarityResponse(output);
-      console.log(
-        `[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
-      );
-      console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
-
-      return result;
+        return result;
+      } finally {
+        cleanup(); // Ensure file is cleaned up even if execution fails
+      }
     } catch (error) {
       console.warn(
         `AI similarity failed for "${theme1.name}" vs "${theme2.name}":`,

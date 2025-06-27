@@ -1,16 +1,28 @@
 /**
  * Concurrency management utility for processing items with controlled parallelism,
- * retry logic, and progress tracking.
+ * retry logic, and progress tracking with dynamic resource-based optimization.
  */
+export interface SystemMetrics {
+    cpuCount: number;
+    availableMemory: number;
+    currentHeapUsed: number;
+    isUnderMemoryPressure: boolean;
+}
 export interface ConcurrencyOptions<T> {
-    /** Maximum number of concurrent operations (default: 5) */
+    /** Maximum number of concurrent operations (default: dynamic based on system) */
     concurrencyLimit?: number;
+    /** Enable dynamic concurrency adjustment (default: true) */
+    dynamicConcurrency?: boolean;
     /** Maximum retry attempts for failed operations (default: 3) */
     maxRetries?: number;
     /** Base delay between retries in milliseconds (default: 1000) */
     retryDelay?: number;
     /** Multiplier for exponential backoff (default: 2) */
     retryBackoffMultiplier?: number;
+    /** Enable jitter in retry delays (default: true) */
+    enableJitter?: boolean;
+    /** Context for smart retry strategies */
+    context?: 'theme_processing' | 'ai_batch' | 'general';
     /** Callback for progress updates */
     onProgress?: (completed: number, total: number) => void;
     /** Callback for retry attempts */
@@ -32,6 +44,22 @@ export interface ConcurrencyError<T> {
 }
 export type ConcurrencyOutcome<T, R> = ConcurrencyResult<T, R> | ConcurrencyError<T>;
 export declare class ConcurrencyManager {
+    /**
+     * Get current system metrics for dynamic concurrency calculation
+     */
+    static getSystemMetrics(): SystemMetrics;
+    /**
+     * Calculate optimal concurrency limit based on system resources
+     */
+    static calculateOptimalConcurrency(metrics: SystemMetrics, context?: string): number;
+    /**
+     * Get context-aware retry configuration
+     */
+    static getRetryConfig(context: string, error?: Error): {
+        maxRetries: number;
+        baseDelay: number;
+        multiplier: number;
+    };
     /**
      * Process items concurrently with controlled parallelism and retry logic.
      *
@@ -59,7 +87,8 @@ export declare class ConcurrencyManager {
      * @returns Processed result
      * @throws Error if all retry attempts fail
      */
-    static processWithRetry<T, R>(item: T, processor: (item: T) => Promise<R>, maxRetries?: number, baseDelay?: number, backoffMultiplier?: number, onError?: (error: Error, item: T, retryCount: number) => void): Promise<R>;
+    static processWithRetry<T, R>(item: T, processor: (item: T) => Promise<R>, maxRetries?: number, baseDelay?: number, _backoffMultiplier?: number, // Legacy parameter, now unused
+    onError?: (error: Error, item: T, retryCount: number) => void, enableJitter?: boolean, context?: string): Promise<R>;
     /**
      * Calculate exponential backoff delay with jitter and maximum cap.
      *
@@ -68,7 +97,7 @@ export declare class ConcurrencyManager {
      * @param multiplier Backoff multiplier
      * @returns Delay in milliseconds
      */
-    static calculateBackoffDelay(attempt: number, baseDelay: number, multiplier?: number): number;
+    static calculateBackoffDelay(attempt: number, baseDelay: number, multiplier?: number, enableJitter?: boolean): number;
     /**
      * Sleep utility function.
      *

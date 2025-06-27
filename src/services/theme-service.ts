@@ -1,8 +1,6 @@
 import { ChangedFile } from './git-service';
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 import { ThemeSimilarityService } from './theme-similarity';
 import { ThemeExpansionService } from './theme-expansion';
 import { HierarchicalSimilarityService } from './hierarchical-similarity';
@@ -143,56 +141,46 @@ class ClaudeService {
 
   async analyzeChunk(
     chunk: CodeChunk,
-    context: string
+    context: string,
+    codeChange?: CodeChange
   ): Promise<ChunkAnalysis> {
-    const prompt = this.buildAnalysisPrompt(chunk, context);
+    const prompt = this.buildAnalysisPrompt(chunk, context, codeChange);
     let output = '';
     let tempFile: string | null = null;
 
     try {
-      // Use a unique temporary file for each concurrent request
-      tempFile = path.join(
-        os.tmpdir(),
-        `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`
+      // Use secure temporary file for each concurrent request
+      const { filePath, cleanup } = SecureFileNamer.createSecureTempFile(
+        'claude-prompt',
+        prompt
       );
-      fs.writeFileSync(tempFile, prompt);
+      tempFile = filePath;
 
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
+      try {
+        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          listeners: {
+            stdout: (data: Buffer) => {
+              output += data.toString();
+            },
           },
-        },
-      });
+        });
 
-      const result = this.parseClaudeResponse(output, chunk);
-      return result;
+        const result = this.parseClaudeResponse(output, chunk, codeChange);
+        return result;
+      } finally {
+        cleanup(); // Use secure cleanup
+      }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       console.warn('Claude analysis failed, using fallback:', error);
       return this.createFallbackAnalysis(chunk);
-    } finally {
-      // Always attempt cleanup, but don't fail if file doesn't exist
-      if (tempFile) {
-        try {
-          if (fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-          }
-        } catch (cleanupError) {
-          console.warn(
-            `Failed to cleanup temp file ${tempFile}:`,
-            cleanupError
-          );
-        }
-      }
     }
   }
 
-  private _buildEnhancedAnalysisPrompt(
+  private buildAnalysisPrompt(
     chunk: CodeChunk,
     context: string,
-    codeChange?: CodeChange,
-    smartContext?: SmartContext
+    codeChange?: CodeChange
   ): string {
     // Limit content length to avoid overwhelming Claude
     const maxContentLength = 2000;
@@ -201,25 +189,25 @@ class ClaudeService {
         ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
         : chunk.content;
 
+    // Build enhanced context with pre-extracted data
     let enhancedContext = context;
 
-    // Add algorithmic context if available
-    if (codeChange && smartContext) {
-      enhancedContext += `\n\nCODE ANALYSIS CONTEXT:`;
-      enhancedContext += `\nFile: ${codeChange.file} (${codeChange.changeType})`;
-      enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
+    if (codeChange) {
+      enhancedContext += `\n\nPre-analyzed code structure:`;
       enhancedContext += `\nFile type: ${codeChange.fileType}`;
+      enhancedContext += `\nComplexity: ${codeChange.codeComplexity}`;
+      enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
 
       if (codeChange.functionsChanged.length > 0) {
-        enhancedContext += `\nFunctions affected: ${codeChange.functionsChanged.slice(0, 3).join(', ')}${codeChange.functionsChanged.length > 3 ? '...' : ''}`;
+        enhancedContext += `\nFunctions changed: ${codeChange.functionsChanged.join(', ')}`;
       }
 
       if (codeChange.classesChanged.length > 0) {
-        enhancedContext += `\nClasses/interfaces affected: ${codeChange.classesChanged.slice(0, 3).join(', ')}${codeChange.classesChanged.length > 3 ? '...' : ''}`;
+        enhancedContext += `\nClasses changed: ${codeChange.classesChanged.join(', ')}`;
       }
 
       if (codeChange.importsChanged.length > 0) {
-        enhancedContext += `\nImports affected: ${codeChange.importsChanged.slice(0, 2).join(', ')}${codeChange.importsChanged.length > 2 ? '...' : ''}`;
+        enhancedContext += `\nImports changed: ${codeChange.importsChanged.join(', ')}`;
       }
 
       if (codeChange.isTestFile) {
@@ -229,52 +217,9 @@ class ClaudeService {
       if (codeChange.isConfigFile) {
         enhancedContext += `\nThis is a CONFIG file`;
       }
-
-      enhancedContext += `\nOverall complexity: ${smartContext.fileMetrics.codeComplexity}`;
     }
 
     return `${enhancedContext}
-
-Analyze this code change from a USER and BUSINESS perspective (not technical implementation):
-
-File: ${chunk.filename}
-Code changes:
-${truncatedContent}
-
-Focus on:
-- What user experience or workflow is being improved?
-- What business capability is being added/removed/enhanced?
-- What problem is this solving for end users?
-- Think like a product manager, not a developer
-
-Examples of good business-focused themes:
-- "Remove demo functionality" (not "Delete greeting parameter")
-- "Improve code review automation" (not "Add AI services")
-- "Simplify configuration" (not "Update workflow files")
-- "Add pull request feedback" (not "Implement commenting system")
-
-CRITICAL: You MUST respond with ONLY valid JSON. No explanations, no markdown, no extra text.
-
-Start your response with { and end with }. Example:
-{
-  "themeName": "user/business-focused name (what value does this provide?)",
-  "description": "what business problem this solves or capability it provides",
-  "businessImpact": "how this affects user experience or business outcomes",
-  "suggestedParent": null,
-  "confidence": 0.8,
-  "codePattern": "what pattern this represents"
-}`;
-  }
-
-  private buildAnalysisPrompt(chunk: CodeChunk, context: string): string {
-    // Limit content length to avoid overwhelming Claude
-    const maxContentLength = 2000;
-    const truncatedContent =
-      chunk.content.length > maxContentLength
-        ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
-        : chunk.content;
-
-    return `${context}
 
 Analyze this code change. Be specific but concise.
 
@@ -283,9 +228,9 @@ Code changes:
 ${truncatedContent}
 
 Focus on WHAT changed with exact details:
-- Specific function/class/variable names modified
 - Exact values changed (before → after)
-- Concrete files affected
+- Business purpose of the changes
+- User impact
 
 Examples:
 ✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
@@ -303,15 +248,17 @@ CRITICAL: Respond with ONLY valid JSON:
   "technicalSummary": "exact technical change (max 12 words)",
   "keyChanges": ["max 3 changes, each max 10 words"],
   "userScenario": null,
-  "mainFunctionsChanged": ["exact function names only"],
-  "mainClassesChanged": ["exact class names only"],
   "suggestedParent": null,
   "confidence": 0.8,
   "codePattern": "change type (max 3 words)"
 }`;
   }
 
-  private parseClaudeResponse(output: string, chunk: CodeChunk): ChunkAnalysis {
+  private parseClaudeResponse(
+    output: string,
+    chunk: CodeChunk,
+    codeChange?: CodeChange
+  ): ChunkAnalysis {
     const extractionResult = JsonExtractor.extractAndValidateJson(
       output,
       'object',
@@ -344,8 +291,10 @@ CRITICAL: Respond with ONLY valid JSON:
         technicalSummary: data.technicalSummary,
         keyChanges: data.keyChanges,
         userScenario: data.userScenario,
-        mainFunctionsChanged: data.mainFunctionsChanged,
-        mainClassesChanged: data.mainClassesChanged,
+        mainFunctionsChanged:
+          codeChange?.functionsChanged || data.mainFunctionsChanged || [],
+        mainClassesChanged:
+          codeChange?.classesChanged || data.mainClassesChanged || [],
       };
     }
 
@@ -411,12 +360,16 @@ class ThemeContextManager {
     this.updateContext(placement, analysis, chunk);
   }
 
-  async analyzeChunkOnly(chunk: CodeChunk): Promise<ChunkAnalysisResult> {
+  async analyzeChunkOnly(
+    chunk: CodeChunk,
+    codeChange?: CodeChange
+  ): Promise<ChunkAnalysisResult> {
     try {
       const contextString = this.buildContextForClaude();
       const analysis = await this.claudeService.analyzeChunk(
         chunk,
-        contextString
+        contextString,
+        codeChange
       );
       return { chunk, analysis };
     } catch (error) {
@@ -428,7 +381,10 @@ class ThemeContextManager {
     }
   }
 
-  processBatchResults(results: ChunkAnalysisResult[]): void {
+  processBatchResults(
+    results: ChunkAnalysisResult[],
+    codeChangeMap: Map<string, CodeChange>
+  ): void {
     for (const result of results) {
       if (result.error) {
         console.warn(
@@ -436,7 +392,8 @@ class ThemeContextManager {
         );
       }
       const placement = this.determineThemePlacement(result.analysis);
-      this.updateContext(placement, result.analysis, result.chunk);
+      const codeChange = codeChangeMap.get(result.chunk.filename);
+      this.updateContext(placement, result.analysis, result.chunk, codeChange);
     }
   }
 
@@ -499,7 +456,8 @@ class ThemeContextManager {
   private updateContext(
     placement: ThemePlacement,
     analysis: ChunkAnalysis,
-    chunk: CodeChunk
+    chunk: CodeChunk,
+    codeChange?: CodeChange
   ): void {
     if (placement.action === 'merge' && placement.targetThemeId) {
       const existingTheme = this.context.themes.get(placement.targetThemeId);
@@ -508,10 +466,28 @@ class ThemeContextManager {
         existingTheme.codeSnippets.push(chunk.content);
         existingTheme.context += `\n${analysis.description}`;
         existingTheme.lastAnalysis = new Date();
+
+        // Add CodeChange data to existing theme
+        if (codeChange) {
+          existingTheme.codeChanges.push(codeChange);
+
+          // Update metrics
+          if (existingTheme.codeMetrics && codeChange) {
+            existingTheme.codeMetrics.linesAdded += codeChange.linesAdded;
+            existingTheme.codeMetrics.linesRemoved += codeChange.linesRemoved;
+            existingTheme.codeMetrics.filesChanged += 1;
+          } else if (codeChange) {
+            existingTheme.codeMetrics = {
+              linesAdded: codeChange.linesAdded,
+              linesRemoved: codeChange.linesRemoved,
+              filesChanged: 1,
+            };
+          }
+        }
       }
     } else {
       const newTheme: Theme = {
-        id: `theme-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        id: SecureFileNamer.generateSecureId('theme'),
         name: analysis.themeName,
         description: analysis.description,
         level: placement.level || 0,
@@ -524,24 +500,30 @@ class ThemeContextManager {
           fileMetrics: {
             totalFiles: 1,
             fileTypes: [chunk.filename.split('.').pop() || 'unknown'],
-            hasTests: false,
-            hasConfig: false,
-            codeComplexity: 'low',
+            hasTests: codeChange?.isTestFile || false,
+            hasConfig: codeChange?.isConfigFile || false,
+            codeComplexity: codeChange?.codeComplexity || 'low',
           },
           changePatterns: {
-            newFunctions: [],
-            modifiedFunctions: [],
-            newImports: [],
+            newFunctions: codeChange?.functionsChanged || [],
+            modifiedFunctions: codeChange?.functionsChanged || [],
+            newImports: codeChange?.importsChanged || [],
             removedImports: [],
-            newClasses: [],
-            modifiedClasses: [],
-            architecturalPatterns: [],
-            businessDomains: [],
+            newClasses: codeChange?.classesChanged || [],
+            modifiedClasses: codeChange?.classesChanged || [],
+            architecturalPatterns: codeChange?.architecturalPatterns || [],
+            businessDomains: codeChange?.businessDomain
+              ? [codeChange.businessDomain]
+              : [],
           },
-          contextSummary: `Single chunk: ${chunk.filename}`,
-          significantChanges: [],
+          contextSummary:
+            codeChange?.semanticDescription ||
+            `Single chunk: ${chunk.filename}`,
+          significantChanges: codeChange?.semanticDescription
+            ? [codeChange.semanticDescription]
+            : [],
         },
-        codeChanges: [],
+        codeChanges: codeChange ? [codeChange] : [],
         lastAnalysis: new Date(),
         // New detailed fields
         detailedDescription: analysis.detailedDescription,
@@ -550,6 +532,13 @@ class ThemeContextManager {
         userScenario: analysis.userScenario,
         mainFunctionsChanged: analysis.mainFunctionsChanged,
         mainClassesChanged: analysis.mainClassesChanged,
+        codeMetrics: codeChange
+          ? {
+              linesAdded: codeChange.linesAdded,
+              linesRemoved: codeChange.linesRemoved,
+              filesChanged: 1,
+            }
+          : undefined,
       };
 
       this.context.themes.set(newTheme.id, newTheme);
@@ -618,7 +607,7 @@ export class ThemeService {
       `[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`
     );
 
-    // Convert to the legacy format temporarily while we transition
+    // Convert to the legacy format for ChunkProcessor compatibility
     const changedFiles = codeChanges.map((change) => ({
       filename: change.file,
       status: change.changeType as 'added' | 'modified' | 'removed' | 'renamed',
@@ -627,23 +616,6 @@ export class ThemeService {
       patch: change.diffHunk,
     }));
 
-    return this.analyzeThemesInternal(changedFiles, [], null, startTime);
-  }
-
-  async analyzeThemes(
-    changedFiles: ChangedFile[]
-  ): Promise<ThemeAnalysisResult> {
-    console.log('[THEME-SERVICE] Starting legacy theme analysis');
-    const startTime = Date.now();
-    return this.analyzeThemesInternal(changedFiles, [], null, startTime);
-  }
-
-  private async analyzeThemesInternal(
-    changedFiles: ChangedFile[],
-    _codeChanges: CodeChange[],
-    _smartContext: SmartContext | null,
-    startTime: number
-  ): Promise<ThemeAnalysisResult> {
     const analysisResult: ThemeAnalysisResult = {
       themes: [],
       originalThemes: [],
@@ -671,6 +643,12 @@ export class ThemeService {
     }
 
     try {
+      // Create lookup map for CodeChange data
+      const codeChangeMap = new Map<string, CodeChange>();
+      codeChanges.forEach((change) => {
+        codeChangeMap.set(change.file, change);
+      });
+
       const contextManager = new ThemeContextManager(this.anthropicApiKey);
       const chunkProcessor = new ChunkProcessor();
 
@@ -685,7 +663,10 @@ export class ThemeService {
 
       const results = await ConcurrencyManager.processConcurrentlyWithLimit(
         chunks,
-        (chunk) => contextManager.analyzeChunkOnly(chunk),
+        (chunk) => {
+          const codeChange = codeChangeMap.get(chunk.filename);
+          return contextManager.analyzeChunkOnly(chunk, codeChange);
+        },
         {
           concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
           maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
@@ -735,7 +716,7 @@ export class ThemeService {
       );
 
       // Sequential context updates to maintain thread safety
-      contextManager.processBatchResults(analysisResults);
+      contextManager.processBatchResults(analysisResults, codeChangeMap);
 
       contextManager.setProcessingState('complete');
 

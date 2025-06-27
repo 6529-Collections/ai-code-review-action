@@ -1,7 +1,5 @@
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { SecureFileNamer } from './secure-file-namer';
 
 /**
  * Simple Claude client for making AI calls
@@ -16,39 +14,29 @@ export class ClaudeClient {
     let tempFile: string | null = null;
 
     try {
-      // Create unique temporary file for this request
-      tempFile = path.join(
-        os.tmpdir(),
-        `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`
+      // Create secure temporary file for this request
+      const { filePath, cleanup } = SecureFileNamer.createSecureTempFile(
+        'claude-prompt',
+        prompt
       );
-      fs.writeFileSync(tempFile, prompt);
+      tempFile = filePath;
 
       let output = '';
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
+      try {
+        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          listeners: {
+            stdout: (data: Buffer) => {
+              output += data.toString();
+            },
           },
-        },
-      });
+        });
 
-      return output.trim();
+        return output.trim();
+      } finally {
+        cleanup(); // Use secure cleanup
+      }
     } catch (error) {
       throw new Error(`Claude API call failed: ${error}`);
-    } finally {
-      // Clean up temporary file
-      if (tempFile) {
-        try {
-          if (fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-          }
-        } catch (cleanupError) {
-          console.warn(
-            `Failed to cleanup temp file ${tempFile}:`,
-            cleanupError
-          );
-        }
-      }
     }
   }
 }
