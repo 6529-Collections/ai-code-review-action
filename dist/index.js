@@ -33000,14 +33000,6 @@ class ThemeService {
             deletions: change.linesRemoved,
             patch: change.diffHunk,
         }));
-        return this.analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime);
-    }
-    async analyzeThemes(changedFiles) {
-        console.log('[THEME-SERVICE] Starting legacy theme analysis');
-        const startTime = Date.now();
-        return this.analyzeThemesInternal(changedFiles, [], null, startTime);
-    }
-    async analyzeThemesInternal(changedFiles, codeChanges, smartContext, startTime) {
         const analysisResult = {
             themes: [],
             originalThemes: [],

@@ -36,7 +36,8 @@
   },
   "dependencies": {
     "@actions/core": "^1.10.0",
-    "@actions/github": "^6.0.1"
+    "@actions/github": "^6.0.1",
+    "zod": "^3.25.67"
   },
   "devDependencies": {
     "@types/dotenv": "^8.2.3",
