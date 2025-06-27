@@ -3,9 +3,7 @@ import { ConsolidatedTheme } from '../types/similarity-types';
 import { CodeChange } from '../utils/ai-code-analyzer';
 import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 
 export class ThemeNamingService {
   async generateMergedThemeNameAndDescription(
@@ -19,37 +17,36 @@ export class ThemeNamingService {
     prompt: string
   ): Promise<{ name: string; description: string }> {
     try {
-      const tempFile = path.join(
-        os.tmpdir(),
-        `claude-naming-${Date.now()}.txt`
-      );
-      fs.writeFileSync(tempFile, prompt);
+      const { filePath: tempFile, cleanup } =
+        SecureFileNamer.createSecureTempFile('claude-naming', prompt);
 
       let output = '';
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
+      try {
+        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          listeners: {
+            stdout: (data: Buffer) => {
+              output += data.toString();
+            },
           },
-        },
-      });
+        });
 
-      fs.unlinkSync(tempFile);
+        const result = this.parseMergedThemeNamingResponse(output);
+        console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
 
-      const result = this.parseMergedThemeNamingResponse(output);
-      console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
-
-      // Validate the generated name
-      if (this.isValidThemeName(result.name)) {
-        return result;
-      } else {
-        console.warn(
-          `[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`
-        );
-        return {
-          name: 'Merged Changes',
-          description: 'Consolidated related changes',
-        };
+        // Validate the generated name
+        if (this.isValidThemeName(result.name)) {
+          return result;
+        } else {
+          console.warn(
+            `[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`
+          );
+          return {
+            name: 'Merged Changes',
+            description: 'Consolidated related changes',
+          };
+        }
+      } finally {
+        cleanup(); // Ensure file is cleaned up even if execution fails
       }
     } catch (error) {
       console.warn('AI theme naming failed:', error);
@@ -77,7 +74,7 @@ export class ThemeNamingService {
     });
 
     return {
-      id: `parent-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      id: SecureFileNamer.generateSecureId('parent'),
       name: domain,
       description: `Consolidated theme for ${children.length} related changes: ${children.map((c) => c.name).join(', ')}`,
       level: 0,

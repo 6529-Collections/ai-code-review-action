@@ -30107,9 +30107,7 @@ exports.AISimilarityService = void 0;
 const similarity_calculator_1 = __nccwpck_require__(7831);
 const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const os = __importStar(__nccwpck_require__(857));
+const secure_file_namer_1 = __nccwpck_require__(1661);
 class AISimilarityService {
     constructor(anthropicApiKey) {
         this.anthropicApiKey = anthropicApiKey;
@@ -30118,21 +30116,24 @@ class AISimilarityService {
     async calculateAISimilarity(theme1, theme2) {
         const prompt = this.buildSimilarityPrompt(theme1, theme2);
         try {
-            const tempFile = path.join(os.tmpdir(), `claude-similarity-${Date.now()}-${Math.random().toString(36).substring(2, 11)}.txt`);
-            fs.writeFileSync(tempFile, prompt);
+            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-similarity', prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
                     },
-                },
-            });
-            fs.unlinkSync(tempFile);
-            const result = this.parseAISimilarityResponse(output);
-            console.log(`[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
-            console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
-            return result;
+                });
+                const result = this.parseAISimilarityResponse(output);
+                console.log(`[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
+                console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
+                return result;
+            }
+            finally {
+                cleanup(); // Ensure file is cleaned up even if execution fails
+            }
         }
         catch (error) {
             console.warn(`AI similarity failed for "${theme1.name}" vs "${theme2.name}":`, error);
@@ -30314,9 +30315,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BatchProcessor = void 0;
 const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const os = __importStar(__nccwpck_require__(857));
+const secure_file_namer_1 = __nccwpck_require__(1661);
 class BatchProcessor {
     constructor() {
         this.batchSize = 8; // Process 8 theme pairs per AI batch call
@@ -30325,20 +30324,23 @@ class BatchProcessor {
     async processBatchSimilarity(pairs) {
         const prompt = this.buildBatchSimilarityPrompt(pairs);
         try {
-            const tempFile = path.join(os.tmpdir(), `claude-batch-similarity-${Date.now()}.txt`);
-            fs.writeFileSync(tempFile, prompt);
+            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
                     },
-                },
-            });
-            fs.unlinkSync(tempFile);
-            const results = this.parseBatchSimilarityResponse(output, pairs);
-            console.log(`[BATCH] Successfully processed ${results.length} pairs`);
-            return results;
+                });
+                const results = this.parseBatchSimilarityResponse(output, pairs);
+                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
+                return results;
+            }
+            finally {
+                cleanup(); // Ensure file is cleaned up even if execution fails
+            }
         }
         catch (error) {
             console.error('Batch AI similarity failed:', error);
@@ -30512,10 +30514,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BusinessDomainService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const os = __importStar(__nccwpck_require__(857));
 const concurrency_manager_1 = __nccwpck_require__(8692);
+const secure_file_namer_1 = __nccwpck_require__(1661);
 class BusinessDomainService {
     async groupByBusinessDomain(themes) {
         const domains = new Map();
@@ -30588,26 +30588,29 @@ class BusinessDomainService {
     }
     async executeDomainExtraction(name, prompt, description) {
         try {
-            const tempFile = path.join(os.tmpdir(), `claude-domain-${Date.now()}.txt`);
-            fs.writeFileSync(tempFile, prompt);
+            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-domain', prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
                     },
-                },
-            });
-            fs.unlinkSync(tempFile);
-            const domain = this.parseDomainExtractionResponse(output);
-            console.log(`[AI-DOMAIN] Generated domain for "${name}": "${domain}"`);
-            // Validate the generated domain
-            if (this.isValidDomainName(domain)) {
-                return domain;
+                });
+                const domain = this.parseDomainExtractionResponse(output);
+                console.log(`[AI-DOMAIN] Generated domain for "${name}": "${domain}"`);
+                // Validate the generated domain
+                if (this.isValidDomainName(domain)) {
+                    return domain;
+                }
+                else {
+                    console.warn(`[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`);
+                    return this.extractBusinessDomainFallback(name, description || '');
+                }
             }
-            else {
-                console.warn(`[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`);
-                return this.extractBusinessDomainFallback(name, description || '');
+            finally {
+                cleanup(); // Ensure file is cleaned up even if execution fails
             }
         }
         catch (error) {
@@ -31623,6 +31626,7 @@ const claude_client_1 = __nccwpck_require__(3831);
 const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
 const concurrency_manager_1 = __nccwpck_require__(8692);
+const secure_file_namer_1 = __nccwpck_require__(1661);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 4,
     minComplexityScore: 0.7,
@@ -31733,7 +31737,7 @@ class ThemeExpansionService {
         }
         // Create expansion request
         const expansionRequest = {
-            id: `expansion_${theme.id}_${Date.now()}`,
+            id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('expansion', theme.id),
             theme,
             parentTheme,
             depth: currentDepth,
@@ -32114,7 +32118,7 @@ CRITICAL: Respond with ONLY valid JSON.
             });
             return {
                 ...themes[0], // Use first theme as base
-                id: `dedup-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                id: secure_file_namer_1.SecureFileNamer.generateSecureId('dedup'),
                 name: data.name || themes[0].name,
                 description: data.description || themes[0].description,
                 detailedDescription: data.detailedDescription,
@@ -32316,7 +32320,7 @@ Only create sub-themes if there are genuinely distinct business concerns.
             const analysis = extractionResult.data;
             // Convert to ConsolidatedTheme objects
             const subThemes = (analysis.subThemes || []).map((subTheme, index) => ({
-                id: `${theme.id}_sub_${index}_${Date.now()}`,
+                id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', theme.id, index),
                 name: subTheme.name,
                 description: subTheme.description,
                 level: theme.level + 1,
@@ -32400,9 +32404,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeNamingService = void 0;
 const json_extractor_1 = __nccwpck_require__(2642);
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const os = __importStar(__nccwpck_require__(857));
+const secure_file_namer_1 = __nccwpck_require__(1661);
 class ThemeNamingService {
     async generateMergedThemeNameAndDescription(themes) {
         const prompt = this.buildMergedThemeNamingPrompt(themes);
@@ -32410,29 +32412,32 @@ class ThemeNamingService {
     }
     async executeMergedThemeNaming(prompt) {
         try {
-            const tempFile = path.join(os.tmpdir(), `claude-naming-${Date.now()}.txt`);
-            fs.writeFileSync(tempFile, prompt);
+            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-naming', prompt);
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
                     },
-                },
-            });
-            fs.unlinkSync(tempFile);
-            const result = this.parseMergedThemeNamingResponse(output);
-            console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
-            // Validate the generated name
-            if (this.isValidThemeName(result.name)) {
-                return result;
+                });
+                const result = this.parseMergedThemeNamingResponse(output);
+                console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
+                // Validate the generated name
+                if (this.isValidThemeName(result.name)) {
+                    return result;
+                }
+                else {
+                    console.warn(`[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`);
+                    return {
+                        name: 'Merged Changes',
+                        description: 'Consolidated related changes',
+                    };
+                }
             }
-            else {
-                console.warn(`[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`);
-                return {
-                    name: 'Merged Changes',
-                    description: 'Consolidated related changes',
-                };
+            finally {
+                cleanup(); // Ensure file is cleaned up even if execution fails
             }
         }
         catch (error) {
@@ -32455,7 +32460,7 @@ class ThemeNamingService {
             sourceThemes.push(...child.sourceThemes);
         });
         return {
-            id: `parent-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            id: secure_file_namer_1.SecureFileNamer.generateSecureId('parent'),
             name: domain,
             description: `Consolidated theme for ${children.length} related changes: ${children.map((c) => c.name).join(', ')}`,
             level: 0,
@@ -32644,9 +32649,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const os = __importStar(__nccwpck_require__(857));
+const secure_file_namer_1 = __nccwpck_require__(1661);
 const theme_similarity_1 = __nccwpck_require__(4189);
 const theme_expansion_1 = __nccwpck_require__(7333);
 const hierarchical_similarity_1 = __nccwpck_require__(2983);
@@ -32668,36 +32671,28 @@ class ClaudeService {
         let output = '';
         let tempFile = null;
         try {
-            // Use a unique temporary file for each concurrent request
-            tempFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`);
-            fs.writeFileSync(tempFile, prompt);
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
+            // Use secure temporary file for each concurrent request
+            const { filePath, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-prompt', prompt);
+            tempFile = filePath;
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
                     },
-                },
-            });
-            const result = this.parseClaudeResponse(output, chunk, codeChange);
-            return result;
+                });
+                const result = this.parseClaudeResponse(output, chunk, codeChange);
+                return result;
+            }
+            finally {
+                cleanup(); // Use secure cleanup
+            }
         }
         catch (err) {
             const error = err instanceof Error ? err.message : String(err);
             console.warn('Claude analysis failed, using fallback:', error);
             return this.createFallbackAnalysis(chunk);
-        }
-        finally {
-            // Always attempt cleanup, but don't fail if file doesn't exist
-            if (tempFile) {
-                try {
-                    if (fs.existsSync(tempFile)) {
-                        fs.unlinkSync(tempFile);
-                    }
-                }
-                catch (cleanupError) {
-                    console.warn(`Failed to cleanup temp file ${tempFile}:`, cleanupError);
-                }
-            }
         }
     }
     buildAnalysisPrompt(chunk, context, codeChange) {
@@ -32920,7 +32915,7 @@ class ThemeContextManager {
         }
         else {
             const newTheme = {
-                id: `theme-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+                id: secure_file_namer_1.SecureFileNamer.generateSecureId('theme'),
                 name: analysis.themeName,
                 description: analysis.description,
                 level: placement.level || 0,
@@ -34138,9 +34133,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ClaudeClient = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const fs = __importStar(__nccwpck_require__(9896));
-const path = __importStar(__nccwpck_require__(6928));
-const os = __importStar(__nccwpck_require__(857));
+const secure_file_namer_1 = __nccwpck_require__(1661);
 /**
  * Simple Claude client for making AI calls
  */
@@ -34153,34 +34146,26 @@ class ClaudeClient {
     async callClaude(prompt) {
         let tempFile = null;
         try {
-            // Create unique temporary file for this request
-            tempFile = path.join(os.tmpdir(), `claude-prompt-${Date.now()}-${Math.random().toString(36).substring(2)}.txt`);
-            fs.writeFileSync(tempFile, prompt);
+            // Create secure temporary file for this request
+            const { filePath, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-prompt', prompt);
+            tempFile = filePath;
             let output = '';
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
                     },
-                },
-            });
-            return output.trim();
+                });
+                return output.trim();
+            }
+            finally {
+                cleanup(); // Use secure cleanup
+            }
         }
         catch (error) {
             throw new Error(`Claude API call failed: ${error}`);
-        }
-        finally {
-            // Clean up temporary file
-            if (tempFile) {
-                try {
-                    if (fs.existsSync(tempFile)) {
-                        fs.unlinkSync(tempFile);
-                    }
-                }
-                catch (cleanupError) {
-                    console.warn(`Failed to cleanup temp file ${tempFile}:`, cleanupError);
-                }
-            }
         }
     }
 }
@@ -34893,6 +34878,234 @@ class JsonExtractor {
     }
 }
 exports.JsonExtractor = JsonExtractor;
+
+
+/***/ }),
+
+/***/ 1661:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SecureFileNamer = void 0;
+exports.createLegacyFileName = createLegacyFileName;
+const crypto = __importStar(__nccwpck_require__(6982));
+const os = __importStar(__nccwpck_require__(857));
+const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(9896));
+/**
+ * Secure file naming utility that prevents collisions in parallel execution
+ * by using UUIDs, process IDs, and crypto-grade randomness
+ */
+class SecureFileNamer {
+    /**
+     * Generate a collision-resistant file name for temporary files
+     */
+    static generateSecureFileName(prefix, extension = 'txt') {
+        const uuid = crypto.randomUUID().substring(0, 8);
+        const pid = this.processId;
+        const random = crypto.randomBytes(4).toString('hex');
+        const timestamp = Date.now();
+        return `${prefix}-${pid}-${uuid}-${random}-${timestamp}.${extension}`;
+    }
+    /**
+     * Generate a collision-resistant ID for entities (themes, batches, etc.)
+     */
+    static generateSecureId(prefix) {
+        const uuid = crypto.randomUUID();
+        return `${prefix}-${uuid}`;
+    }
+    /**
+     * Generate a short collision-resistant ID for performance-critical operations
+     */
+    static generateShortSecureId(prefix) {
+        const shortUuid = crypto.randomUUID().substring(0, 8);
+        const random = crypto.randomBytes(2).toString('hex');
+        return `${prefix}-${shortUuid}-${random}`;
+    }
+    /**
+     * Create a process-isolated temporary file path
+     */
+    static createSecureTempFilePath(prefix, extension = 'txt') {
+        const fileName = this.generateSecureFileName(prefix, extension);
+        const processDir = this.getProcessTempDir();
+        return path.join(processDir, fileName);
+    }
+    /**
+     * Get or create a process-specific temporary directory
+     */
+    static getProcessTempDir() {
+        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
+        try {
+            if (!fs.existsSync(processDir)) {
+                fs.mkdirSync(processDir, { recursive: true });
+            }
+        }
+        catch (error) {
+            // Fallback to system temp dir if process dir creation fails
+            console.warn(`Failed to create process temp dir: ${error}`);
+            return os.tmpdir();
+        }
+        return processDir;
+    }
+    /**
+     * Create a temporary file with secure naming and optional content
+     */
+    static createSecureTempFile(prefix, content = '', extension = 'txt') {
+        const filePath = this.createSecureTempFilePath(prefix, extension);
+        try {
+            fs.writeFileSync(filePath, content, 'utf8');
+        }
+        catch (error) {
+            throw new Error(`Failed to create secure temp file: ${error}`);
+        }
+        const cleanup = () => {
+            try {
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            }
+            catch (error) {
+                console.warn(`Failed to cleanup temp file ${filePath}: ${error}`);
+            }
+        };
+        return { filePath, cleanup };
+    }
+    /**
+     * Clean up process-specific temporary directory
+     */
+    static cleanupProcessTempDir() {
+        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
+        try {
+            if (fs.existsSync(processDir)) {
+                // Remove all files in the directory
+                const files = fs.readdirSync(processDir);
+                for (const file of files) {
+                    fs.unlinkSync(path.join(processDir, file));
+                }
+                // Remove the directory
+                fs.rmdirSync(processDir);
+            }
+        }
+        catch (error) {
+            console.warn(`Failed to cleanup process temp dir: ${error}`);
+        }
+    }
+    /**
+     * Generate batch ID with collision resistance for concurrent operations
+     */
+    static generateBatchId(batchType, promptType) {
+        const uuid = crypto.randomUUID().substring(0, 12);
+        const pid = this.processId;
+        const random = crypto.randomBytes(3).toString('hex');
+        if (promptType) {
+            return `${batchType}-${promptType}-${pid}-${uuid}-${random}`;
+        }
+        return `${batchType}-${pid}-${uuid}-${random}`;
+    }
+    /**
+     * Generate expansion/request ID with hierarchy support
+     */
+    static generateHierarchicalId(type, parentId, index) {
+        const uuid = crypto.randomUUID().substring(0, 8);
+        const random = crypto.randomBytes(2).toString('hex');
+        if (parentId && typeof index === 'number') {
+            return `${parentId}_${type}_${index}_${uuid}_${random}`;
+        }
+        if (parentId) {
+            return `${parentId}_${type}_${uuid}_${random}`;
+        }
+        return `${type}_${uuid}_${random}`;
+    }
+    /**
+     * Validate that a generated ID/filename is collision-resistant
+     */
+    static validateSecureNaming(name) {
+        // Check for minimum entropy (process ID + UUID parts + random)
+        const parts = name.split('-');
+        if (parts.length < 4)
+            return false;
+        // Check for presence of process ID (numeric)
+        if (!parts.some((part) => /^\d+$/.test(part)))
+            return false;
+        // Check for presence of hex random data
+        if (!parts.some((part) => /^[a-f0-9]{4,}$/i.test(part)))
+            return false;
+        return true;
+    }
+    /**
+     * Get statistics about the naming system
+     */
+    static getStats() {
+        return {
+            processId: this.processId,
+            processStartTime: this.processStartTime,
+            tempDir: this.getProcessTempDir(),
+            entropyBits: 128 + 32 + 16, // UUID + random bytes + timestamp
+        };
+    }
+}
+exports.SecureFileNamer = SecureFileNamer;
+SecureFileNamer.processId = process.pid;
+SecureFileNamer.processStartTime = Date.now();
+/**
+ * Legacy compatibility wrapper for existing timestamp-based naming
+ * @deprecated Use SecureFileNamer.generateSecureFileName instead
+ */
+function createLegacyFileName(prefix) {
+    console.warn(`Using legacy file naming for ${prefix}. Consider migrating to SecureFileNamer.`);
+    return SecureFileNamer.generateSecureFileName(prefix);
+}
+/**
+ * Setup process cleanup handlers
+ */
+function setupCleanupHandlers() {
+    const cleanup = () => SecureFileNamer.cleanupProcessTempDir();
+    process.on('exit', cleanup);
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    process.on('uncaughtException', (error) => {
+        console.error('Uncaught exception:', error);
+        cleanup();
+        process.exit(1);
+    });
+}
+// Initialize cleanup handlers
+setupCleanupHandlers();
 
 
 /***/ }),

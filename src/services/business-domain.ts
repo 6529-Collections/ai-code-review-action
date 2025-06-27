@@ -1,10 +1,8 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
 import { CodeChange } from '../utils/ai-code-analyzer';
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
 import { ConcurrencyManager } from '../utils/concurrency-manager';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 
 export class BusinessDomainService {
   async groupByBusinessDomain(
@@ -121,34 +119,33 @@ export class BusinessDomainService {
     description?: string
   ): Promise<string> {
     try {
-      const tempFile = path.join(
-        os.tmpdir(),
-        `claude-domain-${Date.now()}.txt`
-      );
-      fs.writeFileSync(tempFile, prompt);
+      const { filePath: tempFile, cleanup } =
+        SecureFileNamer.createSecureTempFile('claude-domain', prompt);
 
       let output = '';
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
+      try {
+        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          listeners: {
+            stdout: (data: Buffer) => {
+              output += data.toString();
+            },
           },
-        },
-      });
+        });
 
-      fs.unlinkSync(tempFile);
+        const domain = this.parseDomainExtractionResponse(output);
+        console.log(`[AI-DOMAIN] Generated domain for "${name}": "${domain}"`);
 
-      const domain = this.parseDomainExtractionResponse(output);
-      console.log(`[AI-DOMAIN] Generated domain for "${name}": "${domain}"`);
-
-      // Validate the generated domain
-      if (this.isValidDomainName(domain)) {
-        return domain;
-      } else {
-        console.warn(
-          `[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`
-        );
-        return this.extractBusinessDomainFallback(name, description || '');
+        // Validate the generated domain
+        if (this.isValidDomainName(domain)) {
+          return domain;
+        } else {
+          console.warn(
+            `[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`
+          );
+          return this.extractBusinessDomainFallback(name, description || '');
+        }
+      } finally {
+        cleanup(); // Ensure file is cleaned up even if execution fails
       }
     } catch (error) {
       console.warn('AI domain extraction failed:', error);

@@ -5,9 +5,7 @@ import {
 } from '../types/similarity-types';
 import { JsonExtractor } from '../utils/json-extractor';
 import * as exec from '@actions/exec';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 
 export class BatchProcessor {
   private batchSize = 8; // Process 8 theme pairs per AI batch call
@@ -19,27 +17,26 @@ export class BatchProcessor {
     const prompt = this.buildBatchSimilarityPrompt(pairs);
 
     try {
-      const tempFile = path.join(
-        os.tmpdir(),
-        `claude-batch-similarity-${Date.now()}.txt`
-      );
-      fs.writeFileSync(tempFile, prompt);
+      const { filePath: tempFile, cleanup } =
+        SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
 
       let output = '';
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
+      try {
+        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          listeners: {
+            stdout: (data: Buffer) => {
+              output += data.toString();
+            },
           },
-        },
-      });
+        });
 
-      fs.unlinkSync(tempFile);
+        const results = this.parseBatchSimilarityResponse(output, pairs);
+        console.log(`[BATCH] Successfully processed ${results.length} pairs`);
 
-      const results = this.parseBatchSimilarityResponse(output, pairs);
-      console.log(`[BATCH] Successfully processed ${results.length} pairs`);
-
-      return results;
+        return results;
+      } finally {
+        cleanup(); // Ensure file is cleaned up even if execution fails
+      }
     } catch (error) {
       console.error('Batch AI similarity failed:', error);
       throw error;

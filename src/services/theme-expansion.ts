@@ -8,6 +8,7 @@ import {
   ConcurrencyManager,
   ConcurrencyOptions,
 } from '../utils/concurrency-manager';
+import { SecureFileNamer } from '../utils/secure-file-namer';
 
 // Configuration for theme expansion
 export interface ExpansionConfig {
@@ -250,7 +251,7 @@ export class ThemeExpansionService {
 
     // Create expansion request
     const expansionRequest: ExpansionRequest = {
-      id: `expansion_${theme.id}_${Date.now()}`,
+      id: SecureFileNamer.generateHierarchicalId('expansion', theme.id),
       theme,
       parentTheme,
       depth: currentDepth,
@@ -775,7 +776,7 @@ CRITICAL: Respond with ONLY valid JSON.
 
       return {
         ...themes[0], // Use first theme as base
-        id: `dedup-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        id: SecureFileNamer.generateSecureId('dedup'),
         name: data.name || themes[0].name,
         description: data.description || themes[0].description,
         detailedDescription: data.detailedDescription,
@@ -1039,7 +1040,7 @@ Only create sub-themes if there are genuinely distinct business concerns.
           },
           index: number
         ) => ({
-          id: `${theme.id}_sub_${index}_${Date.now()}`,
+          id: SecureFileNamer.generateHierarchicalId('sub', theme.id, index),
           name: subTheme.name,
           description: subTheme.description,
           level: theme.level + 1,
