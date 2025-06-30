@@ -32,9 +32,6 @@ export class ThemeSimilarityService {
       maxHierarchyDepth: 4,
       expansionEnabled: true,
       crossLevelSimilarityCheck: true,
-      // Remove unused weight configurations
-      confidenceWeight: 0.3, // Keep for backwards compatibility
-      businessDomainWeight: 0.4, // Keep for backwards compatibility
       ...config,
     };
 

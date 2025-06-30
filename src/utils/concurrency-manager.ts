@@ -207,7 +207,6 @@ export class ConcurrencyManager {
           processor,
           config.maxRetries,
           config.retryDelay,
-          config.retryBackoffMultiplier,
           config.onError,
           config.enableJitter,
           config.context
@@ -289,7 +288,6 @@ export class ConcurrencyManager {
    * @param processor Processing function
    * @param maxRetries Maximum number of retry attempts
    * @param baseDelay Base delay between retries in milliseconds
-   * @param backoffMultiplier Multiplier for exponential backoff
    * @param onError Optional error callback
    * @returns Processed result
    * @throws Error if all retry attempts fail
@@ -299,8 +297,6 @@ export class ConcurrencyManager {
     processor: (item: T) => Promise<R>,
     maxRetries: number = 3,
     baseDelay: number = 1000,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _backoffMultiplier: number = 2, // Legacy parameter, now unused
     onError?: (error: Error, item: T, retryCount: number) => void,
     enableJitter: boolean = true,
     context: string = 'general'

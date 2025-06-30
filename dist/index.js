@@ -34409,9 +34409,6 @@ class ThemeSimilarityService {
             maxHierarchyDepth: 4,
             expansionEnabled: true,
             crossLevelSimilarityCheck: true,
-            // Remove unused weight configurations
-            confidenceWeight: 0.3, // Keep for backwards compatibility
-            businessDomainWeight: 0.4, // Keep for backwards compatibility
             ...config,
         };
         // Initialize services
@@ -35565,7 +35562,7 @@ class ConcurrencyManager {
         const processItem = async (item, itemIndex) => {
             log(`Processing item ${itemIndex + 1}/${items.length}: starting`);
             try {
-                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.retryBackoffMultiplier, config.onError, config.enableJitter, config.context);
+                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.onError, config.enableJitter, config.context);
                 log(`Processing item ${itemIndex + 1}/${items.length}: success`);
                 results[itemIndex] = result;
             }
@@ -35623,15 +35620,11 @@ class ConcurrencyManager {
      * @param processor Processing function
      * @param maxRetries Maximum number of retry attempts
      * @param baseDelay Base delay between retries in milliseconds
-     * @param backoffMultiplier Multiplier for exponential backoff
      * @param onError Optional error callback
      * @returns Processed result
      * @throws Error if all retry attempts fail
      */
-    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _backoffMultiplier = 2, // Legacy parameter, now unused
-    onError, enableJitter = true, context = 'general') {
+    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, onError, enableJitter = true, context = 'general') {
         let lastError;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
@@ -36049,7 +36042,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SecureFileNamer = void 0;
-exports.createLegacyFileName = createLegacyFileName;
 const crypto = __importStar(__nccwpck_require__(6982));
 const os = __importStar(__nccwpck_require__(857));
 const path = __importStar(__nccwpck_require__(6928));
@@ -36209,14 +36201,6 @@ class SecureFileNamer {
 exports.SecureFileNamer = SecureFileNamer;
 SecureFileNamer.processId = process.pid;
 SecureFileNamer.processStartTime = Date.now();
-/**
- * Legacy compatibility wrapper for existing timestamp-based naming
- * @deprecated Use SecureFileNamer.generateSecureFileName instead
- */
-function createLegacyFileName(prefix) {
-    console.warn(`Using legacy file naming for ${prefix}. Consider migrating to SecureFileNamer.`);
-    return SecureFileNamer.generateSecureFileName(prefix);
-}
 /**
  * Setup process cleanup handlers
  */

@@ -82,13 +82,11 @@ export declare class ConcurrencyManager {
      * @param processor Processing function
      * @param maxRetries Maximum number of retry attempts
      * @param baseDelay Base delay between retries in milliseconds
-     * @param backoffMultiplier Multiplier for exponential backoff
      * @param onError Optional error callback
      * @returns Processed result
      * @throws Error if all retry attempts fail
      */
-    static processWithRetry<T, R>(item: T, processor: (item: T) => Promise<R>, maxRetries?: number, baseDelay?: number, _backoffMultiplier?: number, // Legacy parameter, now unused
-    onError?: (error: Error, item: T, retryCount: number) => void, enableJitter?: boolean, context?: string): Promise<R>;
+    static processWithRetry<T, R>(item: T, processor: (item: T) => Promise<R>, maxRetries?: number, baseDelay?: number, onError?: (error: Error, item: T, retryCount: number) => void, enableJitter?: boolean, context?: string): Promise<R>;
     /**
      * Calculate exponential backoff delay with jitter and maximum cap.
      *
