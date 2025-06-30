@@ -118,6 +118,10 @@ export interface ThemeNamingResult {
 export interface CrossLevelSimilarityResult {
   relationship: 'parent_child' | 'duplicate' | 'none';
   confidence: number;
-  action: 'keep_both' | 'merge_into_parent' | 'merge_into_child' | 'make_sibling';
+  action:
+    | 'keep_both'
+    | 'merge_into_parent'
+    | 'merge_into_child'
+    | 'make_sibling';
   reasoning: string;
 }

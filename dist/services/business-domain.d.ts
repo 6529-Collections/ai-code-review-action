@@ -8,9 +8,13 @@ export declare class BusinessDomainService {
     }): Promise<string>;
     extractBusinessDomain(name: string, description: string): Promise<string>;
     private executeDomainExtraction;
+    private tryDomainExtraction;
     private buildDomainExtractionPrompt;
+    private buildSimpleDomainPrompt;
     private buildEnhancedDomainExtractionPrompt;
     private parseDomainExtractionResponse;
+    private extractDomainFromResponse;
     private isValidDomainName;
     private extractBusinessDomainFallback;
+    private extractBusinessDomainEnhancedFallback;
 }
