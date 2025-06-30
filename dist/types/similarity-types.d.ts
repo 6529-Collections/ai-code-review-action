@@ -63,8 +63,6 @@ export interface ConsolidationConfig {
     similarityThreshold: number;
     maxThemesPerParent: number;
     minThemesForParent: number;
-    confidenceWeight: number;
-    businessDomainWeight: number;
     maxHierarchyDepth: number;
     expansionEnabled: boolean;
     crossLevelSimilarityCheck: boolean;

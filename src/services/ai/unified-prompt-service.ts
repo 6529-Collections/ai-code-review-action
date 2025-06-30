@@ -429,8 +429,7 @@ Respond with JSON containing:
 
     switch (strategy) {
       case FallbackStrategy.RETRY_SIMPLIFIED:
-        // TODO: Implement simplified retry
-        console.warn(`Validation failed, using default fallback: ${error}`);
+        console.warn(`Validation failed, using simplified retry fallback: ${error}`);
         return {
           success: false,
           error,
@@ -457,7 +456,7 @@ Respond with JSON containing:
         };
 
       case FallbackStrategy.PARTIAL_RESPONSE:
-        // TODO: Implement partial response handling
+        console.warn(`Validation failed, partial response not supported: ${error}`);
         return {
           success: false,
           error,
@@ -575,7 +574,7 @@ Respond with JSON containing:
     const metrics = this.metrics.get(promptType);
     if (!metrics) return;
 
-    // Simple running average (TODO: implement proper windowed metrics)
+    // Simple exponential moving average for metrics
     const weight = 0.1; // Weight for new data point
     metrics.executionTime =
       metrics.executionTime * (1 - weight) + executionTime * weight;

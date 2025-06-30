@@ -200,17 +200,6 @@ export class SecureFileNamer {
 }
 
 /**
- * Legacy compatibility wrapper for existing timestamp-based naming
- * @deprecated Use SecureFileNamer.generateSecureFileName instead
- */
-export function createLegacyFileName(prefix: string): string {
-  console.warn(
-    `Using legacy file naming for ${prefix}. Consider migrating to SecureFileNamer.`
-  );
-  return SecureFileNamer.generateSecureFileName(prefix);
-}
-
-/**
  * Setup process cleanup handlers
  */
 function setupCleanupHandlers(): void {

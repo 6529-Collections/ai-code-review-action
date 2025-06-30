@@ -79,8 +79,6 @@ export interface ConsolidationConfig {
   similarityThreshold: number; // 0.8 - threshold for merging
   maxThemesPerParent: number; // 5 - max child themes
   minThemesForParent: number; // 2 - min themes to create parent
-  confidenceWeight: number; // 0.3 - how much confidence affects merging
-  businessDomainWeight: number; // 0.4 - importance of business similarity
 
   // Hierarchical expansion configuration
   maxHierarchyDepth: number; // 4 - maximum depth for theme expansion

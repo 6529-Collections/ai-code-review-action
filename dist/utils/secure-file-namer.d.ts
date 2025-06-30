@@ -58,8 +58,3 @@ export declare class SecureFileNamer {
         entropyBits: number;
     };
 }
-/**
- * Legacy compatibility wrapper for existing timestamp-based naming
- * @deprecated Use SecureFileNamer.generateSecureFileName instead
- */
-export declare function createLegacyFileName(prefix: string): string;
