@@ -30076,6 +30076,8 @@ exports.AIExpansionDecisionService = void 0;
 const claude_client_1 = __nccwpck_require__(3831);
 const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
+const code_structure_analyzer_1 = __nccwpck_require__(8318);
+const dynamic_prompt_builder_1 = __nccwpck_require__(1814);
 /**
  * Simplified AI-driven expansion decision service
  * Implements PRD vision: "AI decides when further decomposition is needed"
@@ -30084,215 +30086,64 @@ class AIExpansionDecisionService {
     constructor(anthropicApiKey) {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
         this.decisionCache = new Map();
+        this.codeAnalyzer = new code_structure_analyzer_1.CodeStructureAnalyzer();
+        this.promptBuilder = new dynamic_prompt_builder_1.DynamicPromptBuilder();
     }
     /**
      * Main decision point: Should this theme be expanded?
-     * Trusts AI to understand complexity from context, not metrics
+     * Uses intelligent code analysis and dynamic prompting for optimal decisions
      */
     async shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes) {
-        // Simple cache check
-        const cacheKey = `${theme.id}_${currentDepth}`;
+        // Enhanced cache check with analysis hash
+        const analysisHash = await this.getAnalysisHash(theme);
+        const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
         if (this.decisionCache.has(cacheKey)) {
             return this.decisionCache.get(cacheKey);
         }
-        // Basic guardrails
+        // Very conservative atomic check - let AI decide most cases
         if (this.isObviouslyAtomic(theme)) {
             const decision = {
                 shouldExpand: false,
                 isAtomic: true,
-                reasoning: 'Single small file change',
+                reasoning: 'Trivial change with minimal complexity',
                 suggestedSubThemes: null,
             };
             this.decisionCache.set(cacheKey, decision);
             return decision;
         }
-        // Let AI decide based on full context
-        const prompt = this.buildContextRichPrompt(theme, currentDepth, parentTheme, siblingThemes);
+        // Analyze code structure for intelligent hints
+        const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
+        // Build dynamic, context-aware prompt
+        const prompt = this.promptBuilder.buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes);
+        (0, utils_1.logInfo)(`Enhanced AI analysis for "${theme.name}": ${codeAnalysis.functionCount} functions, ${codeAnalysis.changeTypes.length} change types, ${codeAnalysis.expansionHints.length} hints`);
         const decision = await this.getAIDecision(prompt);
         this.decisionCache.set(cacheKey, decision);
         return decision;
     }
     /**
-     * Build a context-rich prompt that helps AI make natural decisions
+     * Generate a simple hash for theme analysis caching
      */
-    buildContextRichPrompt(theme, currentDepth, parentTheme, siblingThemes) {
-        // Level-specific instructions
-        const levelGuidance = this.getLevelSpecificGuidance(currentDepth);
-        // Include actual code context
-        const codeContext = this.formatCodeContext(theme);
-        // Parent and sibling context to avoid duplication
-        const hierarchyContext = this.formatHierarchyContext(parentTheme, siblingThemes);
-        return `You are analyzing a code change to build a hierarchical mindmap.
-This mindmap should naturally organize code from high-level business themes down to atomic, testable units.
-
-CURRENT CONTEXT:
-Theme: "${theme.name}"
-Description: ${theme.description}
-Current depth: ${currentDepth}
-Files involved: ${theme.affectedFiles.length} files
-
-${hierarchyContext}
-
-${levelGuidance}
-
-CODE CHANGES:
-${codeContext}
-
-DECISION NEEDED:
-Should this theme be broken down into sub-themes?
-
-CONSIDER (favor decomposition for complex changes):
-1. Does this theme contain multiple distinct concerns that could be understood separately?
-2. Would decomposition make the changes clearer and more reviewable?
-3. Are there natural boundaries in the code that suggest separate sub-themes?
-4. Could different parts of this change be tested or implemented independently?
-5. Are there distinct code patterns, functions, or responsibilities being modified?
-
-DECOMPOSITION BENEFITS:
-- Better code review granularity
-- Clearer understanding of change impact  
-- Easier testing and validation
-- More precise change tracking
-
-${currentDepth >= 5
-            ? `
-ATOMIC CHECK:
-If this represents a single, focused change (under 10 lines, one specific responsibility), 
-consider marking it as atomic. However, even small changes can have multiple distinct aspects.`
-            : ''}
-
-RESPOND WITH JSON:
-{
-  "shouldExpand": boolean,
-  "isAtomic": boolean,
-  "reasoning": "Clear explanation why (max 30 words)",
-  "suggestedSubThemes": [
-    {
-      "name": "What this accomplishes (max 10 words)",
-      "description": "What changes (max 20 words)",
-      "files": ["relevant", "files"],
-      "rationale": "Why this is a separate concern (max 15 words)"
-    }
-  ] or null if shouldExpand is false
-}`;
+    async getAnalysisHash(theme) {
+        const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
+        // Simple hash - in production you might want a proper hash function
+        return Buffer.from(content).toString('base64').slice(0, 16);
     }
     /**
-     * Get level-specific guidance for the AI
-     */
-    getLevelSpecificGuidance(depth) {
-        if (depth === 0) {
-            return `LEVEL GUIDANCE (Root Level):
-- Focus on major themes and capabilities this change introduces
-- Look for distinct functional areas that could be understood separately
-- Consider both business impact and technical architecture changes
-- Think: "What are the main areas this change affects?"`;
-        }
-        else if (depth <= 2) {
-            return `LEVEL GUIDANCE (Intermediate Level ${depth}):
-- Break down themes into more specific functional components
-- Identify distinct responsibilities within larger themes
-- Look for changes that address different concerns or requirements
-- Think: "What specific capabilities or fixes does this theme provide?"`;
-        }
-        else if (depth <= 4) {
-            return `LEVEL GUIDANCE (Deep Level ${depth}):
-- Focus on specific implementation concerns within broader themes
-- Look for changes that could be tested or reviewed independently
-- Identify distinct code patterns or architectural elements
-- Think: "What specific code changes accomplish this goal?"`;
-        }
-        else {
-            return `LEVEL GUIDANCE (Atomic Level ${depth}):
-- Focus on individual, unit-testable changes
-- Each theme should represent a single, focused modification
-- Look for changes that accomplish one specific purpose
-- Think: "What is the smallest meaningful unit of this change?"`;
-        }
-    }
-    /**
-     * Format code context with actual diffs, not metrics
-     */
-    formatCodeContext(theme) {
-        // Show actual code snippets
-        const snippets = theme.codeSnippets
-            .slice(0, 3)
-            .map((snippet, idx) => {
-            const lines = snippet.split('\n').slice(0, 20); // First 20 lines
-            return `--- Change ${idx + 1} ---
-${lines.join('\n')}${lines.length >= 20 ? '\n... (truncated)' : ''}`;
-        })
-            .join('\n\n');
-        // Add file structure context
-        const fileStructure = this.analyzeFileStructure(theme.affectedFiles);
-        return `FILES CHANGED:
-${fileStructure}
-
-SAMPLE CODE CHANGES:
-${snippets || 'No code snippets available'}`;
-    }
-    /**
-     * Analyze file structure to provide architectural context
-     */
-    analyzeFileStructure(files) {
-        const grouped = new Map();
-        files.forEach((file) => {
-            const category = this.categorizeFile(file);
-            if (!grouped.has(category)) {
-                grouped.set(category, []);
-            }
-            grouped.get(category).push(file);
-        });
-        return Array.from(grouped.entries())
-            .map(([category, fileList]) => `${category}:\n${fileList.map((f) => `  - ${f}`).join('\n')}`)
-            .join('\n\n');
-    }
-    /**
-     * Categorize file by its apparent purpose
-     */
-    categorizeFile(filepath) {
-        if (filepath.includes('.test.') || filepath.includes('.spec.'))
-            return 'Tests';
-        if (filepath.includes('/test/') || filepath.includes('/tests/'))
-            return 'Tests';
-        if (filepath.includes('config') || filepath.endsWith('.json'))
-            return 'Configuration';
-        if (filepath.includes('/components/') || filepath.includes('/ui/'))
-            return 'UI Components';
-        if (filepath.includes('/services/') || filepath.includes('/api/'))
-            return 'Business Logic';
-        if (filepath.includes('/utils/') || filepath.includes('/helpers/'))
-            return 'Utilities';
-        if (filepath.includes('/types/') || filepath.endsWith('.d.ts'))
-            return 'Type Definitions';
-        return 'Other';
-    }
-    /**
-     * Format parent and sibling context to prevent duplication
-     */
-    formatHierarchyContext(parentTheme, siblingThemes) {
-        let context = '';
-        if (parentTheme) {
-            context += `PARENT THEME: "${parentTheme.name}"
-Purpose: ${parentTheme.description}\n\n`;
-        }
-        if (siblingThemes && siblingThemes.length > 0) {
-            context += `SIBLING THEMES (already identified at this level):
-${siblingThemes.map((s) => `- "${s.name}": ${s.description}`).join('\n')}
-
-Ensure suggested sub-themes don't duplicate these existing themes.\n\n`;
-        }
-        return context;
-    }
-    /**
-     * Simple check for obviously atomic changes - very conservative
+     * Simple check for obviously atomic changes - extremely conservative
      */
     isObviouslyAtomic(theme) {
-        // Only consider truly trivial changes as obviously atomic
-        // Let AI decide for most cases to enable natural decomposition
+        // Only stop expansion for truly trivial changes
+        // Almost everything should go through AI analysis for natural decomposition
         if (theme.affectedFiles.length === 1) {
             const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-            // Much more permissive - only stop expansion for tiny changes
-            return totalLines < 5 && !theme.description.toLowerCase().includes('refactor');
+            const description = theme.description.toLowerCase();
+            // Only consider atomic if: very few lines AND simple operation
+            return (totalLines < 3 &&
+                !description.includes('refactor') &&
+                !description.includes('update') &&
+                !description.includes('improve') &&
+                !description.includes('enhance') &&
+                !description.includes('modify'));
         }
         return false;
     }
@@ -31038,6 +30889,683 @@ Respond with just the user-focused domain name (2-5 words, no extra text):`;
     }
 }
 exports.BusinessDomainService = BusinessDomainService;
+
+
+/***/ }),
+
+/***/ 8318:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CodeStructureAnalyzer = void 0;
+const utils_1 = __nccwpck_require__(1798);
+/**
+ * Analyzes code structure to provide intelligent hints for theme expansion
+ */
+class CodeStructureAnalyzer {
+    /**
+     * Analyze code structure to generate expansion hints
+     */
+    async analyzeThemeStructure(theme) {
+        const analysis = {
+            functionCount: this.countFunctions(theme),
+            classCount: this.countClasses(theme),
+            moduleCount: this.countModules(theme),
+            changeTypes: this.identifyChangeTypes(theme),
+            complexityIndicators: this.analyzeComplexity(theme),
+            fileStructure: this.analyzeFileStructure(theme),
+            expansionHints: [],
+        };
+        // Generate contextual hints based on analysis
+        analysis.expansionHints = this.generateExpansionHints(analysis, theme);
+        (0, utils_1.logInfo)(`Code structure analysis for "${theme.name}": ${analysis.functionCount} functions, ${analysis.classCount} classes, ${analysis.changeTypes.length} change types`);
+        return analysis;
+    }
+    /**
+     * Count distinct functions/methods in code changes
+     */
+    countFunctions(theme) {
+        let functionCount = 0;
+        theme.codeSnippets.forEach((snippet) => {
+            // Match function declarations in various formats
+            const patterns = [
+                /function\s+\w+/g, // function name()
+                /\w+\s*:\s*function/g, // name: function
+                /\w+\s*=>\s*{/g, // arrow functions
+                /async\s+\w+\s*\(/g, // async functions
+                /\w+\s*\([^)]*\)\s*{/g, // method declarations
+                /export\s+function\s+\w+/g, // exported functions
+                /private\s+\w+\s*\(/g, // private methods
+                /public\s+\w+\s*\(/g, // public methods
+            ];
+            patterns.forEach((pattern) => {
+                const matches = snippet.match(pattern);
+                if (matches) {
+                    functionCount += matches.length;
+                }
+            });
+        });
+        return functionCount;
+    }
+    /**
+     * Count distinct classes/interfaces in code changes
+     */
+    countClasses(theme) {
+        let classCount = 0;
+        theme.codeSnippets.forEach((snippet) => {
+            const patterns = [
+                /class\s+\w+/g, // class declarations
+                /interface\s+\w+/g, // interface declarations
+                /type\s+\w+\s*=/g, // type definitions
+                /enum\s+\w+/g, // enum declarations
+                /export\s+class\s+\w+/g, // exported classes
+                /export\s+interface\s+\w+/g, // exported interfaces
+            ];
+            patterns.forEach((pattern) => {
+                const matches = snippet.match(pattern);
+                if (matches) {
+                    classCount += matches.length;
+                }
+            });
+        });
+        return classCount;
+    }
+    /**
+     * Count distinct modules/files with significant changes
+     */
+    countModules(theme) {
+        return theme.affectedFiles.length;
+    }
+    /**
+     * Identify types of changes (config, logic, UI, test, etc.)
+     */
+    identifyChangeTypes(theme) {
+        const types = new Set();
+        theme.affectedFiles.forEach((file) => {
+            if (file.includes('.test.') ||
+                file.includes('.spec.') ||
+                file.includes('/test/')) {
+                types.add('test');
+            }
+            else if (file.includes('config') ||
+                file.endsWith('.json') ||
+                file.endsWith('.yaml') ||
+                file.endsWith('.yml')) {
+                types.add('config');
+            }
+            else if (file.includes('/components/') ||
+                file.includes('/ui/') ||
+                file.includes('.css') ||
+                file.includes('.scss')) {
+                types.add('ui');
+            }
+            else if (file.includes('/api/') ||
+                file.includes('/services/') ||
+                file.includes('/business/')) {
+                types.add('logic');
+            }
+            else if (file.includes('/types/') || file.endsWith('.d.ts')) {
+                types.add('types');
+            }
+            else if (file.includes('/utils/') || file.includes('/helpers/')) {
+                types.add('utils');
+            }
+            else if (file.includes('README') || file.endsWith('.md')) {
+                types.add('docs');
+            }
+            else {
+                types.add('implementation');
+            }
+        });
+        // Also analyze code content for additional type detection
+        theme.codeSnippets.forEach((snippet) => {
+            if (snippet.includes('import') || snippet.includes('export')) {
+                types.add('imports');
+            }
+            if (snippet.includes('test(') ||
+                snippet.includes('describe(') ||
+                snippet.includes('it(')) {
+                types.add('test');
+            }
+            if (snippet.includes('interface') || snippet.includes('type ')) {
+                types.add('types');
+            }
+        });
+        return Array.from(types);
+    }
+    /**
+     * Analyze code complexity indicators
+     */
+    analyzeComplexity(theme) {
+        const indicators = {
+            hasConditionals: false,
+            hasLoops: false,
+            hasErrorHandling: false,
+            hasAsyncOperations: false,
+            nestingDepth: 0,
+            branchingFactor: 0,
+        };
+        theme.codeSnippets.forEach((snippet) => {
+            // Check for conditionals
+            if (/if\s*\(|switch\s*\(|case\s+|ternary\s*\?/.test(snippet)) {
+                indicators.hasConditionals = true;
+                indicators.branchingFactor += (snippet.match(/if\s*\(|case\s+/g) || []).length;
+            }
+            // Check for loops
+            if (/for\s*\(|while\s*\(|forEach|map\(|filter\(/.test(snippet)) {
+                indicators.hasLoops = true;
+            }
+            // Check for error handling
+            if (/try\s*{|catch\s*\(|throw\s+|\.catch\(/.test(snippet)) {
+                indicators.hasErrorHandling = true;
+            }
+            // Check for async operations
+            if (/async\s+|await\s+|Promise\.|\.then\(/.test(snippet)) {
+                indicators.hasAsyncOperations = true;
+            }
+            // Calculate nesting depth (simplified)
+            const openBraces = (snippet.match(/{/g) || []).length;
+            const closeBraces = (snippet.match(/}/g) || []).length;
+            const netDepth = Math.abs(openBraces - closeBraces);
+            indicators.nestingDepth = Math.max(indicators.nestingDepth, netDepth);
+        });
+        return indicators;
+    }
+    /**
+     * Analyze file structure patterns
+     */
+    analyzeFileStructure(theme) {
+        const analysis = {
+            directories: new Set(),
+            fileExtensions: new Set(),
+            isMultiDirectory: false,
+            isMultiLanguage: false,
+            hasTestFiles: false,
+            hasConfigFiles: false,
+        };
+        theme.affectedFiles.forEach((file) => {
+            const dir = file.substring(0, file.lastIndexOf('/'));
+            const ext = file.substring(file.lastIndexOf('.'));
+            analysis.directories.add(dir);
+            analysis.fileExtensions.add(ext);
+            if (file.includes('.test.') || file.includes('.spec.')) {
+                analysis.hasTestFiles = true;
+            }
+            if (file.includes('config') || ext === '.json' || ext === '.yaml') {
+                analysis.hasConfigFiles = true;
+            }
+        });
+        analysis.isMultiDirectory = analysis.directories.size > 1;
+        analysis.isMultiLanguage = analysis.fileExtensions.size > 2; // More than 2 different extensions
+        return analysis;
+    }
+    /**
+     * Generate contextual expansion hints based on analysis
+     */
+    generateExpansionHints(analysis, theme) {
+        const hints = [];
+        // Function-based hints
+        if (analysis.functionCount > 3) {
+            hints.push(`This theme modifies ${analysis.functionCount} functions - consider analyzing each function's purpose separately`);
+        }
+        else if (analysis.functionCount > 1) {
+            hints.push(`Multiple functions modified (${analysis.functionCount}) - each may serve a distinct purpose`);
+        }
+        // Class-based hints
+        if (analysis.classCount > 2) {
+            hints.push(`Multiple classes/interfaces affected (${analysis.classCount}) - each likely represents a separate concern`);
+        }
+        // Change type hints
+        if (analysis.changeTypes.length > 2) {
+            hints.push(`Mixed change types detected (${analysis.changeTypes.join(', ')}) - different types often benefit from separation`);
+        }
+        // Complexity hints
+        if (analysis.complexityIndicators.hasConditionals &&
+            analysis.complexityIndicators.hasErrorHandling) {
+            hints.push('Both control flow and error handling present - these are typically distinct responsibilities');
+        }
+        if (analysis.complexityIndicators.hasAsyncOperations &&
+            analysis.complexityIndicators.hasConditionals) {
+            hints.push('Async operations with conditional logic - consider separating flow control from async handling');
+        }
+        if (analysis.complexityIndicators.branchingFactor > 3) {
+            hints.push(`High branching complexity (${analysis.complexityIndicators.branchingFactor} branches) - multiple decision points suggest multiple concerns`);
+        }
+        // File structure hints
+        if (analysis.fileStructure.isMultiDirectory) {
+            hints.push('Changes span multiple directories - different locations often indicate different architectural concerns');
+        }
+        if (analysis.fileStructure.hasTestFiles &&
+            analysis.changeTypes.includes('implementation')) {
+            hints.push('Both implementation and test changes - consider separating test updates from feature implementation');
+        }
+        if (analysis.changeTypes.includes('config') &&
+            analysis.changeTypes.includes('logic')) {
+            hints.push('Configuration and logic changes - these typically serve different purposes and can be analyzed separately');
+        }
+        // Module-based hints
+        if (analysis.moduleCount > 3) {
+            hints.push(`Multiple modules affected (${analysis.moduleCount}) - each module likely represents a distinct component or service`);
+        }
+        // Add generic expansion encouragement if no specific hints
+        if (hints.length === 0 &&
+            theme.codeSnippets.join('\n').split('\n').length > 10) {
+            hints.push('This change has sufficient complexity to potentially benefit from decomposition into more specific sub-themes');
+        }
+        return hints;
+    }
+}
+exports.CodeStructureAnalyzer = CodeStructureAnalyzer;
+
+
+/***/ }),
+
+/***/ 1814:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DynamicPromptBuilder = void 0;
+/**
+ * Builds dynamic, context-aware prompts for AI expansion decisions
+ */
+class DynamicPromptBuilder {
+    constructor() {
+        this.expansionExamples = [];
+        this.initializeExamples();
+    }
+    /**
+     * Build a context-rich prompt for expansion decisions
+     */
+    buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes) {
+        const contextSection = this.buildContextSection(theme, currentDepth, parentTheme, siblingThemes);
+        const analysisSection = this.buildAnalysisSection(codeAnalysis);
+        const guidanceSection = this.buildGuidanceSection(currentDepth, codeAnalysis);
+        const examplesSection = this.buildExamplesSection(codeAnalysis);
+        const decisionSection = this.buildDecisionSection(currentDepth, codeAnalysis);
+        return `${contextSection}
+
+${analysisSection}
+
+${guidanceSection}
+
+${examplesSection}
+
+${decisionSection}`;
+    }
+    /**
+     * Build context section with theme information
+     */
+    buildContextSection(theme, currentDepth, parentTheme, siblingThemes) {
+        let context = `You are analyzing a code change to build a hierarchical mindmap.
+This mindmap should naturally organize code from high-level themes down to specific, reviewable units.
+
+CURRENT THEME:
+Name: "${theme.name}"
+Description: ${theme.description}
+Current depth: ${currentDepth}
+Files involved: ${theme.affectedFiles.length} files`;
+        if (parentTheme) {
+            context += `
+
+PARENT THEME: "${parentTheme.name}"
+Purpose: ${parentTheme.description}`;
+        }
+        if (siblingThemes && siblingThemes.length > 0) {
+            context += `
+
+SIBLING THEMES (already identified at this level):
+${siblingThemes.map((s) => `- "${s.name}": ${s.description}`).join('\n')}
+
+Ensure suggested sub-themes don't duplicate these existing themes.`;
+        }
+        return context;
+    }
+    /**
+     * Build analysis section with code structure insights
+     */
+    buildAnalysisSection(codeAnalysis) {
+        let section = `CODE STRUCTURE ANALYSIS:
+- Functions/Methods: ${codeAnalysis.functionCount}
+- Classes/Interfaces: ${codeAnalysis.classCount}
+- Modules/Files: ${codeAnalysis.moduleCount}
+- Change Types: ${codeAnalysis.changeTypes.join(', ')}
+- Complexity: ${this.formatComplexityIndicators(codeAnalysis.complexityIndicators)}`;
+        if (codeAnalysis.expansionHints.length > 0) {
+            section += `
+
+EXPANSION INSIGHTS:
+${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
+        }
+        return section;
+    }
+    /**
+     * Build dynamic guidance based on depth and complexity
+     */
+    buildGuidanceSection(currentDepth, codeAnalysis) {
+        const achievements = this.identifyAchievements(currentDepth, codeAnalysis);
+        const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
+        let section = `EXPANSION GUIDANCE:`;
+        if (currentDepth === 0) {
+            section += `
+Level ${currentDepth} Focus: Identify major functional areas and capabilities
+- Look for distinct business features or technical components
+- Consider architectural boundaries and user-facing functionality
+- Each theme should represent a coherent area of change`;
+        }
+        else if (currentDepth <= 2) {
+            section += `
+Level ${currentDepth} Focus: Break down capabilities into specific concerns
+- Identify distinct responsibilities within larger themes
+- Look for changes that address different requirements or use cases
+- Consider separating different types of modifications (logic vs config vs UI)`;
+        }
+        else if (currentDepth <= 4) {
+            section += `
+Level ${currentDepth} Focus: Identify specific implementation units
+- Look for changes that could be reviewed or tested independently
+- Consider separating different functions, classes, or logical units
+- Focus on reviewability and understanding`;
+        }
+        else {
+            section += `
+Level ${currentDepth} Focus: Atomic, focused changes
+- Each theme should represent a single, specific modification
+- Look for the smallest meaningful units of change
+- Consider if different aspects could be tested separately`;
+        }
+        if (achievements.length > 0) {
+            section += `
+
+ACHIEVEMENTS SO FAR:
+${achievements.map((achievement) => `✓ ${achievement}`).join('\n')}`;
+        }
+        if (nextGoals.length > 0) {
+            section += `
+
+NEXT GOALS TO CONSIDER:
+${nextGoals.map((goal) => `→ ${goal}`).join('\n')}`;
+        }
+        return section;
+    }
+    /**
+     * Build examples section with relevant expansion patterns
+     */
+    buildExamplesSection(codeAnalysis) {
+        const relevantExamples = this.selectRelevantExamples(codeAnalysis);
+        if (relevantExamples.length === 0) {
+            return '';
+        }
+        let section = `EXPANSION EXAMPLES (similar patterns):`;
+        relevantExamples.forEach((example, index) => {
+            section += `
+
+Example ${index + 1}: "${example.themeName}"
+Pattern: ${example.pattern}
+Sub-themes created:
+${example.subThemes.map((sub) => `  - "${sub.name}": ${sub.description}`).join('\n')}
+Why this worked: ${example.reasoning}`;
+        });
+        return section;
+    }
+    /**
+     * Build decision section with specific questions
+     */
+    buildDecisionSection(currentDepth, codeAnalysis) {
+        const questions = this.generateDecisionQuestions(currentDepth, codeAnalysis);
+        let section = `DECISION NEEDED:
+Should this theme be broken down into sub-themes?
+
+CONSIDER THESE QUESTIONS:
+${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+
+EXPANSION BENEFITS:
+- More granular code review and understanding
+- Better change tracking and impact analysis
+- Clearer separation of concerns
+- Easier testing and validation
+
+NATURAL STOPPING POINTS:
+- When further breakdown would add noise without clarity
+- When the change represents a single, focused responsibility
+- When sub-themes would be too small to be meaningful`;
+        // Add atomic check guidance only at deeper levels
+        if (currentDepth >= 4) {
+            section += `
+
+ATOMIC EVALUATION:
+Consider this atomic if it represents a single logical operation that:
+- Has one clear purpose or responsibility
+- Would be tested as a single unit
+- Cannot be meaningfully separated without losing coherence
+- Represents the natural granularity for review`;
+        }
+        section += `
+
+RESPOND WITH JSON:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean,
+  "reasoning": "Clear explanation why (max 50 words)",
+  "suggestedSubThemes": [
+    {
+      "name": "What this accomplishes (max 10 words)",
+      "description": "What changes (max 20 words)",
+      "files": ["relevant", "files"],
+      "rationale": "Why this is a separate concern (max 15 words)"
+    }
+  ] or null if shouldExpand is false
+}`;
+        return section;
+    }
+    /**
+     * Format complexity indicators for display
+     */
+    formatComplexityIndicators(indicators) {
+        const features = [];
+        if (indicators.hasConditionals)
+            features.push(`conditionals (${indicators.branchingFactor} branches)`);
+        if (indicators.hasLoops)
+            features.push('loops');
+        if (indicators.hasErrorHandling)
+            features.push('error handling');
+        if (indicators.hasAsyncOperations)
+            features.push('async operations');
+        if (indicators.nestingDepth > 2)
+            features.push(`deep nesting (${indicators.nestingDepth})`);
+        return features.length > 0 ? features.join(', ') : 'low complexity';
+    }
+    /**
+     * Identify what has been achieved at current depth
+     */
+    identifyAchievements(currentDepth, codeAnalysis) {
+        const achievements = [];
+        if (currentDepth >= 1) {
+            if (codeAnalysis.changeTypes.length <= 2) {
+                achievements.push('Focused change types identified');
+            }
+            if (codeAnalysis.moduleCount <= 3) {
+                achievements.push('Module scope well-defined');
+            }
+        }
+        if (currentDepth >= 2) {
+            if (codeAnalysis.functionCount <= 2) {
+                achievements.push('Function-level granularity reached');
+            }
+            if (codeAnalysis.classCount <= 1) {
+                achievements.push('Single class/interface focus');
+            }
+        }
+        if (currentDepth >= 3) {
+            if (!codeAnalysis.complexityIndicators.hasConditionals ||
+                !codeAnalysis.complexityIndicators.hasLoops) {
+                achievements.push('Simplified control flow');
+            }
+        }
+        return achievements;
+    }
+    /**
+     * Identify next goals based on current state
+     */
+    identifyNextGoals(currentDepth, codeAnalysis) {
+        const goals = [];
+        if (codeAnalysis.changeTypes.length > 2) {
+            goals.push('Separate different types of changes (config vs logic vs UI)');
+        }
+        if (codeAnalysis.functionCount > 3) {
+            goals.push('Break down into individual function modifications');
+        }
+        if (codeAnalysis.complexityIndicators.hasConditionals &&
+            codeAnalysis.complexityIndicators.hasErrorHandling) {
+            goals.push('Separate control flow from error handling');
+        }
+        if (codeAnalysis.complexityIndicators.hasAsyncOperations &&
+            codeAnalysis.functionCount > 1) {
+            goals.push('Isolate asynchronous operations');
+        }
+        if (codeAnalysis.fileStructure.isMultiDirectory) {
+            goals.push('Group changes by architectural component');
+        }
+        // Add depth-specific goals
+        if (currentDepth < 2 && codeAnalysis.moduleCount > 1) {
+            goals.push('Achieve module-level separation');
+        }
+        if (currentDepth < 3 && codeAnalysis.classCount > 1) {
+            goals.push('Reach class/interface level granularity');
+        }
+        return goals;
+    }
+    /**
+     * Generate context-specific decision questions
+     */
+    generateDecisionQuestions(currentDepth, codeAnalysis) {
+        const questions = [
+            'Does this theme contain multiple distinct concerns that could be understood separately?',
+            'Would decomposition make the changes clearer and more reviewable?',
+            'Are there natural boundaries in the code that suggest separate sub-themes?',
+        ];
+        // Add complexity-specific questions
+        if (codeAnalysis.functionCount > 1) {
+            questions.push('Could different functions/methods be analyzed as separate concerns?');
+        }
+        if (codeAnalysis.changeTypes.length > 1) {
+            questions.push('Should different types of changes (config vs logic vs UI) be separated?');
+        }
+        if (codeAnalysis.complexityIndicators.hasConditionals) {
+            questions.push('Could different conditional branches or logic paths be treated separately?');
+        }
+        if (codeAnalysis.complexityIndicators.hasErrorHandling) {
+            questions.push('Should error handling be separated from main logic flow?');
+        }
+        // Add depth-specific questions
+        if (currentDepth >= 3) {
+            questions.push('Could different parts of this change be tested independently?');
+            questions.push('Would a code reviewer comment on different aspects separately?');
+        }
+        return questions;
+    }
+    /**
+     * Select relevant examples based on code patterns
+     */
+    selectRelevantExamples(codeAnalysis) {
+        return this.expansionExamples
+            .filter((example) => this.isExampleRelevant(example, codeAnalysis))
+            .slice(0, 2); // Limit to 2 most relevant examples
+    }
+    /**
+     * Check if an example is relevant to current analysis
+     */
+    isExampleRelevant(example, analysis) {
+        // Match by change types
+        const typeMatch = example.changeTypes.some((type) => analysis.changeTypes.includes(type));
+        // Match by complexity
+        const complexityMatch = example.hasConditionals ===
+            analysis.complexityIndicators.hasConditionals ||
+            (example.hasMultipleFunctions && analysis.functionCount > 1) ||
+            (example.hasMultipleFiles && analysis.moduleCount > 1);
+        return typeMatch || complexityMatch;
+    }
+    /**
+     * Initialize example expansion patterns
+     */
+    initializeExamples() {
+        this.expansionExamples = [
+            {
+                themeName: 'Refactor authentication service',
+                pattern: 'service-refactor',
+                changeTypes: ['logic', 'types'],
+                hasConditionals: true,
+                hasMultipleFunctions: true,
+                hasMultipleFiles: true,
+                subThemes: [
+                    {
+                        name: 'Update token validation logic',
+                        description: 'Modify JWT token verification and expiration handling',
+                    },
+                    {
+                        name: 'Add new authentication methods',
+                        description: 'Implement OAuth2 and SAML authentication options',
+                    },
+                    {
+                        name: 'Refactor user session management',
+                        description: 'Improve session storage and cleanup mechanisms',
+                    },
+                ],
+                reasoning: 'Each sub-theme addresses a distinct aspect of authentication',
+            },
+            {
+                themeName: 'Add user feedback system',
+                pattern: 'feature-addition',
+                changeTypes: ['ui', 'logic', 'config'],
+                hasConditionals: false,
+                hasMultipleFunctions: true,
+                hasMultipleFiles: true,
+                subThemes: [
+                    {
+                        name: 'Create feedback UI components',
+                        description: 'Build feedback forms and display components',
+                    },
+                    {
+                        name: 'Implement feedback storage',
+                        description: 'Add database schema and API endpoints',
+                    },
+                    {
+                        name: 'Configure feedback notifications',
+                        description: 'Set up email and in-app notification system',
+                    },
+                ],
+                reasoning: 'UI, backend, and notifications are separate technical concerns',
+            },
+            {
+                themeName: 'Fix error handling in data processing',
+                pattern: 'error-handling-fix',
+                changeTypes: ['logic'],
+                hasConditionals: true,
+                hasMultipleFunctions: false,
+                hasMultipleFiles: false,
+                subThemes: [
+                    {
+                        name: 'Add input validation',
+                        description: 'Validate data format and requirements before processing',
+                    },
+                    {
+                        name: 'Improve error messages',
+                        description: 'Provide more descriptive error messages to users',
+                    },
+                    {
+                        name: 'Add retry logic',
+                        description: 'Implement automatic retry for transient failures',
+                    },
+                ],
+                reasoning: 'Prevention, messaging, and recovery are distinct error handling strategies',
+            },
+        ];
+    }
+}
+exports.DynamicPromptBuilder = DynamicPromptBuilder;
 
 
 /***/ }),
@@ -31908,7 +32436,7 @@ const concurrency_manager_1 = __nccwpck_require__(8692);
 const secure_file_namer_1 = __nccwpck_require__(1661);
 const ai_expansion_decision_service_1 = __nccwpck_require__(7257);
 exports.DEFAULT_EXPANSION_CONFIG = {
-    maxDepth: 10, // Increased to allow natural depth
+    maxDepth: 20, // Allow very deep natural expansion
     concurrencyLimit: 5,
     maxRetries: 3,
     retryDelay: 1000,

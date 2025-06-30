@@ -15,7 +15,7 @@ import {
 
 // Configuration for theme expansion
 export interface ExpansionConfig {
-  maxDepth: number; // Maximum hierarchy depth (default: 10)
+  maxDepth: number; // Maximum hierarchy depth - set high to allow natural stopping
   concurrencyLimit: number; // Maximum concurrent operations (default: 5)
   maxRetries: number; // Maximum retry attempts (default: 3)
   retryDelay: number; // Base retry delay in ms (default: 1000)
@@ -26,7 +26,7 @@ export interface ExpansionConfig {
 }
 
 export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
-  maxDepth: 10, // Increased to allow natural depth
+  maxDepth: 20, // Allow very deep natural expansion
   concurrencyLimit: 5,
   maxRetries: 3,
   retryDelay: 1000,

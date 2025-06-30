@@ -6,38 +6,20 @@ import { ConsolidatedTheme } from '../types/similarity-types';
 export declare class AIExpansionDecisionService {
     private claudeClient;
     private decisionCache;
+    private codeAnalyzer;
+    private promptBuilder;
     constructor(anthropicApiKey: string);
     /**
      * Main decision point: Should this theme be expanded?
-     * Trusts AI to understand complexity from context, not metrics
+     * Uses intelligent code analysis and dynamic prompting for optimal decisions
      */
     shouldExpandTheme(theme: ConsolidatedTheme, currentDepth: number, parentTheme?: ConsolidatedTheme, siblingThemes?: ConsolidatedTheme[]): Promise<ExpansionDecision>;
     /**
-     * Build a context-rich prompt that helps AI make natural decisions
+     * Generate a simple hash for theme analysis caching
      */
-    private buildContextRichPrompt;
+    private getAnalysisHash;
     /**
-     * Get level-specific guidance for the AI
-     */
-    private getLevelSpecificGuidance;
-    /**
-     * Format code context with actual diffs, not metrics
-     */
-    private formatCodeContext;
-    /**
-     * Analyze file structure to provide architectural context
-     */
-    private analyzeFileStructure;
-    /**
-     * Categorize file by its apparent purpose
-     */
-    private categorizeFile;
-    /**
-     * Format parent and sibling context to prevent duplication
-     */
-    private formatHierarchyContext;
-    /**
-     * Simple check for obviously atomic changes - very conservative
+     * Simple check for obviously atomic changes - extremely conservative
      */
     private isObviouslyAtomic;
     /**
