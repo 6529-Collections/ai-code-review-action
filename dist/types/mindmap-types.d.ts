@@ -266,3 +266,55 @@ export interface MindmapOptions {
     enableSmartDuplication?: boolean;
     confidenceThreshold?: number;
 }
+/**
+ * AI-driven business domain classification result
+ * Replaces mechanical keyword matching with semantic understanding
+ */
+export interface AIDomainClassification {
+    domain: string;
+    userValue: string;
+    businessCapability: string;
+    confidence: number;
+    reasoning: string;
+    subDomains?: string[];
+    crossCuttingConcerns?: string[];
+}
+/**
+ * AI-driven semantic change analysis result
+ * Replaces regex pattern matching with contextual understanding
+ */
+export interface AISemanticAnalysis {
+    changeType: SemanticChangeType;
+    semanticImpact: 'breaking' | 'enhancement' | 'fix' | 'internal';
+    userImpact: string;
+    technicalNature: string;
+    affectedCapabilities: string[];
+    confidence: number;
+    reasoning: string;
+    filePurpose?: string;
+    relatedChanges?: string[];
+}
+/**
+ * Enhanced file context with AI understanding
+ * Replaces path-based file type detection
+ */
+export interface AIFileContext extends FileContext {
+    actualPurpose: string;
+    businessRelevance: string;
+    technicalRole: string;
+    userFacing: boolean;
+    architecturalSignificance: 'high' | 'medium' | 'low';
+}
+/**
+ * AI prompt context for semantic analysis
+ */
+export interface AIAnalysisContext {
+    filePath: string;
+    completeDiff: string;
+    surroundingContext: string;
+    commitMessage?: string;
+    prDescription?: string;
+    fileHistory?: string;
+    dependencies?: string[];
+    dependents?: string[];
+}

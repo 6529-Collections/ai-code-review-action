@@ -1,7 +1,19 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
 import { CodeChange } from '../utils/ai-code-analyzer';
 export declare class BusinessDomainService {
+    private aiDomainAnalyzer;
+    constructor(anthropicApiKey: string);
     groupByBusinessDomain(themes: ConsolidatedTheme[]): Promise<Map<string, ConsolidatedTheme[]>>;
+    /**
+     * Extract business domain using AI semantic understanding
+     * PRD: "AI decides" domain classification based on actual business impact
+     */
+    private extractBusinessDomainWithAI;
+    /**
+     * Fallback domain extraction for when AI fails
+     * PRD: "Graceful degradation - never fail completely"
+     */
+    private extractBusinessDomainFallback;
     extractBusinessDomainWithContext(name: string, description: string, enhancedContext?: {
         codeChanges?: CodeChange[];
         contextSummary?: string;
@@ -15,6 +27,4 @@ export declare class BusinessDomainService {
     private parseDomainExtractionResponse;
     private extractDomainFromResponse;
     private isValidDomainName;
-    private extractBusinessDomainFallback;
-    private extractBusinessDomainEnhancedFallback;
 }
