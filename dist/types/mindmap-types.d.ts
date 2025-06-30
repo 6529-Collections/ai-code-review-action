@@ -87,25 +87,28 @@ export interface NodeMetrics {
     testCoverage?: number;
 }
 /**
- * AI suggestion for child nodes during expansion
+ * Direct AI code assignment for child nodes (no mechanical matching)
  */
-export interface NodeSuggestion {
+export interface DirectChildAssignment {
     name: string;
+    description: string;
     businessValue: string;
     technicalPurpose: string;
-    primaryFiles: string[];
-    codeSelections: CodeSelection[];
-    estimatedComplexity: 'low' | 'medium' | 'high';
+    assignedCode: CodeDiff[];
+    ownership: 'primary' | 'reference';
+    contextualMeaning?: string;
+    crossReferences?: CrossReference[];
     rationale: string;
 }
 /**
- * Specific code selection for a suggested node
+ * AI expansion decision with direct code assignment
  */
-export interface CodeSelection {
-    file: string;
-    startLine: number;
-    endLine: number;
-    reason: string;
+export interface ExpansionDecision {
+    shouldExpand: boolean;
+    isAtomic: boolean;
+    atomicReason?: string;
+    children?: DirectChildAssignment[];
+    confidence: number;
 }
 /**
  * Complete semantic diff analysis result
@@ -197,15 +200,13 @@ export interface BusinessPattern {
 }
 export type BusinessPatternType = 'user-flow' | 'data-processing' | 'api-endpoint' | 'ui-component' | 'business-logic' | 'infrastructure' | 'configuration' | 'testing';
 /**
- * Node code assignment result
+ * Validation result for AI code assignments
  */
-export interface NodeCodeAssignment {
-    suggestion: NodeSuggestion;
-    assignedCode: CodeDiff[];
-    primaryFiles: string[];
-    referencedFiles: string[];
-    metrics: NodeMetrics;
-    crossReferences: CrossReference[];
+export interface CodeAssignmentValidation {
+    isComplete: boolean;
+    duplicatedLines: string[];
+    unassignedLines: string[];
+    issues: string[];
 }
 /**
  * Validation result for mindmap completeness

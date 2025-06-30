@@ -117,26 +117,29 @@ export interface NodeMetrics {
 }
 
 /**
- * AI suggestion for child nodes during expansion
+ * Direct AI code assignment for child nodes (no mechanical matching)
  */
-export interface NodeSuggestion {
+export interface DirectChildAssignment {
   name: string; // Clear title (max 8 words)
+  description: string; // What this child does
   businessValue: string; // User impact (max 12 words)
   technicalPurpose: string; // What it does (max 10 words)
-  primaryFiles: string[]; // Files this child primarily owns
-  codeSelections: CodeSelection[]; // Specific code this child should own
-  estimatedComplexity: 'low' | 'medium' | 'high';
+  assignedCode: CodeDiff[]; // Complete CodeDiff objects assigned by AI
+  ownership: 'primary' | 'reference'; // PRD: Primary vs secondary context
+  contextualMeaning?: string; // How this code is used in THIS child's context
+  crossReferences?: CrossReference[]; // References to other nodes
   rationale: string; // Why this should be a separate node
 }
 
 /**
- * Specific code selection for a suggested node
+ * AI expansion decision with direct code assignment
  */
-export interface CodeSelection {
-  file: string;
-  startLine: number;
-  endLine: number;
-  reason: string; // Why this code belongs to this node
+export interface ExpansionDecision {
+  shouldExpand: boolean;
+  isAtomic: boolean;
+  atomicReason?: string;
+  children?: DirectChildAssignment[];
+  confidence: number;
 }
 
 /**
@@ -263,15 +266,13 @@ export type BusinessPatternType =
   | 'testing';
 
 /**
- * Node code assignment result
+ * Validation result for AI code assignments
  */
-export interface NodeCodeAssignment {
-  suggestion: NodeSuggestion;
-  assignedCode: CodeDiff[];
-  primaryFiles: string[];
-  referencedFiles: string[];
-  metrics: NodeMetrics;
-  crossReferences: CrossReference[];
+export interface CodeAssignmentValidation {
+  isComplete: boolean;
+  duplicatedLines: string[];
+  unassignedLines: string[];
+  issues: string[];
 }
 
 /**

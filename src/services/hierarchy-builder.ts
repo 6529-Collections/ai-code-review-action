@@ -1,6 +1,5 @@
 import {
   MindmapNode,
-  NodeCodeAssignment,
   SemanticDiff,
   BusinessPattern,
   NodeMetrics,
@@ -9,9 +8,10 @@ import {
   CodeDiff,
   DiffHunk,
   FileContext,
+  ExpansionDecision,
 } from '../types/mindmap-types';
 import { Theme } from './theme-service';
-import { CodeDistributionService } from './code-distribution-service';
+import { DirectCodeAssignmentService } from './direct-code-assignment-service';
 import { AIMindmapService } from './ai-mindmap-service';
 import { CrossReferenceService } from './cross-reference-service';
 import { SecureFileNamer } from '../utils/secure-file-namer';
@@ -22,14 +22,14 @@ import { logInfo } from '../utils';
  * PRD: "Depth emerges from code complexity, not forced into preset levels"
  */
 export class HierarchyBuilder {
-  private codeDistributor: CodeDistributionService;
+  private directAssignmentService: DirectCodeAssignmentService;
   private aiService: AIMindmapService;
   private crossRefService: CrossReferenceService;
   private options: Required<MindmapOptions>;
   private nodeCounter: number = 0;
 
   constructor(anthropicApiKey: string, options: MindmapOptions = {}) {
-    this.codeDistributor = new CodeDistributionService(anthropicApiKey);
+    this.directAssignmentService = new DirectCodeAssignmentService();
     this.aiService = new AIMindmapService(anthropicApiKey);
     this.crossRefService = new CrossReferenceService(anthropicApiKey);
     this.options = {
@@ -38,7 +38,7 @@ export class HierarchyBuilder {
       crossReferenceThreshold: options.crossReferenceThreshold ?? 0.7,
       enablePatternDetection: options.enablePatternDetection ?? true,
       enableSmartDuplication: options.enableSmartDuplication ?? true,
-      confidenceThreshold: options.confidenceThreshold ?? 0.5,
+      confidenceThreshold: options.confidenceThreshold ?? 0.8, // Base threshold, will be dynamic
     };
   }
 
@@ -127,13 +127,21 @@ export class HierarchyBuilder {
       return;
     }
 
-    // Ask AI if this node should be expanded
-    const expansionDecision = await this.aiService.shouldExpandNode(
-      node,
-      depth
+    // Ask AI for direct code assignment decision
+    const expansionDecision: ExpansionDecision =
+      await this.aiService.shouldExpandNode(node, depth);
+
+    // Calculate dynamic confidence threshold based on depth
+    const dynamicConfidenceThreshold = this.calculateDynamicConfidence(
+      depth,
+      node
     );
 
-    if (!expansionDecision.shouldExpand || expansionDecision.isAtomic) {
+    if (
+      !expansionDecision.shouldExpand ||
+      expansionDecision.isAtomic ||
+      expansionDecision.confidence < dynamicConfidenceThreshold
+    ) {
       node.atomicReason = expansionDecision.atomicReason;
       logInfo(
         `Node "${node.name}" is atomic at depth ${depth}: ${node.atomicReason}`
@@ -141,64 +149,29 @@ export class HierarchyBuilder {
       return;
     }
 
-    // Get AI suggestions for child nodes
-    const childSuggestions = expansionDecision.suggestedChildren;
-    if (!childSuggestions || childSuggestions.length === 0) {
-      logInfo(`No child suggestions for "${node.name}"`);
+    // Get AI direct assignments for child nodes
+    const childAssignments = expansionDecision.children;
+    if (!childAssignments || childAssignments.length === 0) {
+      logInfo(`No child assignments for "${node.name}"`);
       return;
     }
 
-    // Distribute code to children
-    const childAssignments = await this.codeDistributor.distributeCodeToNodes(
-      node,
-      childSuggestions,
-      semanticDiff
-    );
+    // Process direct assignments (no mechanical distribution)
+    const children =
+      await this.directAssignmentService.processDirectAssignments(
+        node,
+        childAssignments
+      );
 
-    // Create child nodes
-    for (const assignment of childAssignments) {
-      const child = await this.createChildNode(assignment, node, depth + 1);
-
-      // Recursive expansion
+    // Recursive expansion for each child
+    for (const child of children) {
       await this.expandUntilAtomic(child, semanticDiff, depth + 1);
-
       node.children.push(child);
     }
 
     logInfo(
       `Expanded "${node.name}" into ${node.children.length} children at depth ${depth + 1}`
     );
-  }
-
-  /**
-   * Create child node from assignment
-   */
-  private async createChildNode(
-    assignment: NodeCodeAssignment,
-    parent: MindmapNode,
-    level: number
-  ): Promise<MindmapNode> {
-    const node: MindmapNode = {
-      id: this.generateNodeId(
-        parent.id,
-        level <= 2 ? 'theme' : level <= 4 ? 'sub' : 'leaf'
-      ),
-      name: this.trimToWordLimit(assignment.suggestion.name, 8),
-      level,
-      parentId: parent.id,
-      description: `${assignment.suggestion.technicalPurpose}. ${assignment.suggestion.rationale}`,
-      businessContext: assignment.suggestion.businessValue,
-      technicalContext: assignment.suggestion.technicalPurpose,
-      codeDiff: assignment.assignedCode,
-      affectedFiles: assignment.primaryFiles,
-      metrics: assignment.metrics,
-      children: [],
-      crossReferences: assignment.crossReferences,
-      isPrimary: true,
-      expansionConfidence: 0.8, // Default confidence for AI-suggested nodes
-    };
-
-    return node;
   }
 
   /**
@@ -415,6 +388,32 @@ export class HierarchyBuilder {
   }
 
   /**
+   * Calculate dynamic confidence threshold based on depth and complexity
+   * Deeper nodes require lower confidence to prevent over-expansion
+   */
+  private calculateDynamicConfidence(depth: number, node: MindmapNode): number {
+    const baseThreshold = this.options.confidenceThreshold;
+    const depthPenalty = depth * 0.1; // Reduce by 0.1 per level
+    const complexityBonus =
+      node.metrics.complexity === 'high'
+        ? 0.1
+        : node.metrics.complexity === 'medium'
+          ? 0.05
+          : 0;
+
+    // Lower threshold for deeper levels, higher for complex nodes
+    const dynamicThreshold = Math.max(
+      0.3,
+      baseThreshold - depthPenalty + complexityBonus
+    );
+
+    logInfo(
+      `Dynamic confidence threshold for "${node.name}" at depth ${depth}: ${dynamicThreshold}`
+    );
+    return dynamicThreshold;
+  }
+
+  /**
    * Find maximum depth in the hierarchy
    */
   private findMaxDepth(roots: MindmapNode[]): number {
@@ -427,54 +426,5 @@ export class HierarchyBuilder {
 
     roots.forEach(traverse);
     return maxDepth;
-  }
-
-  /**
-   * Create a reference node for shared code
-   * Used when smart duplication is enabled
-   */
-  async createReferenceNode(
-    originalNode: MindmapNode,
-    referenceContext: string,
-    parentNode: MindmapNode
-  ): Promise<MindmapNode> {
-    // Create contextual view of the code
-    const contextualCode = await Promise.all(
-      originalNode.codeDiff.map((diff) =>
-        this.codeDistributor.createContextualView(
-          diff,
-          referenceContext,
-          parentNode
-        )
-      )
-    );
-
-    const refNode: MindmapNode = {
-      ...originalNode,
-      id: this.generateNodeId(parentNode.id, 'ref'),
-      parentId: parentNode.id,
-      level: parentNode.level + 1,
-      isPrimary: false,
-      businessContext: `${referenceContext} (uses ${originalNode.name})`,
-      codeDiff: contextualCode,
-      crossReferences: [
-        {
-          nodeId: originalNode.id,
-          relationship: 'uses',
-          context: `Reference to primary definition`,
-          bidirectional: true,
-        },
-      ],
-    };
-
-    // Add reverse reference
-    originalNode.crossReferences.push({
-      nodeId: refNode.id,
-      relationship: 'used-by',
-      context: `Referenced in ${parentNode.name}`,
-      bidirectional: true,
-    });
-
-    return refNode;
   }
 }

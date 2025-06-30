@@ -5,7 +5,7 @@ import { Theme } from './theme-service';
  * PRD: "Depth emerges from code complexity, not forced into preset levels"
  */
 export declare class HierarchyBuilder {
-    private codeDistributor;
+    private directAssignmentService;
     private aiService;
     private crossRefService;
     private options;
@@ -25,10 +25,6 @@ export declare class HierarchyBuilder {
      * PRD: "AI decides when further decomposition is needed"
      */
     private expandUntilAtomic;
-    /**
-     * Create child node from assignment
-     */
-    private createChildNode;
     /**
      * Extract code relevant to a theme
      */
@@ -71,12 +67,12 @@ export declare class HierarchyBuilder {
      */
     private createPatternCrossReferences;
     /**
+     * Calculate dynamic confidence threshold based on depth and complexity
+     * Deeper nodes require lower confidence to prevent over-expansion
+     */
+    private calculateDynamicConfidence;
+    /**
      * Find maximum depth in the hierarchy
      */
     private findMaxDepth;
-    /**
-     * Create a reference node for shared code
-     * Used when smart duplication is enabled
-     */
-    createReferenceNode(originalNode: MindmapNode, referenceContext: string, parentNode: MindmapNode): Promise<MindmapNode>;
 }

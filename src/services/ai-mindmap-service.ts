@@ -1,8 +1,11 @@
 import {
   MindmapNode,
-  NodeSuggestion,
+  DirectChildAssignment,
   SemanticDiff,
-  CodeSelection,
+  ExpansionDecision,
+  CodeDiff,
+  DiffHunk,
+  LineChange,
 } from '../types/mindmap-types';
 import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
@@ -20,39 +23,35 @@ export class AIMindmapService {
   }
 
   /**
-   * Determine if a node should be expanded further
+   * Determine if a node should be expanded with direct code assignment
    * PRD: "AI decides when further decomposition is needed"
    */
   async shouldExpandNode(
     node: MindmapNode,
     currentDepth: number
   ): Promise<ExpansionDecision> {
-    const prompt = this.buildExpansionPrompt(node, currentDepth);
+    const prompt = this.buildDirectAssignmentPrompt(node, currentDepth);
 
     try {
       const response = await this.claudeClient.callClaude(prompt);
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'shouldExpand',
-        'atomicReason',
       ]);
 
       if (result.success) {
-        const data = result.data as ExpansionDecisionResponse;
+        const data = result.data as DirectExpansionResponse;
 
-        // If should expand, get suggestions
-        let suggestedChildren: NodeSuggestion[] | undefined;
-        if (data.shouldExpand && data.suggestedChildren) {
-          suggestedChildren = this.validateSuggestions(
-            data.suggestedChildren,
-            node
-          );
+        // Validate code assignments if expanding
+        let children: DirectChildAssignment[] | undefined;
+        if (data.shouldExpand && data.children) {
+          children = this.validateDirectAssignments(data.children);
         }
 
         return {
           shouldExpand: data.shouldExpand,
           isAtomic: data.isAtomic || false,
           atomicReason: data.atomicReason,
-          suggestedChildren,
+          children,
           confidence: data.confidence || 0.8,
         };
       }
@@ -70,198 +69,229 @@ export class AIMindmapService {
   }
 
   /**
-   * Build expansion prompt following PRD guidelines
-   * Every node must be self-contained and understandable
+   * Build prompt for direct code assignment (PRD aligned)
+   * AI sees complete code and assigns it directly to children
    */
-  private buildExpansionPrompt(
+  private buildDirectAssignmentPrompt(
     node: MindmapNode,
     currentDepth: number
   ): string {
-    const codePreview = this.formatCodePreview(node.codeDiff);
-    const fileList = node.affectedFiles.join(', ');
+    const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
     const lineCount =
       node.metrics.linesAdded +
       node.metrics.linesRemoved +
       node.metrics.linesModified;
 
-    return `Analyze this code change node for natural decomposition into sub-themes.
+    return `Analyze this code change node for expansion with DIRECT CODE ASSIGNMENT.
 
-CURRENT NODE:
-Name: ${node.name}
+CURRENT NODE: "${node.name}"
+Description: ${node.description}
 Business Context: ${node.businessContext}
 Technical Context: ${node.technicalContext}
-Current Depth: ${currentDepth}
+Depth: ${currentDepth}
 Metrics: ${lineCount} lines across ${node.metrics.fileCount} files
-Files: ${fileList}
 
-CODE CHANGES:
-${codePreview}
+COMPLETE CODE CHANGES:
+${completeCodeDiff}
 
-QUESTION: Should this node be broken down into distinct sub-themes?
+ATOMIC CRITERIA (Stop expansion when ALL true):
+1. Single responsibility (does exactly ONE thing)
+2. <20 lines of meaningful code changes
+3. Single method or cohesive code block
+4. No mixed concerns (e.g., validation AND persistence)
+5. Can be understood without looking elsewhere
 
-ATOMIC CRITERIA (Stop expansion when):
-1. Single responsibility achieved (does exactly one thing)
-2. Unit-testable as-is (typically 5-15 lines of focused change)
-3. Further breakdown adds no clarity or value
-4. Natural boundary reached (indivisible code unit)
+IF YOU EXPAND:
+- You MUST assign EVERY line of code to exactly ONE child
+- Each child must have a single, clear responsibility
+- Return the complete CodeDiff structure for each child
+- No line numbers - return actual code content
 
-EXPANSION CRITERIA (Continue expansion when):
-1. Multiple distinct concerns exist that could be understood separately
-2. Different functional areas are modified
-3. Changes aren't independently testable at current level
-4. Decomposition would improve code review clarity
-
-${
-  currentDepth >= 5
-    ? `
-NOTE: At depth ${currentDepth}, we're looking for very granular, atomic changes.
-Only expand if there are truly distinct, separable concerns.`
-    : ''
-}
-
-If expansion is recommended, suggest 2-5 child nodes that:
-- Have clear, distinct purposes
-- Are self-contained (understandable without parent context)
-- Together cover ALL code in the parent node
-- Don't overlap in functionality
-
-CRITICAL: Respond with ONLY valid JSON:
+RESPOND WITH JSON:
 {
   "shouldExpand": boolean,
   "isAtomic": boolean,
-  "atomicReason": "if atomic, why? (max 15 words)",
+  "atomicReason": "if atomic, why? (max 20 words)",
   "confidence": 0.0-1.0,
-  "suggestedChildren": [
+  "children": [
     {
-      "name": "Clear, specific title (max 8 words)",
-      "businessValue": "User/business impact (max 12 words)",
-      "technicalPurpose": "What code does (max 10 words)",
-      "primaryFiles": ["files this child primarily owns"],
-      "codeSelections": [
+      "name": "Clear theme name (max 8 words)",
+      "description": "What this child does (1-2 sentences)",
+      "businessValue": "User impact (max 12 words)",
+      "technicalPurpose": "Technical function (max 10 words)",
+      "assignedCode": [
         {
-          "file": "path/to/file.ts",
-          "startLine": 45,
-          "endLine": 67,
-          "reason": "Why this code belongs here (max 15 words)"
+          "file": "exact file path",
+          "hunks": [
+            {
+              "oldStart": number,
+              "oldLines": number,
+              "newStart": number,
+              "newLines": number,
+              "changes": [
+                {
+                  "type": "add|delete|context", 
+                  "content": "exact line content"
+                }
+              ]
+            }
+          ],
+          "ownership": "primary"
         }
       ],
-      "estimatedComplexity": "low|medium|high",
-      "rationale": "Why separate from siblings (max 15 words)"
+      "rationale": "Why this is separate (max 15 words)",
+      "contextualMeaning": "How this code serves THIS specific child's purpose (max 20 words)",
+      "suggestedCrossReferences": [
+        {
+          "targetTheme": "name of related theme",
+          "relationship": "uses|used-by|modifies|depends-on",
+          "reason": "brief explanation (max 10 words)"
+        }
+      ]
     }
-  ] // null if shouldExpand is false
+  ]
 }`;
   }
 
   /**
-   * Format code preview for prompt
-   * Shows representative snippets without overwhelming
+   * Format complete code diff for AI analysis (no truncation)
+   * AI needs to see ALL code to make proper assignments
    */
-  private formatCodePreview(codeDiffs: CodeDiff[]): string {
-    const preview: string[] = [];
-    let totalLines = 0;
-    const maxLines = 50;
+  private formatCompleteCodeDiff(codeDiffs: CodeDiff[]): string {
+    const output: string[] = [];
+    let globalLineNumber = 1;
 
     for (const diff of codeDiffs) {
-      if (totalLines >= maxLines) break;
-
-      preview.push(`\n--- ${diff.file} ---`);
+      output.push(`\n=== FILE: ${diff.file} ===`);
 
       for (const hunk of diff.hunks) {
-        if (totalLines >= maxLines) break;
+        output.push(`\n[Hunk @ old:${hunk.oldStart} new:${hunk.newStart}]`);
 
-        const significantChanges = hunk.changes.filter(
-          (c) => c.type !== 'context' || c.isKeyChange
-        );
-
-        for (const change of significantChanges.slice(0, 10)) {
+        for (const change of hunk.changes) {
           const prefix =
             change.type === 'add' ? '+' : change.type === 'delete' ? '-' : ' ';
-          preview.push(`${prefix} ${change.content}`);
-          totalLines++;
-
-          if (totalLines >= maxLines) {
-            preview.push('... (truncated)');
-            break;
-          }
+          output.push(`L${globalLineNumber}: ${prefix} ${change.content}`);
+          globalLineNumber++;
         }
       }
     }
 
-    return preview.join('\n');
+    return output.join('\n');
   }
 
   /**
-   * Validate and clean suggested children
+   * Validate direct code assignments from AI
    */
-  private validateSuggestions(
-    suggestions: Array<{
+  private validateDirectAssignments(
+    assignments: Array<{
       name?: string;
+      description?: string;
       businessValue?: string;
       technicalPurpose?: string;
-      primaryFiles?: string[];
-      codeSelections?: Array<{
+      assignedCode?: Array<{
         file?: string;
-        startLine?: number;
-        endLine?: number;
+        hunks?: Array<{
+          oldStart?: number;
+          oldLines?: number;
+          newStart?: number;
+          newLines?: number;
+          changes?: Array<{
+            type?: string;
+            content?: string;
+          }>;
+        }>;
+        ownership?: string;
+      }>;
+      rationale?: string;
+      contextualMeaning?: string;
+      suggestedCrossReferences?: Array<{
+        targetTheme?: string;
+        relationship?: string;
         reason?: string;
       }>;
-      estimatedComplexity?: 'low' | 'medium' | 'high';
-      rationale?: string;
-    }>,
-    parentNode: MindmapNode
-  ): NodeSuggestion[] {
-    const validated: NodeSuggestion[] = [];
-    const parentFiles = new Set(parentNode.affectedFiles);
+    }>
+  ): DirectChildAssignment[] {
+    const validated: DirectChildAssignment[] = [];
 
-    for (const suggestion of suggestions) {
+    for (const assignment of assignments) {
       // Validate required fields
-      if (!suggestion.name || !suggestion.technicalPurpose) {
+      if (
+        !assignment.name ||
+        !assignment.technicalPurpose ||
+        !assignment.assignedCode
+      ) {
+        logInfo(`Skipping invalid assignment: ${assignment.name}`);
         continue;
       }
 
-      // Ensure suggested files are in parent's scope
-      const primaryFiles = (suggestion.primaryFiles || []).filter((f) =>
-        parentFiles.has(f)
-      );
+      // Validate and convert assigned code
+      const assignedCode: CodeDiff[] = [];
+      for (const codeAssignment of assignment.assignedCode) {
+        if (!codeAssignment.file || !codeAssignment.hunks) continue;
 
-      if (primaryFiles.length === 0) {
-        // Fallback to first parent file
-        primaryFiles.push(parentNode.affectedFiles[0]);
-      }
+        const validHunks: DiffHunk[] = [];
+        for (const hunk of codeAssignment.hunks) {
+          if (!hunk.changes) continue;
 
-      // Validate code selections
-      const codeSelections: CodeSelection[] = [];
-      if (
-        suggestion.codeSelections &&
-        Array.isArray(suggestion.codeSelections)
-      ) {
-        for (const selection of suggestion.codeSelections) {
-          if (selection.file && parentFiles.has(selection.file)) {
-            codeSelections.push({
-              file: selection.file,
-              startLine: selection.startLine || 0,
-              endLine: selection.endLine || 0,
-              reason: selection.reason || 'Selected for this theme',
+          const validChanges: LineChange[] = [];
+          for (const change of hunk.changes) {
+            if (change.type && change.content !== undefined) {
+              validChanges.push({
+                type: change.type as 'add' | 'delete' | 'context',
+                lineNumber: 0, // Line numbers not used in direct assignment
+                content: change.content,
+              });
+            }
+          }
+
+          if (validChanges.length > 0) {
+            validHunks.push({
+              oldStart: hunk.oldStart || 0,
+              oldLines: hunk.oldLines || 0,
+              newStart: hunk.newStart || 0,
+              newLines: hunk.newLines || 0,
+              changes: validChanges,
             });
           }
         }
+
+        if (validHunks.length > 0) {
+          assignedCode.push({
+            file: codeAssignment.file,
+            hunks: validHunks,
+            fileContext: {
+              startLine: validHunks[0]?.newStart || 0,
+              endLine: validHunks[validHunks.length - 1]?.newStart || 0,
+              contextType: 'function',
+            },
+            ownership:
+              (codeAssignment.ownership as 'primary' | 'reference') ||
+              'primary',
+          });
+        }
       }
 
-      validated.push({
-        name: this.trimToLimit(suggestion.name, 8),
-        businessValue: this.trimToLimit(
-          suggestion.businessValue || suggestion.name,
-          12
-        ),
-        technicalPurpose: this.trimToLimit(suggestion.technicalPurpose, 10),
-        primaryFiles,
-        codeSelections,
-        estimatedComplexity: suggestion.estimatedComplexity || 'medium',
-        rationale: this.trimToLimit(
-          suggestion.rationale || 'Distinct concern',
-          15
-        ),
-      });
+      if (assignedCode.length > 0) {
+        validated.push({
+          name: this.trimToLimit(assignment.name, 8),
+          description: assignment.description || assignment.technicalPurpose,
+          businessValue: this.trimToLimit(
+            assignment.businessValue || assignment.name,
+            12
+          ),
+          technicalPurpose: this.trimToLimit(assignment.technicalPurpose, 10),
+          assignedCode,
+          ownership: 'primary',
+          contextualMeaning: this.trimToLimit(
+            assignment.contextualMeaning || assignment.technicalPurpose,
+            20
+          ),
+          rationale: this.trimToLimit(
+            assignment.rationale || 'Distinct concern',
+            15
+          ),
+        });
+      }
     }
 
     return validated;
@@ -478,7 +508,7 @@ Technical Purpose: ${viewingNode.technicalContext}
 
 CODE CHANGE:
 File: ${code.file}
-${this.formatCodePreview([code])}
+${this.formatCompleteCodeDiff([code])}
 
 Provide a brief, contextual explanation (max 20 words) of what this code does FOR THIS SPECIFIC THEME.
 Focus on the relationship to the theme's purpose, not generic code description.`;
@@ -493,32 +523,37 @@ Focus on the relationship to the theme's purpose, not generic code description.`
 }
 
 // Type definitions for AI responses
-interface ExpansionDecision {
-  shouldExpand: boolean;
-  isAtomic: boolean;
-  atomicReason?: string;
-  suggestedChildren?: NodeSuggestion[];
-  confidence: number;
-}
-
-interface ExpansionDecisionResponse {
+interface DirectExpansionResponse {
   shouldExpand: boolean;
   isAtomic?: boolean;
   atomicReason?: string;
   confidence?: number;
-  suggestedChildren?: Array<{
+  children?: Array<{
     name?: string;
+    description?: string;
     businessValue?: string;
     technicalPurpose?: string;
-    primaryFiles?: string[];
-    codeSelections?: Array<{
+    assignedCode?: Array<{
       file?: string;
-      startLine?: number;
-      endLine?: number;
+      hunks?: Array<{
+        oldStart?: number;
+        oldLines?: number;
+        newStart?: number;
+        newLines?: number;
+        changes?: Array<{
+          type?: string;
+          content?: string;
+        }>;
+      }>;
+      ownership?: string;
+    }>;
+    rationale?: string;
+    contextualMeaning?: string;
+    suggestedCrossReferences?: Array<{
+      targetTheme?: string;
+      relationship?: string;
       reason?: string;
     }>;
-    estimatedComplexity?: 'low' | 'medium' | 'high';
-    rationale?: string;
   }>;
 }
 
@@ -528,37 +563,4 @@ interface ThemeSuggestion {
   description: string;
   affectedFiles: string[];
   confidence: number;
-}
-
-interface CodeDiff {
-  file: string;
-  hunks: DiffHunk[];
-  fileContext: FileContext;
-  ownership: 'primary' | 'reference';
-  contextualMeaning?: string;
-}
-
-interface DiffHunk {
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-  changes: LineChange[];
-  semanticContext?: string;
-}
-
-interface LineChange {
-  type: 'add' | 'delete' | 'context';
-  lineNumber: number;
-  content: string;
-  isKeyChange?: boolean;
-}
-
-interface FileContext {
-  functionName?: string;
-  className?: string;
-  namespace?: string;
-  startLine: number;
-  endLine: number;
-  contextType: 'function' | 'class' | 'module' | 'config' | 'test';
 }

@@ -121,9 +121,9 @@ export class AIResponseCache {
     }
 
     // Calculate TTL using adaptive strategy if available
-    const adaptiveTTL = strategy.adaptiveTTL ? 
-      strategy.adaptiveTTL(response) : 
-      strategy.ttl;
+    const adaptiveTTL = strategy.adaptiveTTL
+      ? strategy.adaptiveTTL(response)
+      : strategy.ttl;
 
     const entry: CacheEntry<T> = {
       key,
@@ -152,36 +152,38 @@ export class AIResponseCache {
 
     const strategy = CacheStrategyFactory.getStrategy(promptType);
     const cache = this.caches.get(promptType);
-    
+
     if (!cache) {
       return new Array(inputsArray.length).fill(null);
     }
 
     // Parallel cache lookups
-    const results: Array<PromptResponse<T> | null> = inputsArray.map(inputs => {
-      const key = strategy.keyGenerator.generate(promptType, inputs);
-      const entry = cache.get(key);
-      
-      if (!entry) {
-        return null;
-      }
+    const results: Array<PromptResponse<T> | null> = inputsArray.map(
+      (inputs) => {
+        const key = strategy.keyGenerator.generate(promptType, inputs);
+        const entry = cache.get(key);
 
-      // Check TTL
-      if (Date.now() > entry.expiresAt) {
-        cache.delete(key);
-        return null;
-      }
+        if (!entry) {
+          return null;
+        }
 
-      // Update last accessed for LRU
-      entry.lastAccessed = Date.now();
-      entry.accessCount++;
-      
-      // Update metrics
-      const ageMs = Date.now() - entry.timestamp;
-      this.metricsCollector.recordHit(promptType, ageMs);
-      
-      return entry.value as PromptResponse<T>;
-    });
+        // Check TTL
+        if (Date.now() > entry.expiresAt) {
+          cache.delete(key);
+          return null;
+        }
+
+        // Update last accessed for LRU
+        entry.lastAccessed = Date.now();
+        entry.accessCount++;
+
+        // Update metrics
+        const ageMs = Date.now() - entry.timestamp;
+        this.metricsCollector.recordHit(promptType, ageMs);
+
+        return entry.value as PromptResponse<T>;
+      }
+    );
 
     return results;
   }
@@ -194,8 +196,10 @@ export class AIResponseCache {
     inputsArray: any[],
     responses: Array<PromptResponse<T> | null>
   ): void {
-    if (!CacheStrategyFactory.shouldCache(promptType) || 
-        inputsArray.length !== responses.length) {
+    if (
+      !CacheStrategyFactory.shouldCache(promptType) ||
+      inputsArray.length !== responses.length
+    ) {
       return;
     }
 
@@ -210,23 +214,23 @@ export class AIResponseCache {
     // Batch cache updates
     for (let i = 0; i < inputsArray.length; i++) {
       const response = responses[i];
-      
+
       if (!response || !strategy.shouldCache(response)) {
         continue;
       }
 
       const key = strategy.keyGenerator.generate(promptType, inputsArray[i]);
       const size = this.estimateSize(response);
-      
+
       // Check memory limits before adding
       if (this.totalMemoryUsage + size > this.maxMemoryUsage) {
         this.evictEntries(size);
       }
 
       // Calculate adaptive TTL for batch entry
-      const adaptiveTTL = strategy.adaptiveTTL ? 
-        strategy.adaptiveTTL(response) : 
-        strategy.ttl;
+      const adaptiveTTL = strategy.adaptiveTTL
+        ? strategy.adaptiveTTL(response)
+        : strategy.ttl;
 
       const entry: CacheEntry<T> = {
         key,

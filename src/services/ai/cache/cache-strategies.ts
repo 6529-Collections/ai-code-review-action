@@ -114,13 +114,14 @@ export class CacheStrategyFactory {
           response.success === true && response.confidence > 0.7,
         adaptiveTTL: (response) => {
           // High confidence = longer cache, low confidence = shorter cache
-          const confidence = response.data?.confidence || response.confidence || 0.5;
+          const confidence =
+            response.data?.confidence || response.confidence || 0.5;
           const baseTTL = 60 * 60 * 1000; // 1 hour
-          
-          if (confidence > 0.9) return baseTTL * 4;  // 4 hours for very high confidence
-          if (confidence > 0.8) return baseTTL * 2;  // 2 hours for high confidence  
-          if (confidence > 0.6) return baseTTL;      // 1 hour for medium confidence
-          return baseTTL * 0.5;                      // 30 minutes for low confidence
+
+          if (confidence > 0.9) return baseTTL * 4; // 4 hours for very high confidence
+          if (confidence > 0.8) return baseTTL * 2; // 2 hours for high confidence
+          if (confidence > 0.6) return baseTTL; // 1 hour for medium confidence
+          return baseTTL * 0.5; // 30 minutes for low confidence
         },
       },
     ],
@@ -133,14 +134,15 @@ export class CacheStrategyFactory {
         keyGenerator: new DefaultCacheKeyGenerator(),
         shouldCache: (response) => response.success === true,
         adaptiveTTL: (response) => {
-          const confidence = response.data?.confidence || response.confidence || 0.5;
+          const confidence =
+            response.data?.confidence || response.confidence || 0.5;
           const baseTTL = 60 * 60 * 1000; // 1 hour
-          
+
           // Theme extraction benefits from longer caching for high confidence themes
-          if (confidence > 0.85) return baseTTL * 6;  // 6 hours for very confident themes
-          if (confidence > 0.7) return baseTTL * 2;   // 2 hours for confident themes
-          if (confidence > 0.5) return baseTTL;       // 1 hour for medium confidence
-          return baseTTL * 0.25;                      // 15 minutes for low confidence
+          if (confidence > 0.85) return baseTTL * 6; // 6 hours for very confident themes
+          if (confidence > 0.7) return baseTTL * 2; // 2 hours for confident themes
+          if (confidence > 0.5) return baseTTL; // 1 hour for medium confidence
+          return baseTTL * 0.25; // 15 minutes for low confidence
         },
       },
     ],
