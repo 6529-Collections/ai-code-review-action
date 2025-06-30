@@ -186,12 +186,8 @@ class ClaudeService {
     context: string,
     codeChange?: CodeChange
   ): string {
-    // Limit content length to avoid overwhelming Claude
-    const maxContentLength = 2000;
-    const truncatedContent =
-      chunk.content.length > maxContentLength
-        ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
-        : chunk.content;
+    // Use full content - modern context windows can handle it
+    const truncatedContent = chunk.content;
 
     // Build enhanced context with pre-extracted data
     let enhancedContext = context;

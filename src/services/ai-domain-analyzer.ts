@@ -319,7 +319,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
 CHANGE ${i + 1}:
 File: ${ctx.filePath}
 ${ctx.commitMessage ? `Commit: ${ctx.commitMessage}` : ''}
-Diff: ${ctx.completeDiff.substring(0, 500)}...
+Diff: ${ctx.completeDiff}
 `
       )
       .join('\n');

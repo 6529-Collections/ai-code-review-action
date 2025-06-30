@@ -125,13 +125,10 @@ CRITICAL: Respond with ONLY valid JSON.
       details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
     }
 
-    // Add code snippets (limit to avoid token overflow)
-    const snippets = theme.codeSnippets.slice(0, 2).join('\n\n');
+    // Add all code snippets - modern context windows can handle it
+    const snippets = theme.codeSnippets.join('\n\n');
     if (snippets) {
       details += `\n\nActual Code Changes:\n${snippets}`;
-      if (theme.codeSnippets.length > 2) {
-        details += `\n... (${theme.codeSnippets.length - 2} more code snippets)`;
-      }
     }
 
     return details;

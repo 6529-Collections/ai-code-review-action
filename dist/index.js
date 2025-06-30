@@ -30311,7 +30311,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
 CHANGE ${i + 1}:
 File: ${ctx.filePath}
 ${ctx.commitMessage ? `Commit: ${ctx.commitMessage}` : ''}
-Diff: ${ctx.completeDiff.substring(0, 500)}...
+Diff: ${ctx.completeDiff}
 `)
             .join('\n');
         return `You are a product manager analyzing multiple related code changes for business domain organization.
@@ -30642,13 +30642,10 @@ CRITICAL: Respond with ONLY valid JSON.
         if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
             details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
         }
-        // Add code snippets (limit to avoid token overflow)
-        const snippets = theme.codeSnippets.slice(0, 2).join('\n\n');
+        // Add all code snippets - modern context windows can handle it
+        const snippets = theme.codeSnippets.join('\n\n');
         if (snippets) {
             details += `\n\nActual Code Changes:\n${snippets}`;
-            if (theme.codeSnippets.length > 2) {
-                details += `\n... (${theme.codeSnippets.length - 2} more code snippets)`;
-            }
         }
         return details;
     }
@@ -34156,11 +34153,8 @@ class ClaudeService {
         }
     }
     buildAnalysisPrompt(chunk, context, codeChange) {
-        // Limit content length to avoid overwhelming Claude
-        const maxContentLength = 2000;
-        const truncatedContent = chunk.content.length > maxContentLength
-            ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
-            : chunk.content;
+        // Use full content - modern context windows can handle it
+        const truncatedContent = chunk.content;
         // Build enhanced context with pre-extracted data
         let enhancedContext = context;
         if (codeChange) {
