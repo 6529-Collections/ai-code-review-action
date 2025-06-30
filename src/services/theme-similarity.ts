@@ -43,7 +43,7 @@ export class ThemeSimilarityService {
     this.similarityCalculator = new SimilarityCalculator();
     this.aiSimilarityService = new AISimilarityService(anthropicApiKey);
     this.batchProcessor = new BatchProcessor();
-    this.businessDomainService = new BusinessDomainService();
+    this.businessDomainService = new BusinessDomainService(anthropicApiKey);
     this.themeNamingService = new ThemeNamingService();
 
     console.log(

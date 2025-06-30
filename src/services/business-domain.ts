@@ -3,8 +3,15 @@ import { CodeChange } from '../utils/ai-code-analyzer';
 import * as exec from '@actions/exec';
 import { ConcurrencyManager } from '../utils/concurrency-manager';
 import { SecureFileNamer } from '../utils/secure-file-namer';
+import { AIDomainAnalyzer } from './ai-domain-analyzer';
+import { AIAnalysisContext } from '../types/mindmap-types';
 
 export class BusinessDomainService {
+  private aiDomainAnalyzer: AIDomainAnalyzer;
+
+  constructor(anthropicApiKey: string) {
+    this.aiDomainAnalyzer = new AIDomainAnalyzer(anthropicApiKey);
+  }
   async groupByBusinessDomain(
     themes: ConsolidatedTheme[]
   ): Promise<Map<string, ConsolidatedTheme[]>> {
@@ -19,7 +26,7 @@ export class BusinessDomainService {
       themes,
       async (theme) => ({
         theme,
-        domain: await this.extractBusinessDomain(theme.name, theme.description),
+        domain: await this.extractBusinessDomainWithAI(theme),
       }),
       {
         concurrencyLimit: 5, // Lower limit for domain extraction
@@ -66,6 +73,103 @@ export class BusinessDomainService {
     }
 
     return domains;
+  }
+
+  /**
+   * Extract business domain using AI semantic understanding
+   * PRD: "AI decides" domain classification based on actual business impact
+   */
+  private async extractBusinessDomainWithAI(
+    theme: ConsolidatedTheme
+  ): Promise<string> {
+    try {
+      // Build AI analysis context from theme
+      const context: AIAnalysisContext = {
+        filePath: theme.affectedFiles?.[0] || 'unknown',
+        completeDiff: theme.description,
+        surroundingContext: `Theme: ${theme.name}\nDescription: ${theme.description}`,
+        commitMessage: theme.name, // Use theme name as commit message proxy
+      };
+
+      // Get AI domain classification
+      const domainClassification =
+        await this.aiDomainAnalyzer.classifyBusinessDomain(context);
+
+      // Return the primary domain with confidence consideration
+      if (domainClassification.confidence >= 0.6) {
+        return domainClassification.domain;
+      } else {
+        // Medium confidence - use with warning
+        console.log(
+          `[DOMAIN] Medium confidence (${domainClassification.confidence}) for theme "${theme.name}": ${domainClassification.domain}`
+        );
+        return domainClassification.domain;
+      }
+    } catch (error) {
+      console.warn(
+        `[DOMAIN] AI classification failed for theme "${theme.name}": ${error}`
+      );
+
+      // Graceful degradation: use simplified heuristic fallback
+      return this.extractBusinessDomainFallback(theme.name, theme.description);
+    }
+  }
+
+  /**
+   * Fallback domain extraction for when AI fails
+   * PRD: "Graceful degradation - never fail completely"
+   */
+  private extractBusinessDomainFallback(
+    name: string,
+    description: string
+  ): string {
+    const text = (name + ' ' + description).toLowerCase();
+
+    // Simple heuristics for common domains
+    if (text.includes('test') || text.includes('spec')) {
+      return 'Quality Assurance';
+    }
+    if (text.includes('config') || text.includes('setting')) {
+      return 'System Configuration';
+    }
+    if (
+      text.includes('auth') ||
+      text.includes('login') ||
+      text.includes('user')
+    ) {
+      return 'User Management';
+    }
+    if (
+      text.includes('api') ||
+      text.includes('endpoint') ||
+      text.includes('service')
+    ) {
+      return 'API Services';
+    }
+    if (
+      text.includes('ui') ||
+      text.includes('component') ||
+      text.includes('interface')
+    ) {
+      return 'User Interface';
+    }
+    if (
+      text.includes('data') ||
+      text.includes('database') ||
+      text.includes('storage')
+    ) {
+      return 'Data Management';
+    }
+    if (
+      text.includes('error') ||
+      text.includes('fix') ||
+      text.includes('bug')
+    ) {
+      return 'Error Resolution';
+    }
+
+    // Default domain
+    return 'System Enhancement';
   }
 
   async extractBusinessDomainWithContext(
@@ -146,11 +250,7 @@ export class BusinessDomainService {
     console.warn(
       `[AI-DOMAIN] Both stages failed for "${name}", using enhanced fallback`
     );
-    return this.extractBusinessDomainEnhancedFallback(
-      name,
-      description || '',
-      stage1Result || stage2Result || ''
-    );
+    return this.extractBusinessDomainFallback(name, description || '');
   }
 
   private async tryDomainExtraction(
@@ -374,164 +474,9 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
     return true;
   }
 
-  private extractBusinessDomainFallback(
-    name: string,
-    description: string
-  ): string {
-    return this.extractBusinessDomainEnhancedFallback(name, description, '');
-  }
+  // Removed old mechanical fallback - replaced with AI-driven classification
 
-  private extractBusinessDomainEnhancedFallback(
-    name: string,
-    description: string,
-    aiResponse: string
-  ): string {
-    const text = (name + ' ' + description + ' ' + aiResponse).toLowerCase();
+  // Removed deprecated method - replaced with AI semantic analysis
 
-    // Error and failure handling (new categories)
-    if (
-      text.includes('error') ||
-      text.includes('exception') ||
-      text.includes('failure')
-    ) {
-      if (text.includes('build') || text.includes('compile')) {
-        return 'Fix Build Errors';
-      }
-      if (
-        text.includes('auth') ||
-        text.includes('login') ||
-        text.includes('permission')
-      ) {
-        return 'Handle Failed Auth';
-      }
-      if (
-        text.includes('api') ||
-        text.includes('request') ||
-        text.includes('response')
-      ) {
-        return 'Debug API Failures';
-      }
-      if (text.includes('test') || text.includes('validation')) {
-        return 'Fix Failed Tests';
-      }
-      if (text.includes('payment') || text.includes('transaction')) {
-        return 'Handle Failed Payments';
-      }
-      if (text.includes('sync') || text.includes('data')) {
-        return 'Resolve Sync Errors';
-      }
-      return 'Fix User Issues';
-    }
-
-    // Original categories with improved keywords
-    if (
-      text.includes('greeting') ||
-      text.includes('demo') ||
-      text.includes('scaffolding') ||
-      text.includes('example') ||
-      text.includes('placeholder')
-    ) {
-      return 'Remove Demo Content';
-    }
-    if (
-      text.includes('review') ||
-      text.includes('analysis') ||
-      text.includes('feedback') ||
-      text.includes('mindmap') ||
-      text.includes('visualization')
-    ) {
-      return 'Improve Code Review';
-    }
-    if (
-      text.includes('workflow') ||
-      text.includes('action') ||
-      text.includes('automation') ||
-      text.includes('pipeline') ||
-      text.includes('ci/cd')
-    ) {
-      return 'Streamline Development';
-    }
-    if (
-      text.includes('config') ||
-      text.includes('setup') ||
-      text.includes('install') ||
-      text.includes('environment')
-    ) {
-      return 'Simplify Configuration';
-    }
-    if (
-      text.includes('comment') ||
-      text.includes('pr') ||
-      text.includes('pull request') ||
-      text.includes('feedback')
-    ) {
-      return 'Add User Feedback';
-    }
-    if (
-      text.includes('test') ||
-      text.includes('validation') ||
-      text.includes('quality') ||
-      text.includes('coverage')
-    ) {
-      return 'Enhance Automation';
-    }
-    if (
-      text.includes('documentation') ||
-      text.includes('readme') ||
-      text.includes('guide') ||
-      text.includes('docs')
-    ) {
-      return 'Improve Documentation';
-    }
-    if (
-      text.includes('performance') ||
-      text.includes('speed') ||
-      text.includes('optimization') ||
-      text.includes('cache')
-    ) {
-      return 'Optimize Performance';
-    }
-    if (
-      text.includes('integration') ||
-      text.includes('api') ||
-      text.includes('service') ||
-      text.includes('webhook')
-    ) {
-      return 'Enable Integrations';
-    }
-    if (
-      text.includes('interface') ||
-      text.includes('ui') ||
-      text.includes('user') ||
-      text.includes('frontend')
-    ) {
-      return 'Modernize Interface';
-    }
-    if (
-      text.includes('remove') ||
-      text.includes('delete') ||
-      text.includes('cleanup') ||
-      text.includes('legacy') ||
-      text.includes('deprecated')
-    ) {
-      return 'Clean Up Legacy';
-    }
-    if (
-      text.includes('fix') ||
-      text.includes('bug') ||
-      text.includes('issue') ||
-      text.includes('problem')
-    ) {
-      return 'Fix User Issues';
-    }
-    if (
-      text.includes('debug') ||
-      text.includes('troubleshoot') ||
-      text.includes('investigate')
-    ) {
-      return 'Debug API Failures';
-    }
-
-    return 'General Improvements';
-  }
+  // Removed 150+ lines of mechanical keyword matching - replaced with AI semantic understanding
 }

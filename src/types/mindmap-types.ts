@@ -334,3 +334,59 @@ export interface MindmapOptions {
   enableSmartDuplication?: boolean;
   confidenceThreshold?: number; // Min confidence for AI decisions
 }
+
+/**
+ * AI-driven business domain classification result
+ * Replaces mechanical keyword matching with semantic understanding
+ */
+export interface AIDomainClassification {
+  domain: string; // Clear business domain (max 5 words)
+  userValue: string; // End user benefit (max 12 words)
+  businessCapability: string; // What this enables users to do (max 15 words)
+  confidence: number; // 0.0-1.0 confidence score
+  reasoning: string; // Why this domain (max 20 words)
+  subDomains?: string[]; // Specific user flows within capability
+  crossCuttingConcerns?: string[]; // Domains this also affects
+}
+
+/**
+ * AI-driven semantic change analysis result
+ * Replaces regex pattern matching with contextual understanding
+ */
+export interface AISemanticAnalysis {
+  changeType: SemanticChangeType; // Primary nature of change
+  semanticImpact: 'breaking' | 'enhancement' | 'fix' | 'internal'; // Impact level
+  userImpact: string; // Description of user-visible impact (max 20 words)
+  technicalNature: string; // What technically changed (max 15 words)
+  affectedCapabilities: string[]; // List of affected features/capabilities
+  confidence: number; // 0.0-1.0 confidence score
+  reasoning: string; // Classification reasoning (max 25 words)
+  filePurpose?: string; // AI-determined file purpose from content
+  relatedChanges?: string[]; // IDs of semantically related changes
+}
+
+/**
+ * Enhanced file context with AI understanding
+ * Replaces path-based file type detection
+ */
+export interface AIFileContext extends FileContext {
+  actualPurpose: string; // AI-determined actual purpose from content
+  businessRelevance: string; // How this file relates to business logic
+  technicalRole: string; // Technical role in the system
+  userFacing: boolean; // Whether changes affect user experience
+  architecturalSignificance: 'high' | 'medium' | 'low'; // System impact level
+}
+
+/**
+ * AI prompt context for semantic analysis
+ */
+export interface AIAnalysisContext {
+  filePath: string;
+  completeDiff: string;
+  surroundingContext: string;
+  commitMessage?: string;
+  prDescription?: string;
+  fileHistory?: string; // Recent changes to understand evolution
+  dependencies?: string[]; // Files this depends on
+  dependents?: string[]; // Files that depend on this
+}

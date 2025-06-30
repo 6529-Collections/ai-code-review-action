@@ -11,18 +11,23 @@ import {
   SharedComponent,
   BusinessPattern,
   FileType,
+  AIAnalysisContext,
 } from '../types/mindmap-types';
+import { AISemanticAnalyzer } from './ai-semantic-analyzer';
 import { logInfo } from '../utils';
 
 /**
  * Enhanced Git service for semantic diff analysis
- * Provides rich understanding of code changes beyond raw diffs
+ * Provides AI-driven understanding of code changes beyond raw diffs
+ * PRD: "AI decides" semantic meaning, replaces mechanical pattern matching
  */
 export class EnhancedGitService {
   private octokit: ReturnType<typeof github.getOctokit>;
+  private aiSemanticAnalyzer: AISemanticAnalyzer;
 
-  constructor(githubToken: string) {
+  constructor(githubToken: string, anthropicApiKey: string) {
     this.octokit = github.getOctokit(githubToken);
+    this.aiSemanticAnalyzer = new AISemanticAnalyzer(anthropicApiKey);
   }
 
   /**
@@ -98,7 +103,7 @@ export class EnhancedGitService {
   }
 
   /**
-   * Parse individual file diff with semantic understanding
+   * Parse individual file diff with AI-enhanced semantic understanding
    */
   private async parseFileDiff(file: {
     filename: string;
@@ -109,15 +114,16 @@ export class EnhancedGitService {
     patch?: string;
     previous_filename?: string;
   }): Promise<FileDiff> {
-    const fileType = this.detectFileType(file.filename);
+    const fileType = await this.detectFileType(file.filename, file.patch);
     const hunks = await this.parseDiffHunks(file.patch || '');
     const imports = await this.extractImportChanges(hunks);
     const exports = await this.extractExportChanges(hunks);
     const dependencies = await this.extractDependencies(imports);
-    const semanticChanges = await this.analyzeSemanticChanges(
+    const semanticChanges = await this.analyzeSemanticChangesWithAI(
       hunks,
       file.filename,
-      fileType
+      fileType,
+      file.patch || ''
     );
 
     return {
@@ -136,9 +142,14 @@ export class EnhancedGitService {
   }
 
   /**
-   * Detect file type based on path and extension
+   * Detect file type with AI assistance for better accuracy
+   * PRD: "File type intelligence" - understand actual purpose, not just extension
    */
-  private detectFileType(filename: string): FileType {
+  private async detectFileType(
+    filename: string,
+    content?: string
+  ): Promise<FileType> {
+    // Fast path for obvious cases
     if (
       filename.includes('.test.') ||
       filename.includes('.spec.') ||
@@ -146,19 +157,7 @@ export class EnhancedGitService {
     ) {
       return 'test';
     }
-    if (
-      filename.includes('config') ||
-      filename.endsWith('.json') ||
-      filename.endsWith('.yaml') ||
-      filename.endsWith('.yml')
-    ) {
-      return 'config';
-    }
-    if (
-      filename.endsWith('.md') ||
-      filename.includes('README') ||
-      filename.includes('docs/')
-    ) {
+    if (filename.endsWith('.md') || filename.includes('README')) {
       return 'documentation';
     }
     if (
@@ -167,6 +166,37 @@ export class EnhancedGitService {
       filename.endsWith('.less')
     ) {
       return 'style';
+    }
+
+    // For ambiguous cases, use AI if content is available
+    if (content) {
+      try {
+        const aiContext = await this.aiSemanticAnalyzer.analyzeFilePurpose(
+          filename,
+          content
+        );
+        // Map AI context types to FileType
+        const contextTypeMap: Record<string, FileType> = {
+          function: 'source',
+          class: 'source',
+          module: 'source',
+          config: 'config',
+          test: 'test',
+        };
+        return contextTypeMap[aiContext.contextType] || 'source';
+      } catch (error) {
+        logInfo(`AI file type detection failed for ${filename}: ${error}`);
+      }
+    }
+
+    // Fallback to basic pattern matching
+    if (
+      filename.includes('config') ||
+      filename.endsWith('.json') ||
+      filename.endsWith('.yaml') ||
+      filename.endsWith('.yml')
+    ) {
+      return 'config';
     }
     if (
       filename.includes('webpack') ||
@@ -397,122 +427,95 @@ export class EnhancedGitService {
   }
 
   /**
-   * Analyze semantic changes in the code
+   * Analyze semantic changes using AI instead of regex patterns
+   * PRD: "AI decides" semantic meaning based on contextual understanding
    */
-  private async analyzeSemanticChanges(
+  private async analyzeSemanticChangesWithAI(
     hunks: DiffHunk[],
     filename: string,
-    fileType: FileType
+    fileType: FileType,
+    completeDiff: string
   ): Promise<SemanticChange[]> {
-    const semanticChanges: SemanticChange[] = [];
+    try {
+      // Build AI analysis context
+      const context: AIAnalysisContext = {
+        filePath: filename,
+        completeDiff,
+        surroundingContext: this.extractSurroundingContext(hunks),
+      };
 
-    // Analyze each hunk for semantic meaning
+      // Get AI semantic analysis
+      const aiAnalysis =
+        await this.aiSemanticAnalyzer.analyzeSemanticChange(context);
+
+      // Convert AI analysis to SemanticChange format
+      return [
+        {
+          type: aiAnalysis.changeType,
+          description: aiAnalysis.userImpact,
+          impact: this.mapSemanticImpact(aiAnalysis.semanticImpact),
+          affectedSymbols: aiAnalysis.affectedCapabilities,
+        },
+      ];
+    } catch (error) {
+      logInfo(`AI semantic analysis failed for ${filename}: ${error}`);
+
+      // Graceful degradation: return basic semantic change
+      return [
+        {
+          type: 'refactoring',
+          description: 'Code modifications detected',
+          impact: 'refactor',
+          affectedSymbols: this.extractSymbols(hunks.flatMap((h) => h.changes)),
+        },
+      ];
+    }
+  }
+
+  /**
+   * Extract surrounding context from hunks for AI analysis
+   */
+  private extractSurroundingContext(hunks: DiffHunk[]): string {
+    const contextLines: string[] = [];
+
     for (const hunk of hunks) {
-      const addedLines = hunk.changes
-        .filter((c) => c.type === 'add')
+      if (hunk.semanticContext) {
+        contextLines.push(`Function/Class: ${hunk.semanticContext}`);
+      }
+
+      // Add some context lines to understand the change better
+      const contextChanges = hunk.changes
+        .filter((c) => c.type === 'context')
+        .slice(0, 3) // First 3 context lines
         .map((c) => c.content);
-      const removedLines = hunk.changes
-        .filter((c) => c.type === 'delete')
-        .map((c) => c.content);
 
-      // API changes
-      if (this.detectAPIChange(addedLines, removedLines)) {
-        semanticChanges.push({
-          type: 'api-change',
-          description: 'API signature or contract modified',
-          impact: 'breaking',
-          affectedSymbols: this.extractSymbols(hunk.changes),
-        });
-      }
-
-      // New features
-      if (this.detectNewFeature(addedLines, fileType)) {
-        semanticChanges.push({
-          type: 'new-feature',
-          description: 'New functionality added',
-          impact: 'enhancement',
-          affectedSymbols: this.extractSymbols(hunk.changes),
-        });
-      }
-
-      // Bug fixes
-      if (this.detectBugFix(addedLines, removedLines, hunk.semanticContext)) {
-        semanticChanges.push({
-          type: 'bug-fix',
-          description: 'Bug fix or error correction',
-          impact: 'fix',
-          affectedSymbols: this.extractSymbols(hunk.changes),
-        });
-      }
+      contextLines.push(...contextChanges);
     }
 
-    return semanticChanges;
+    return contextLines.join('\n');
   }
 
   /**
-   * Detect API changes
+   * Map AI semantic impact to SemanticChange impact type
    */
-  private detectAPIChange(added: string[], removed: string[]): boolean {
-    const apiPatterns = [
-      /function.*\(/,
-      /\(.*\)\s*:/,
-      /interface\s+/,
-      /type\s+.*=/,
-      /export\s+/,
-    ];
-
-    return apiPatterns.some(
-      (pattern) =>
-        removed.some((line) => pattern.test(line)) &&
-        added.some((line) => pattern.test(line))
-    );
+  private mapSemanticImpact(
+    aiImpact: string
+  ): 'breaking' | 'enhancement' | 'fix' | 'refactor' {
+    switch (aiImpact) {
+      case 'breaking':
+        return 'breaking';
+      case 'enhancement':
+        return 'enhancement';
+      case 'fix':
+        return 'fix';
+      case 'internal':
+        return 'refactor';
+      default:
+        return 'refactor';
+    }
   }
 
-  /**
-   * Detect new features
-   */
-  private detectNewFeature(added: string[], fileType: FileType): boolean {
-    if (fileType === 'test') return false;
-
-    const featureIndicators = [
-      /class\s+\w+/,
-      /function\s+\w+/,
-      /export\s+/,
-      /implements\s+/,
-      /extends\s+/,
-    ];
-
-    const significantAdditions = added.filter((line) =>
-      featureIndicators.some((pattern) => pattern.test(line))
-    );
-
-    return significantAdditions.length > 0 && added.length > 10;
-  }
-
-  /**
-   * Detect bug fixes
-   */
-  private detectBugFix(
-    added: string[],
-    removed: string[],
-    context?: string
-  ): boolean {
-    const fixIndicators = [
-      /fix/i,
-      /bug/i,
-      /error/i,
-      /null\s*check/i,
-      /undefined\s*check/i,
-      /try\s*{/,
-      /catch\s*\(/,
-    ];
-
-    return fixIndicators.some(
-      (pattern) =>
-        added.some((line) => pattern.test(line)) ||
-        (context && pattern.test(context))
-    );
-  }
+  // Removed mechanical detection methods - replaced with AI semantic analysis
 
   /**
    * Extract symbols from changes

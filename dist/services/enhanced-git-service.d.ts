@@ -1,11 +1,13 @@
 import { SemanticDiff } from '../types/mindmap-types';
 /**
  * Enhanced Git service for semantic diff analysis
- * Provides rich understanding of code changes beyond raw diffs
+ * Provides AI-driven understanding of code changes beyond raw diffs
+ * PRD: "AI decides" semantic meaning, replaces mechanical pattern matching
  */
 export declare class EnhancedGitService {
     private octokit;
-    constructor(githubToken: string);
+    private aiSemanticAnalyzer;
+    constructor(githubToken: string, anthropicApiKey: string);
     /**
      * Extract rich diff information with full semantic context
      */
@@ -15,11 +17,12 @@ export declare class EnhancedGitService {
      */
     private parseFilesWithContext;
     /**
-     * Parse individual file diff with semantic understanding
+     * Parse individual file diff with AI-enhanced semantic understanding
      */
     private parseFileDiff;
     /**
-     * Detect file type based on path and extension
+     * Detect file type with AI assistance for better accuracy
+     * PRD: "File type intelligence" - understand actual purpose, not just extension
      */
     private detectFileType;
     /**
@@ -47,21 +50,18 @@ export declare class EnhancedGitService {
      */
     private extractDependencies;
     /**
-     * Analyze semantic changes in the code
+     * Analyze semantic changes using AI instead of regex patterns
+     * PRD: "AI decides" semantic meaning based on contextual understanding
      */
-    private analyzeSemanticChanges;
+    private analyzeSemanticChangesWithAI;
     /**
-     * Detect API changes
+     * Extract surrounding context from hunks for AI analysis
      */
-    private detectAPIChange;
+    private extractSurroundingContext;
     /**
-     * Detect new features
+     * Map AI semantic impact to SemanticChange impact type
      */
-    private detectNewFeature;
-    /**
-     * Detect bug fixes
-     */
-    private detectBugFix;
+    private mapSemanticImpact;
     /**
      * Extract symbols from changes
      */
