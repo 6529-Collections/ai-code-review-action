@@ -5,6 +5,7 @@ import {
 } from '../types/mindmap-types';
 import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
+import { ConcurrencyManager } from '../utils/concurrency-manager';
 import { logInfo } from '../utils';
 
 /**
@@ -255,13 +256,52 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
       logInfo(`Multi-domain analysis failed: ${error}`);
     }
 
-    // Fallback: analyze each individually
-    const domains = await Promise.all(
-      contexts.map((ctx) => this.classifyBusinessDomain(ctx))
+    // Fallback: analyze each individually with concurrency control
+    console.log(
+      `[AI-DOMAIN] Fallback to individual analysis for ${contexts.length} contexts`
     );
 
+    const domains = await ConcurrencyManager.processConcurrentlyWithLimit(
+      contexts,
+      async (ctx) => await this.classifyBusinessDomain(ctx),
+      {
+        concurrencyLimit: 5,
+        maxRetries: 2,
+        enableLogging: true,
+        onProgress: (completed, total) => {
+          console.log(
+            `[AI-DOMAIN] Individual analysis progress: ${completed}/${total}`
+          );
+        },
+        onError: (error, ctx, retryCount) => {
+          console.warn(
+            `[AI-DOMAIN] Retry ${retryCount} for context: ${error.message}`
+          );
+        },
+      }
+    );
+
+    // Filter successful results and handle errors
+    const successfulDomains: AIDomainClassification[] = [];
+
+    for (const result of domains) {
+      if (result && typeof result === 'object' && 'error' in result) {
+        console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback`);
+        // Add fallback domain for failed analysis
+        successfulDomains.push({
+          domain: 'System Enhancement',
+          userValue: 'Improve system functionality',
+          businessCapability: 'Enhance system capabilities',
+          confidence: 0.3,
+          reasoning: 'AI analysis failed - using fallback',
+        });
+      } else {
+        successfulDomains.push(result as AIDomainClassification);
+      }
+    }
+
     return {
-      primaryDomains: domains,
+      primaryDomains: successfulDomains,
       crossCuttingDomains: [],
       domainRelationships: [],
     };
@@ -279,7 +319,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
 CHANGE ${i + 1}:
 File: ${ctx.filePath}
 ${ctx.commitMessage ? `Commit: ${ctx.commitMessage}` : ''}
-Diff: ${ctx.completeDiff.substring(0, 500)}...
+Diff: ${ctx.completeDiff}
 `
       )
       .join('\n');

@@ -5,10 +5,15 @@ export declare class GenericCache {
     private cache;
     private defaultTtlMs;
     constructor(defaultTtlMs?: number);
-    get(key: string): unknown | null;
+    get<T = unknown>(key: string): T | null;
     set(key: string, data: unknown, ttlMs?: number): void;
     delete(key: string): boolean;
     clear(): void;
     size(): number;
     has(key: string): boolean;
+    /**
+     * Get all keys with a specific prefix
+     * Used for semantic cache operations
+     */
+    getKeysWithPrefix(prefix: string): string[];
 }

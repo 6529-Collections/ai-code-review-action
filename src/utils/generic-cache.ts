@@ -10,7 +10,7 @@ export class GenericCache {
     this.defaultTtlMs = defaultTtlMs;
   }
 
-  get(key: string): unknown | null {
+  get<T = unknown>(key: string): T | null {
     const cached = this.cache.get(key);
     if (!cached) return null;
 
@@ -21,7 +21,7 @@ export class GenericCache {
       return null;
     }
 
-    return cached.data;
+    return cached.data as T;
   }
 
   set(key: string, data: unknown, ttlMs?: number): void {
@@ -62,5 +62,24 @@ export class GenericCache {
     }
 
     return true;
+  }
+
+  /**
+   * Get all keys with a specific prefix
+   * Used for semantic cache operations
+   */
+  getKeysWithPrefix(prefix: string): string[] {
+    const keys: string[] = [];
+
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        // Check if entry is still valid (not expired)
+        if (this.has(key)) {
+          keys.push(key);
+        }
+      }
+    }
+
+    return keys;
   }
 }

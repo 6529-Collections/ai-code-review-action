@@ -23,6 +23,37 @@ export declare class HierarchicalSimilarityService {
     validateHierarchyIntegrity(hierarchy: ConsolidatedTheme[]): boolean;
     private flattenHierarchy;
     private shouldCompareThemes;
+    /**
+     * Calculate file overlap between two themes
+     * Returns ratio 0.0-1.0 of overlapping files
+     */
+    private calculateFileOverlap;
+    /**
+     * Calculate name similarity using simple token matching
+     * Returns ratio 0.0-1.0 of similarity
+     */
+    private calculateNameSimilarity;
+    /**
+     * Check if themes belong to clearly different business domains
+     * Uses heuristic domain detection from descriptions
+     */
+    private areDifferentBusinessDomains;
+    /**
+     * Simple domain inference from theme content
+     */
+    private inferBusinessDomain;
+    /**
+     * Check if themes have severe size mismatch (one much larger than other)
+     */
+    private hasSevereSizeMismatch;
+    /**
+     * Check if themes have incompatible change types
+     */
+    private hasIncompatibleChangeTypes;
+    /**
+     * Simple change type inference
+     */
+    private inferChangeType;
     private analyzeCrossLevelSimilarityPair;
     private mergeThemes;
     private countThemes;

@@ -108,4 +108,18 @@ export declare class ThemeService {
     analyzeThemesWithEnhancedContext(gitService: import('./git-service').GitService): Promise<ThemeAnalysisResult>;
     private calculateExpansionStats;
     private createFallbackThemes;
+    /**
+     * Pipeline optimization: Identify expansion candidates in parallel with consolidation
+     * PRD: "Progressive rendering of deep trees" and "Lazy expansion for large PRs"
+     */
+    private identifyExpansionCandidates;
+    /**
+     * Quick heuristic to determine if a theme should be considered for expansion
+     * This is much faster than full AI analysis
+     */
+    private shouldConsiderForExpansion;
+    /**
+     * Check if theme has multiple aspects that could be separated
+     */
+    private hasMultipleAspects;
 }

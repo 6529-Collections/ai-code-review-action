@@ -18,58 +18,68 @@ export class BusinessDomainService {
     const domains = new Map<string, ConsolidatedTheme[]>();
 
     console.log(
-      `[DOMAIN] Extracting business domains for ${themes.length} themes`
+      `[DOMAIN] Extracting business domains for ${themes.length} themes using batch processing`
     );
 
-    // Extract domains concurrently
+    // Use batch processing for significant performance improvement
+    const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
+    const batches = this.createDomainBatches(themes, batchSize);
+
+    console.log(
+      `[DOMAIN-BATCH] Split into ${batches.length} batches of ~${batchSize} themes each`
+    );
+
+    // Process batches concurrently
     const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      themes,
-      async (theme) => ({
-        theme,
-        domain: await this.extractBusinessDomainWithAI(theme),
-      }),
+      batches,
+      async (batch) => {
+        return await this.processDomainBatch(batch);
+      },
       {
-        concurrencyLimit: 5, // Lower limit for domain extraction
-        maxRetries: 3,
+        concurrencyLimit: 3, // Fewer concurrent batches since each is larger
+        maxRetries: 2,
         enableLogging: true,
         onProgress: (completed, total) => {
+          const themesCompleted = completed * batchSize;
+          const totalThemes = themes.length;
           console.log(
-            `[DOMAIN] Domain extraction progress: ${completed}/${total} themes`
+            `[DOMAIN-BATCH] Progress: ${themesCompleted}/${totalThemes} themes processed (${completed}/${total} batches)`
           );
         },
-        onError: (error, theme, retryCount) => {
+        onError: (error, batch, retryCount) => {
           console.warn(
-            `[DOMAIN] Retry ${retryCount} for theme "${theme.name}": ${error.message}`
+            `[DOMAIN-BATCH] Retry ${retryCount} for batch of ${batch.length} themes: ${error.message}`
           );
         },
       }
     );
 
-    // Group results by domain
-    for (const result of results) {
-      if (result && typeof result === 'object' && 'error' in result) {
-        // Use fallback domain for failed extractions
-        const fallbackDomain = this.extractBusinessDomainFallback(
-          result.item.name,
-          result.item.description
-        );
-        console.warn(
-          `[DOMAIN] Using fallback domain "${fallbackDomain}" for "${result.item.name}"`
-        );
+    // Flatten batch results and group by domain
+    const flatResults: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
 
-        if (!domains.has(fallbackDomain)) {
-          domains.set(fallbackDomain, []);
-        }
-        domains.get(fallbackDomain)!.push(result.item);
-      } else {
-        const { theme, domain } = result;
-        console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
-
-        if (!domains.has(domain)) {
-          domains.set(domain, []);
-        }
-        domains.get(domain)!.push(theme);
+    for (const batchResult of results) {
+      if (
+        batchResult &&
+        typeof batchResult === 'object' &&
+        'error' in batchResult
+      ) {
+        console.warn(`[DOMAIN-BATCH] Batch processing failed, using fallback`);
+        // Handle failed batch - use fallback for all themes in the failed batch
+        continue;
+      } else if (Array.isArray(batchResult)) {
+        flatResults.push(...batchResult);
       }
+    }
+
+    // Group results by domain
+    for (const result of flatResults) {
+      const { theme, domain } = result;
+      console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
+
+      if (!domains.has(domain)) {
+        domains.set(domain, []);
+      }
+      domains.get(domain)!.push(theme);
     }
 
     return domains;
@@ -472,6 +482,110 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
     }
 
     return true;
+  }
+
+  /**
+   * Calculate optimal batch size for domain classification
+   * PRD: "Dynamic batch sizing" - adapt to content complexity
+   */
+  private calculateOptimalDomainBatchSize(totalThemes: number): number {
+    // Smaller batches for domain classification due to context complexity
+    if (totalThemes <= 5) return Math.max(1, totalThemes); // Very small PRs
+    if (totalThemes <= 20) return 10; // Small PRs - moderate batching
+    if (totalThemes <= 50) return 15; // Medium PRs - larger batches
+    return 20; // Large PRs - maximum batch size for domain analysis
+  }
+
+  /**
+   * Split themes into optimally-sized batches for domain processing
+   */
+  private createDomainBatches(
+    themes: ConsolidatedTheme[],
+    batchSize: number
+  ): ConsolidatedTheme[][] {
+    const batches: ConsolidatedTheme[][] = [];
+    for (let i = 0; i < themes.length; i += batchSize) {
+      batches.push(themes.slice(i, i + batchSize));
+    }
+    return batches;
+  }
+
+  /**
+   * Process a batch of themes for domain classification with a single AI call
+   * This is the key optimization - multiple themes analyzed in one API call
+   */
+  private async processDomainBatch(
+    themes: ConsolidatedTheme[]
+  ): Promise<Array<{ theme: ConsolidatedTheme; domain: string }>> {
+    try {
+      // Use AI domain analyzer for batch processing
+      const contexts = themes.map((theme) => ({
+        filePath: theme.affectedFiles?.[0] || 'unknown',
+        completeDiff: theme.context || '',
+        surroundingContext: theme.description || '',
+        commitMessage: `Theme: ${theme.name}`,
+        prDescription: theme.businessImpact,
+      }));
+
+      // Single AI call for multiple themes
+      const batchResults =
+        await this.aiDomainAnalyzer.analyzeMultiDomainChanges(contexts);
+
+      // Map results back to themes
+      const results: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
+
+      for (let i = 0; i < themes.length; i++) {
+        const theme = themes[i];
+        let domain = 'System Enhancement'; // Default fallback
+
+        // Try to find domain from batch results
+        if (batchResults.primaryDomains && batchResults.primaryDomains[i]) {
+          domain = batchResults.primaryDomains[i].domain;
+        }
+
+        results.push({ theme, domain });
+        console.log(
+          `[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`
+        );
+      }
+
+      return results;
+    } catch (error) {
+      console.warn(
+        `[DOMAIN-BATCH] Batch processing failed for ${themes.length} themes, falling back to individual processing: ${error}`
+      );
+
+      // Fallback to individual processing
+      return await this.processDomainBatchIndividually(themes);
+    }
+  }
+
+  /**
+   * Fallback to individual domain processing if batch fails
+   */
+  private async processDomainBatchIndividually(
+    themes: ConsolidatedTheme[]
+  ): Promise<Array<{ theme: ConsolidatedTheme; domain: string }>> {
+    const results: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
+
+    for (const theme of themes) {
+      try {
+        const domain = await this.extractBusinessDomainWithAI(theme);
+        results.push({ theme, domain });
+      } catch (error) {
+        console.warn(
+          `[DOMAIN-BATCH-FALLBACK] Failed individual processing for "${theme.name}": ${error}`
+        );
+        // Use fallback domain for failed individual processing
+        const fallbackDomain = this.extractBusinessDomainFallback(
+          theme.name,
+          theme.description
+        );
+        results.push({ theme, domain: fallbackDomain });
+      }
+    }
+
+    return results;
   }
 
   // Removed old mechanical fallback - replaced with AI-driven classification
