@@ -40,7 +40,11 @@ export async function run(): Promise<void> {
       inputs.githubToken || '',
       inputs.anthropicApiKey
     );
+    
+    // Initialize theme service with AI-driven expansion
     const themeService = new ThemeService(inputs.anthropicApiKey);
+    
+    logInfo('Using AI-driven theme expansion for natural hierarchy depth');
 
     // Get PR context and changed files
     const prContext = await gitService.getPullRequestContext();

@@ -36,7 +36,8 @@ export interface ConsolidatedTheme {
     expansionDepth?: number;
     businessLogicPatterns?: string[];
     userFlowPatterns?: string[];
-    complexityScore?: number;
+    isAtomic?: boolean;
+    expansionReason?: string;
     consolidationSummary?: string;
     childThemeSummaries?: string[];
     combinedTechnicalDetails?: string;

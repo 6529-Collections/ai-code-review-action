@@ -40,6 +40,8 @@ jobs:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
   id: theme-analysis
+  env:
+    SKIP_CROSS_LEVEL_DEDUP: 'false'  # Optional: Skip cross-level deduplication
 
 - name: Use theme analysis output
   run: |
@@ -96,6 +98,10 @@ Found 3 themes:
 - **Confidence Scoring**: Each theme includes a confidence percentage
 - **Hierarchical Organization**: Parent themes contain related sub-themes
 - **Business Perspective**: Themes described from user/business viewpoint
+- **AI-Driven Natural Depth**: Claude AI determines optimal hierarchy depth
+  - Adapts from simple 2-level changes to complex multi-level decompositions
+  - Naturally detects atomic, unit-testable changes
+  - No artificial metrics - AI understands code context directly
 
 ## Development
 
@@ -181,6 +187,13 @@ For local development, create a `.env` file:
 
 ```env
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+```
+
+Optional configuration:
+
+```env
+# Cross-level deduplication
+SKIP_CROSS_LEVEL_DEDUP=false          # Skip cross-level deduplication
 ```
 
 The `.env` file is already in `.gitignore` to keep your API keys secure.

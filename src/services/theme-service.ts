@@ -61,6 +61,10 @@ export interface Theme {
     description: string;
     snippet: string;
   }>;
+
+  // Dynamic depth fields (simplified)
+  isAtomic?: boolean;
+  expansionReason?: string;
 }
 
 export interface CodeChunk {
@@ -578,7 +582,7 @@ export class ThemeService {
       consolidationConfig
     );
 
-    // Initialize expansion services
+    // Initialize expansion services with simplified AI-driven approach
     this.expansionService = new ThemeExpansionService(anthropicApiKey);
     this.hierarchicalSimilarityService = new HierarchicalSimilarityService(
       anthropicApiKey
@@ -733,7 +737,9 @@ export class ThemeService {
       let expansionStats = undefined;
 
       if (this.expansionEnabled && consolidatedThemes.length > 0) {
-        console.log('[THEME-SERVICE] Starting hierarchical expansion');
+        console.log(
+          '[THEME-SERVICE] Starting AI-driven hierarchical expansion'
+        );
         const expansionStartTime = Date.now();
 
         try {

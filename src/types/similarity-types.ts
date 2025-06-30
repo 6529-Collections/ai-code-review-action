@@ -45,7 +45,10 @@ export interface ConsolidatedTheme {
   expansionDepth?: number; // Depth of expansion from original theme
   businessLogicPatterns?: string[]; // Identified business patterns
   userFlowPatterns?: string[]; // Identified user flow patterns
-  complexityScore?: number; // Calculated complexity score for expansion
+
+  // Dynamic depth fields (simplified)
+  isAtomic?: boolean;
+  expansionReason?: string;
 
   // New consolidation context fields
   consolidationSummary?: string; // Why these were merged

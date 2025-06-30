@@ -30,6 +30,8 @@ export interface Theme {
         description: string;
         snippet: string;
     }>;
+    isAtomic?: boolean;
+    expansionReason?: string;
 }
 export interface CodeChunk {
     id: string;
