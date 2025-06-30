@@ -228,8 +228,8 @@ export declare const ResponseSchemas: {
             }>;
         }, "strip", z.ZodTypeAny, {
             confidence: number;
-            shouldMerge: boolean;
             pairId: string;
+            shouldMerge: boolean;
             scores: {
                 description: number;
                 name: number;
@@ -239,8 +239,8 @@ export declare const ResponseSchemas: {
             };
         }, {
             confidence: number;
-            shouldMerge: boolean;
             pairId: string;
+            shouldMerge: boolean;
             scores: {
                 description: number;
                 name: number;
@@ -252,8 +252,8 @@ export declare const ResponseSchemas: {
     }, "strip", z.ZodTypeAny, {
         results: {
             confidence: number;
-            shouldMerge: boolean;
             pairId: string;
+            shouldMerge: boolean;
             scores: {
                 description: number;
                 name: number;
@@ -265,8 +265,8 @@ export declare const ResponseSchemas: {
     }, {
         results: {
             confidence: number;
-            shouldMerge: boolean;
             pairId: string;
+            shouldMerge: boolean;
             scores: {
                 description: number;
                 name: number;

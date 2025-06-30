@@ -52,7 +52,19 @@ export class HierarchicalSimilarityService {
       }
     }
 
+    // Track pre-filtering effectiveness
+    const totalPossibleComparisons =
+      (allThemes.length * (allThemes.length - 1)) / 2;
+    const filteringReduction = (
+      ((totalPossibleComparisons - comparisons.length) /
+        totalPossibleComparisons) *
+      100
+    ).toFixed(1);
+
     logInfo(`Generated ${comparisons.length} cross-level comparisons`);
+    logInfo(
+      `Pre-filtering reduced comparisons by ${filteringReduction}% (${totalPossibleComparisons} → ${comparisons.length})`
+    );
 
     if (comparisons.length > 100) {
       logInfo(
@@ -243,23 +255,257 @@ export class HierarchicalSimilarityService {
     theme1: ConsolidatedTheme,
     theme2: ConsolidatedTheme
   ): boolean {
-    // Don't compare themes at the same level with the same parent
+    // Basic hierarchy rules
     if (theme1.level === theme2.level && theme1.parentId === theme2.parentId) {
       return false;
     }
 
-    // Don't compare parent-child relationships
     if (theme1.parentId === theme2.id || theme2.parentId === theme1.id) {
       return false;
     }
 
-    // Don't compare themes that are too far apart in the hierarchy
     const levelDifference = Math.abs(theme1.level - theme2.level);
     if (levelDifference > 1) {
       return false;
     }
 
+    // Intelligent pre-filtering optimizations (PRD: "Efficient cross-reference indexing")
+
+    // 1. File overlap check - skip if zero file overlap
+    const fileOverlap = this.calculateFileOverlap(theme1, theme2);
+    if (fileOverlap === 0) {
+      // Check name similarity as secondary filter
+      const nameSimilarity = this.calculateNameSimilarity(
+        theme1.name,
+        theme2.name
+      );
+      if (nameSimilarity < 0.3) {
+        // No file overlap AND very different names = very unlikely to be related
+        return false;
+      }
+    }
+
+    // 2. Business domain filtering - skip if clearly different domains
+    if (this.areDifferentBusinessDomains(theme1, theme2)) {
+      return false;
+    }
+
+    // 3. Size mismatch filtering - skip if one is much larger than the other
+    if (this.hasSevereSizeMismatch(theme1, theme2)) {
+      return false;
+    }
+
+    // 4. Type mismatch filtering - skip incompatible change types
+    if (this.hasIncompatibleChangeTypes(theme1, theme2)) {
+      return false;
+    }
+
     return true;
+  }
+
+  /**
+   * Calculate file overlap between two themes
+   * Returns ratio 0.0-1.0 of overlapping files
+   */
+  private calculateFileOverlap(
+    theme1: ConsolidatedTheme,
+    theme2: ConsolidatedTheme
+  ): number {
+    const files1 = new Set(theme1.affectedFiles || []);
+    const files2 = new Set(theme2.affectedFiles || []);
+
+    if (files1.size === 0 || files2.size === 0) {
+      return 0;
+    }
+
+    const intersection = new Set([...files1].filter((x) => files2.has(x)));
+    const union = new Set([...files1, ...files2]);
+
+    return intersection.size / union.size;
+  }
+
+  /**
+   * Calculate name similarity using simple token matching
+   * Returns ratio 0.0-1.0 of similarity
+   */
+  private calculateNameSimilarity(name1: string, name2: string): number {
+    const tokens1 = new Set(name1.toLowerCase().split(/\s+/));
+    const tokens2 = new Set(name2.toLowerCase().split(/\s+/));
+
+    const intersection = new Set([...tokens1].filter((x) => tokens2.has(x)));
+    const union = new Set([...tokens1, ...tokens2]);
+
+    return union.size > 0 ? intersection.size / union.size : 0;
+  }
+
+  /**
+   * Check if themes belong to clearly different business domains
+   * Uses heuristic domain detection from descriptions
+   */
+  private areDifferentBusinessDomains(
+    theme1: ConsolidatedTheme,
+    theme2: ConsolidatedTheme
+  ): boolean {
+    const domain1 = this.inferBusinessDomain(theme1);
+    const domain2 = this.inferBusinessDomain(theme2);
+
+    // Known incompatible domain pairs
+    const incompatiblePairs = [
+      ['ui', 'api'],
+      ['auth', 'docs'],
+      ['test', 'feature'],
+      ['config', 'logic'],
+    ];
+
+    for (const [d1, d2] of incompatiblePairs) {
+      if (
+        (domain1 === d1 && domain2 === d2) ||
+        (domain1 === d2 && domain2 === d1)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Simple domain inference from theme content
+   */
+  private inferBusinessDomain(theme: ConsolidatedTheme): string {
+    const text = `${theme.name} ${theme.description}`.toLowerCase();
+
+    if (
+      text.includes('ui') ||
+      text.includes('interface') ||
+      text.includes('component')
+    ) {
+      return 'ui';
+    }
+    if (
+      text.includes('api') ||
+      text.includes('endpoint') ||
+      text.includes('service')
+    ) {
+      return 'api';
+    }
+    if (
+      text.includes('auth') ||
+      text.includes('login') ||
+      text.includes('security')
+    ) {
+      return 'auth';
+    }
+    if (
+      text.includes('test') ||
+      text.includes('spec') ||
+      text.includes('mock')
+    ) {
+      return 'test';
+    }
+    if (
+      text.includes('config') ||
+      text.includes('setting') ||
+      text.includes('env')
+    ) {
+      return 'config';
+    }
+    if (
+      text.includes('doc') ||
+      text.includes('readme') ||
+      text.includes('comment')
+    ) {
+      return 'docs';
+    }
+
+    return 'general';
+  }
+
+  /**
+   * Check if themes have severe size mismatch (one much larger than other)
+   */
+  private hasSevereSizeMismatch(
+    theme1: ConsolidatedTheme,
+    theme2: ConsolidatedTheme
+  ): boolean {
+    const size1 =
+      (theme1.affectedFiles?.length || 0) +
+      (theme1.codeMetrics?.linesAdded || 0);
+    const size2 =
+      (theme2.affectedFiles?.length || 0) +
+      (theme2.codeMetrics?.linesAdded || 0);
+
+    if (size1 === 0 || size2 === 0) {
+      return false; // Can't judge size mismatch
+    }
+
+    const ratio = Math.max(size1, size2) / Math.min(size1, size2);
+    return ratio > 10; // One is 10x larger than the other
+  }
+
+  /**
+   * Check if themes have incompatible change types
+   */
+  private hasIncompatibleChangeTypes(
+    theme1: ConsolidatedTheme,
+    theme2: ConsolidatedTheme
+  ): boolean {
+    // Extract change type indicators from descriptions
+    const type1 = this.inferChangeType(theme1);
+    const type2 = this.inferChangeType(theme2);
+
+    // Incompatible type pairs
+    const incompatibleTypes = [
+      ['add', 'remove'],
+      ['create', 'delete'],
+      ['new', 'fix'],
+    ];
+
+    for (const [t1, t2] of incompatibleTypes) {
+      if ((type1 === t1 && type2 === t2) || (type1 === t2 && type2 === t1)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Simple change type inference
+   */
+  private inferChangeType(theme: ConsolidatedTheme): string {
+    const text = `${theme.name} ${theme.description}`.toLowerCase();
+
+    if (
+      text.includes('add') ||
+      text.includes('create') ||
+      text.includes('new')
+    ) {
+      return 'add';
+    }
+    if (
+      text.includes('remove') ||
+      text.includes('delete') ||
+      text.includes('drop')
+    ) {
+      return 'remove';
+    }
+    if (
+      text.includes('fix') ||
+      text.includes('bug') ||
+      text.includes('error')
+    ) {
+      return 'fix';
+    }
+    if (
+      text.includes('update') ||
+      text.includes('modify') ||
+      text.includes('change')
+    ) {
+      return 'update';
+    }
+
+    return 'general';
   }
 
   private async analyzeCrossLevelSimilarityPair(

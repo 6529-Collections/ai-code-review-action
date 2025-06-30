@@ -4,6 +4,7 @@ import {
   ConsolidatedTheme,
   ConsolidationConfig,
   ThemePair,
+  AISimilarityResult,
 } from '../types/similarity-types';
 import { SimilarityCache } from './similarity-cache';
 import { SimilarityCalculator } from '../utils/similarity-calculator';
@@ -205,32 +206,39 @@ export class ThemeSimilarityService {
   ): Promise<Map<string, SimilarityMetrics>> {
     const similarities = new Map<string, SimilarityMetrics>();
 
+    // Use batch AI processing for significant performance improvement
     console.log(
-      `[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of 10`
+      `[SIMILARITY-BATCH] Processing ${pairs.length} pairs with batch AI calls`
     );
 
-    // Process all pairs concurrently with controlled parallelism
+    // Split into batches for optimal processing
+    const batchSize = this.calculateOptimalBatchSize(pairs.length);
+    const batches = this.createPairBatches(pairs, batchSize);
+
+    console.log(
+      `[SIMILARITY-BATCH] Split into ${batches.length} batches of ~${batchSize} pairs each`
+    );
+
+    // Process batches concurrently
     const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      pairs,
-      async (pair) => {
-        const similarity = await this.calculateSimilarity(
-          pair.theme1,
-          pair.theme2
-        );
-        return { id: pair.id, similarity };
+      batches,
+      async (batch) => {
+        return await this.processSimilarityBatch(batch);
       },
       {
-        concurrencyLimit: 5,
-        maxRetries: 3,
+        concurrencyLimit: 3, // Fewer concurrent batches since each is larger
+        maxRetries: 2,
         enableLogging: true,
         onProgress: (completed, total) => {
+          const pairsCompleted = completed * batchSize;
+          const totalPairs = pairs.length;
           console.log(
-            `[SIMILARITY] Progress: ${completed}/${total} pairs processed`
+            `[SIMILARITY-BATCH] Progress: ${pairsCompleted}/${totalPairs} pairs processed (${completed}/${total} batches)`
           );
         },
-        onError: (error, pair, retryCount) => {
+        onError: (error, batch, retryCount) => {
           console.warn(
-            `[SIMILARITY] Retry ${retryCount} for pair ${pair.id}: ${error.message}`
+            `[SIMILARITY-BATCH] Retry ${retryCount} for batch of ${batch.length} pairs: ${error.message}`
           );
         },
       }
@@ -243,18 +251,15 @@ export class ThemeSimilarityService {
     for (const result of results) {
       if (result && typeof result === 'object' && 'error' in result) {
         failedCount++;
-        // Use non-match result for failed comparisons
-        similarities.set(result.item.id, {
-          combinedScore: 0,
-          nameScore: 0,
-          descriptionScore: 0,
-          fileOverlap: 0,
-          patternScore: 0,
-          businessScore: 0,
-        });
+        // For failed batches, we can't process individual pairs, so skip them
+        console.warn(`[SIMILARITY-BATCH] Batch failed: ${result.error}`);
       } else {
         successCount++;
-        similarities.set(result.id, result.similarity);
+        // result is a Map<string, SimilarityMetrics> from processSimilarityBatch
+        const batchResultMap = result as Map<string, SimilarityMetrics>;
+        for (const [pairId, similarity] of batchResultMap) {
+          similarities.set(pairId, similarity);
+        }
       }
     }
 
@@ -488,6 +493,216 @@ export class ThemeSimilarityService {
           : undefined,
       codeExamples:
         allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
+    };
+  }
+
+  /**
+   * Calculate optimal batch size based on total pairs and complexity
+   * PRD: "Dynamic batch sizing" - adapt to content complexity
+   */
+  private calculateOptimalBatchSize(totalPairs: number): number {
+    // Dynamic batch sizing based on total pairs and estimated complexity
+    if (totalPairs <= 10) return Math.max(1, totalPairs); // Small PRs - process all at once
+    if (totalPairs <= 50) return 25; // Medium PRs - moderate batching
+    if (totalPairs <= 200) return 50; // Large PRs - larger batches for efficiency
+    return 75; // Very large PRs - maximum batch size for token limits
+  }
+
+  /**
+   * Split pairs into optimally-sized batches for AI processing
+   */
+  private createPairBatches(
+    pairs: ThemePair[],
+    batchSize: number
+  ): ThemePair[][] {
+    const batches: ThemePair[][] = [];
+    for (let i = 0; i < pairs.length; i += batchSize) {
+      batches.push(pairs.slice(i, i + batchSize));
+    }
+    return batches;
+  }
+
+  /**
+   * Process a batch of theme pairs with a single AI call
+   * This is the key optimization - multiple pairs analyzed in one API call
+   */
+  private async processSimilarityBatch(
+    pairs: ThemePair[]
+  ): Promise<Map<string, SimilarityMetrics>> {
+    const batchResults = new Map<string, SimilarityMetrics>();
+
+    // Build batch prompt for multiple pair analysis
+    const batchPrompt = this.buildBatchSimilarityPrompt(pairs);
+
+    try {
+      // Single AI call for entire batch
+      const response = await this.aiSimilarityService.calculateBatchSimilarity(
+        batchPrompt,
+        pairs.length
+      );
+
+      // Parse batch response into individual similarity metrics
+      this.parseBatchSimilarityResponse(response, pairs, batchResults);
+
+      console.log(
+        `[SIMILARITY-BATCH] Successfully processed batch of ${pairs.length} pairs`
+      );
+    } catch (error) {
+      console.warn(
+        `[SIMILARITY-BATCH] Batch processing failed for ${pairs.length} pairs, falling back to individual processing: ${error}`
+      );
+
+      // Fallback to individual processing if batch fails
+      await this.processBatchIndividually(pairs, batchResults);
+    }
+
+    return batchResults;
+  }
+
+  /**
+   * Build optimized prompt for batch similarity analysis
+   * PRD: "Structured prompts with clear sections"
+   */
+  private buildBatchSimilarityPrompt(pairs: ThemePair[]): string {
+    const pairDescriptions = pairs
+      .map((pair, index) => {
+        return `Pair ${index + 1}:
+Theme A: "${pair.theme1.name}" - ${pair.theme1.description}
+Theme B: "${pair.theme2.name}" - ${pair.theme2.description}
+Files A: ${pair.theme1.affectedFiles?.join(', ') || 'none'}
+Files B: ${pair.theme2.affectedFiles?.join(', ') || 'none'}`;
+      })
+      .join('\n\n');
+
+    return `You are analyzing theme similarity for code review mindmap organization.
+
+Analyze similarity between these ${pairs.length} theme pairs:
+
+${pairDescriptions}
+
+For each pair, consider:
+- Business logic overlap (most important)
+- Affected file overlap
+- Functional relationship
+- User impact similarity
+
+Respond with ONLY valid JSON:
+{
+  "results": [
+    {
+      "pairIndex": 1,
+      "shouldMerge": boolean,
+      "combinedScore": 0.0-1.0,
+      "nameScore": 0.0-1.0,
+      "descriptionScore": 0.0-1.0,
+      "businessScore": 0.0-1.0,
+      "reasoning": "max 20 words"
+    }
+  ]
+}
+
+Threshold: >0.7 for merge recommendation.
+Be conservative - only merge when themes serve the same business purpose.`;
+  }
+
+  /**
+   * Parse batch AI response into individual similarity metrics
+   */
+  private parseBatchSimilarityResponse(
+    response: { results: unknown[] },
+    pairs: ThemePair[],
+    results: Map<string, SimilarityMetrics>
+  ): void {
+    try {
+      const batchData =
+        typeof response === 'string' ? JSON.parse(response) : response;
+
+      if (!batchData.results || !Array.isArray(batchData.results)) {
+        throw new Error('Invalid batch response format');
+      }
+
+      for (const result of batchData.results) {
+        const pairIndex = result.pairIndex - 1; // Convert to 0-based
+        if (pairIndex >= 0 && pairIndex < pairs.length) {
+          const pair = pairs[pairIndex];
+          const similarity: SimilarityMetrics = {
+            combinedScore: Math.max(0, Math.min(1, result.combinedScore || 0)),
+            nameScore: Math.max(0, Math.min(1, result.nameScore || 0)),
+            descriptionScore: Math.max(
+              0,
+              Math.min(1, result.descriptionScore || 0)
+            ),
+            businessScore: Math.max(0, Math.min(1, result.businessScore || 0)),
+            fileOverlap: Math.max(0, Math.min(1, result.fileOverlap || 0)),
+            patternScore: Math.max(0, Math.min(1, result.patternScore || 0)),
+          };
+
+          results.set(pair.id, similarity);
+        }
+      }
+
+      console.log(
+        `[SIMILARITY-BATCH] Parsed ${results.size}/${pairs.length} similarity results from batch`
+      );
+    } catch (error) {
+      console.warn(
+        `[SIMILARITY-BATCH] Failed to parse batch response: ${error}`
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Fallback to individual processing if batch fails
+   */
+  private async processBatchIndividually(
+    pairs: ThemePair[],
+    results: Map<string, SimilarityMetrics>
+  ): Promise<void> {
+    console.log(
+      `[SIMILARITY-FALLBACK] Processing ${pairs.length} pairs individually`
+    );
+
+    for (const pair of pairs) {
+      try {
+        const similarity = await this.calculateSimilarity(
+          pair.theme1,
+          pair.theme2
+        );
+        results.set(pair.id, similarity);
+      } catch (error) {
+        console.warn(
+          `[SIMILARITY-FALLBACK] Failed individual processing for ${pair.id}: ${error}`
+        );
+        // Set default non-match result
+        results.set(pair.id, {
+          combinedScore: 0,
+          nameScore: 0,
+          descriptionScore: 0,
+          businessScore: 0,
+          fileOverlap: 0,
+          patternScore: 0,
+        });
+      }
+    }
+  }
+
+  /**
+   * Convert AI similarity result to SimilarityMetrics
+   */
+  private convertAIResultToMetrics(
+    aiResult: AISimilarityResult
+  ): SimilarityMetrics {
+    return {
+      combinedScore: Math.max(0, Math.min(1, aiResult.semanticScore || 0)),
+      nameScore: Math.max(0, Math.min(1, aiResult.nameScore || 0)),
+      descriptionScore: Math.max(
+        0,
+        Math.min(1, aiResult.descriptionScore || 0)
+      ),
+      businessScore: Math.max(0, Math.min(1, aiResult.businessScore || 0)),
+      fileOverlap: 0, // Not available in AI result, would need separate calculation
+      patternScore: Math.max(0, Math.min(1, aiResult.patternScore || 0)),
     };
   }
 }

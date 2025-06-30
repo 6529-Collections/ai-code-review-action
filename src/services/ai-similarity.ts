@@ -219,4 +219,75 @@ CRITICAL: Respond with ONLY valid JSON.
       businessScore: 0,
     };
   }
+
+  /**
+   * Calculate similarity for multiple theme pairs in a single AI call
+   * This is the key performance optimization method
+   */
+  async calculateBatchSimilarity(
+    batchPrompt: string,
+    expectedResults: number
+  ): Promise<{ results: unknown[] }> {
+    const { filePath: tempFile, cleanup } =
+      SecureFileNamer.createSecureTempFile(
+        'claude-batch-similarity',
+        batchPrompt
+      );
+
+    let output = '';
+    try {
+      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+        listeners: {
+          stdout: (data: Buffer) => {
+            output += data.toString();
+          },
+          stderr: (data: Buffer) => {
+            console.warn(`[AI-BATCH-SIMILARITY] stderr: ${data.toString()}`);
+          },
+        },
+      });
+
+      console.log(
+        `[AI-BATCH-SIMILARITY] Raw response length: ${output.length}`
+      );
+
+      // Extract and validate JSON response
+      const jsonResult = JsonExtractor.extractAndValidateJson(
+        output,
+        'object',
+        ['results']
+      );
+
+      if (!jsonResult.success) {
+        throw new Error(`JSON extraction failed: ${jsonResult.error}`);
+      }
+
+      const batchData = jsonResult.data as { results: unknown[] };
+
+      // Validate we got the expected number of results
+      if (!batchData.results || !Array.isArray(batchData.results)) {
+        throw new Error('Invalid batch response: missing results array');
+      }
+
+      if (batchData.results.length !== expectedResults) {
+        console.warn(
+          `[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`
+        );
+      }
+
+      console.log(
+        `[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`
+      );
+
+      return batchData;
+    } catch (error) {
+      console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
+      console.log(
+        `[AI-BATCH-SIMILARITY] Raw output: ${output.substring(0, 500)}...`
+      );
+      throw error;
+    } finally {
+      cleanup();
+    }
+  }
 }

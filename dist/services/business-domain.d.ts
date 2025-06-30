@@ -27,4 +27,22 @@ export declare class BusinessDomainService {
     private parseDomainExtractionResponse;
     private extractDomainFromResponse;
     private isValidDomainName;
+    /**
+     * Calculate optimal batch size for domain classification
+     * PRD: "Dynamic batch sizing" - adapt to content complexity
+     */
+    private calculateOptimalDomainBatchSize;
+    /**
+     * Split themes into optimally-sized batches for domain processing
+     */
+    private createDomainBatches;
+    /**
+     * Process a batch of themes for domain classification with a single AI call
+     * This is the key optimization - multiple themes analyzed in one API call
+     */
+    private processDomainBatch;
+    /**
+     * Fallback to individual domain processing if batch fails
+     */
+    private processDomainBatchIndividually;
 }
