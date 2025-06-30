@@ -37,7 +37,7 @@ export declare class AIExpansionDecisionService {
      */
     private formatHierarchyContext;
     /**
-     * Simple check for obviously atomic changes
+     * Simple check for obviously atomic changes - very conservative
      */
     private isObviouslyAtomic;
     /**

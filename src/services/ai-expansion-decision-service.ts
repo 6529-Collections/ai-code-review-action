@@ -97,18 +97,25 @@ ${codeContext}
 DECISION NEEDED:
 Should this theme be broken down into sub-themes?
 
-CONSIDER:
+CONSIDER (favor decomposition for complex changes):
 1. Does this theme contain multiple distinct concerns that could be understood separately?
 2. Would decomposition make the changes clearer and more reviewable?
 3. Are there natural boundaries in the code that suggest separate sub-themes?
-4. At this depth, what level of granularity is most helpful?
+4. Could different parts of this change be tested or implemented independently?
+5. Are there distinct code patterns, functions, or responsibilities being modified?
+
+DECOMPOSITION BENEFITS:
+- Better code review granularity
+- Clearer understanding of change impact  
+- Easier testing and validation
+- More precise change tracking
 
 ${
-  currentDepth >= 3
+  currentDepth >= 5
     ? `
 ATOMIC CHECK:
-If this represents a single, focused change (5-15 lines, one responsibility, one test), 
-mark it as atomic and don't expand further.`
+If this represents a single, focused change (under 10 lines, one specific responsibility), 
+consider marking it as atomic. However, even small changes can have multiple distinct aspects.`
     : ''
 }
 
@@ -134,22 +141,28 @@ RESPOND WITH JSON:
   private getLevelSpecificGuidance(depth: number): string {
     if (depth === 0) {
       return `LEVEL GUIDANCE (Root Level):
-- Focus on high-level business capabilities and user-facing features
-- Each theme should represent a complete user story or business value
-- Don't decompose into technical implementation details yet
-- Think: "What would I tell a product manager about this change?"`;
+- Focus on major themes and capabilities this change introduces
+- Look for distinct functional areas that could be understood separately
+- Consider both business impact and technical architecture changes
+- Think: "What are the main areas this change affects?"`;
     } else if (depth <= 2) {
       return `LEVEL GUIDANCE (Intermediate Level ${depth}):
-- Balance business functionality with technical organization  
-- Start identifying major technical components within business features
-- Group related changes that would be reviewed together
-- Think: "What would I tell a tech lead about this change?"`;
-    } else {
+- Break down themes into more specific functional components
+- Identify distinct responsibilities within larger themes
+- Look for changes that address different concerns or requirements
+- Think: "What specific capabilities or fixes does this theme provide?"`;
+    } else if (depth <= 4) {
       return `LEVEL GUIDANCE (Deep Level ${depth}):
-- Focus on atomic, unit-testable changes
-- Each theme should be a single responsibility
-- Look for changes that could have one focused test
-- Think: "What would I tell a developer implementing this specific piece?"`;
+- Focus on specific implementation concerns within broader themes
+- Look for changes that could be tested or reviewed independently
+- Identify distinct code patterns or architectural elements
+- Think: "What specific code changes accomplish this goal?"`;
+    } else {
+      return `LEVEL GUIDANCE (Atomic Level ${depth}):
+- Focus on individual, unit-testable changes
+- Each theme should represent a single, focused modification
+- Look for changes that accomplish one specific purpose
+- Think: "What is the smallest meaningful unit of this change?"`;
     }
   }
 
@@ -246,13 +259,17 @@ Ensure suggested sub-themes don't duplicate these existing themes.\n\n`;
   }
 
   /**
-   * Simple check for obviously atomic changes
+   * Simple check for obviously atomic changes - very conservative
    */
   private isObviouslyAtomic(theme: ConsolidatedTheme): boolean {
-    // Single file with minimal changes
+    // Only consider truly trivial changes as obviously atomic
+    // Let AI decide for most cases to enable natural decomposition
     if (theme.affectedFiles.length === 1) {
       const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-      return totalLines < 15;
+      // Much more permissive - only stop expansion for tiny changes
+      return (
+        totalLines < 5 && !theme.description.toLowerCase().includes('refactor')
+      );
     }
     return false;
   }
