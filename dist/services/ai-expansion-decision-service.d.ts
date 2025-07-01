@@ -38,6 +38,9 @@ export interface ExpansionDecision {
     shouldExpand: boolean;
     isAtomic: boolean;
     reasoning: string;
+    businessContext: string;
+    technicalContext: string;
+    testabilityAssessment: string;
     suggestedSubThemes: Array<{
         name: string;
         description: string;
