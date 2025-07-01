@@ -35,7 +35,8 @@ export class DynamicPromptBuilder {
     const examplesSection = this.buildExamplesSection(codeAnalysis);
     const decisionSection = this.buildDecisionSection(
       currentDepth,
-      codeAnalysis
+      codeAnalysis,
+      theme
     );
 
     return `${contextSection}
@@ -171,72 +172,57 @@ Why this worked: ${example.reasoning}`;
    */
   private buildDecisionSection(
     currentDepth: number,
-    codeAnalysis: CodeStructureAnalysis
+    codeAnalysis: CodeStructureAnalysis,
+    theme: ConsolidatedTheme
   ): string {
     const questions = this.generateDecisionQuestions(
       currentDepth,
       codeAnalysis
     );
 
-    let section = `EXPANSION ANALYSIS:
-Default action: EXPAND this theme into sub-themes
+    let section = `You are building a hierarchical mindmap per PRD requirements.
+Goal: Natural depth (2-30 levels) based on code complexity.
 
-To STOP expansion, you must prove ALL of these:
-1. Single testable unit - Could have exactly ONE unit test
-2. Indivisible operation - Cannot split without losing meaning
-3. Atomic responsibility - Does exactly one thing
-4. No mixed concerns - No "AND" in the description
+CURRENT THEME: "${theme.name}"
+Current depth: ${currentDepth} (no limits - let complexity guide)
+Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.join('\n').split('\n').length} lines
 
-If ANY condition fails → MUST EXPAND
+EXPANSION DECISION FRAMEWORK (from PRD):
 
-ATOMIC VALIDATION CHECKLIST:
-□ Size: 5-15 lines of functional change
-□ Single unit test possible
-□ One assertion per test
-□ No conditional branches (if/else = 2 concerns)
-□ Single function/method modification
-□ One clear purpose (SRP)
-□ Would be one git commit
-□ No "and" in description
+Create child nodes when:
+1. Multiple concerns present
+2. Not independently testable at this level
+3. Too complex for atomic understanding
+4. Mixed audiences (technical vs business)
 
-Atomic Score = (criteria met / 8)
-- Score < 0.7 → MUST expand
-- Score 0.7-0.9 → Consider expansion
-- Score > 0.9 → May be atomic
+Stop expansion only when ALL true:
+1. Atomic: 5-15 lines of focused change
+2. Unit-testable as-is
+3. Single responsibility
+4. Natural code boundary
 
 CONSIDER THESE QUESTIONS:
-${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
-
-EXPANSION BENEFITS:
-- More granular code review and understanding
-- Better change tracking and impact analysis
-- Clearer separation of concerns
-- Easier testing and validation
-
-When shouldExpand is false, you MUST:
-- Explain which atomic criteria are met
-- Confirm no further decomposition possible
-- Verify single test coverage
-- Provide atomic score`;
+${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
 
     section += `
 
-RESPOND WITH JSON:
+RESPOND WITH PRD-COMPLIANT JSON:
 {
   "shouldExpand": boolean,
-  "isAtomic": boolean,
-  "reasoning": "Clear explanation why (max 50 words)",
-  "atomicScore": 0.0-1.0,
-  "atomicCriteriaMet": ["list criteria met if not expanding"],
-  "potentialSubThemes": ["even if not expanding, what COULD be split"],
+  "reasoning": "why (max 30 words)",
+  "businessContext": "user value (max 20 words)",
+  "technicalContext": "what it does (max 20 words)",
+  "testabilityAssessment": "how to test (max 15 words)",
   "suggestedSubThemes": [
     {
-      "name": "What this accomplishes (max 10 words)",
-      "description": "What changes (max 20 words)",
-      "files": ["relevant", "files"],
-      "rationale": "Why this is a separate concern (max 15 words)"
+      "name": "Clear title (max 8 words)",
+      "description": "1-3 sentences",
+      "businessContext": "Why this matters",
+      "technicalContext": "What this does",
+      "estimatedLines": number,
+      "rationale": "Why separate concern"
     }
-  ] or null if shouldExpand is false
+  ] or null
 }`;
 
     return section;

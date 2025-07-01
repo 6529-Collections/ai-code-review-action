@@ -45,6 +45,9 @@ export class AIExpansionDecisionService {
         shouldExpand: false,
         isAtomic: true,
         reasoning: 'Trivial change with minimal complexity',
+        businessContext: 'Minor update',
+        technicalContext: 'Small code change',
+        testabilityAssessment: 'Single assertion test',
         suggestedSubThemes: null,
       };
       this.decisionCache.set(cacheKey, decision);
@@ -123,18 +126,27 @@ export class AIExpansionDecisionService {
           shouldExpand?: boolean;
           isAtomic?: boolean;
           reasoning?: string;
+          businessContext?: string;
+          technicalContext?: string;
+          testabilityAssessment?: string;
           suggestedSubThemes?: Array<{
             name: string;
             description: string;
             files: string[];
             rationale: string;
+            businessContext?: string;
+            technicalContext?: string;
+            estimatedLines?: number;
           }>;
         };
 
         return {
-          shouldExpand: data.shouldExpand ?? false,
+          shouldExpand: data.shouldExpand ?? true, // PRD: Default to expand
           isAtomic: data.isAtomic ?? false,
           reasoning: data.reasoning ?? 'No reasoning provided',
+          businessContext: data.businessContext ?? '',
+          technicalContext: data.technicalContext ?? '',
+          testabilityAssessment: data.testabilityAssessment ?? '',
           suggestedSubThemes: data.suggestedSubThemes || null,
         };
       }
@@ -144,17 +156,23 @@ export class AIExpansionDecisionService {
         `Failed to parse AI expansion decision: ${extractionResult.error}`
       );
       return {
-        shouldExpand: false,
+        shouldExpand: true, // PRD: Default to expand on error
         isAtomic: false,
         reasoning: 'Failed to parse AI response',
+        businessContext: '',
+        technicalContext: '',
+        testabilityAssessment: '',
         suggestedSubThemes: null,
       };
     } catch (error) {
       logInfo(`AI expansion decision failed: ${error}`);
       return {
-        shouldExpand: false,
+        shouldExpand: true, // PRD: Default to expand on error
         isAtomic: false,
         reasoning: `AI analysis failed: ${error}`,
+        businessContext: '',
+        technicalContext: '',
+        testabilityAssessment: '',
         suggestedSubThemes: null,
       };
     }
@@ -175,6 +193,9 @@ export interface ExpansionDecision {
   shouldExpand: boolean;
   isAtomic: boolean;
   reasoning: string;
+  businessContext: string;
+  technicalContext: string;
+  testabilityAssessment: string;
   suggestedSubThemes: Array<{
     name: string;
     description: string;

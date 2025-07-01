@@ -333,32 +333,46 @@ export class CodeStructureAnalyzer {
       );
     }
 
-    // Add atomic criteria-based hints
+    // PRD-aligned testability and atomicity hints
     const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+
+    // PRD: "5-15 lines of focused change"
     if (totalLines > 15) {
       hints.push(
-        `Change exceeds atomic size (${totalLines} lines > 15) - consider splitting into smaller, testable units`
+        `Exceeds PRD atomic size (${totalLines} > 15 lines) - split into smaller, testable units`
       );
     }
 
+    // PRD: "Changes aren't independently testable" → expand
     if (analysis.functionCount > 1) {
       hints.push(
-        `Multiple functions modified (${analysis.functionCount}) - consider splitting by function`
+        `Multiple functions modified (${analysis.functionCount}) - separate for independent testing`
       );
     }
 
+    // PRD: "Multiple concerns" → create child nodes
     if (
       analysis.complexityIndicators.hasConditionals &&
       analysis.complexityIndicators.branchingFactor > 1
     ) {
       hints.push(
-        `Conditional branches detected (${analysis.complexityIndicators.branchingFactor} branches) - each branch could be a separate concern`
+        `Multiple test scenarios (${analysis.complexityIndicators.branchingFactor} branches) - split by test case`
+      );
+    }
+
+    // PRD: Mixed dependencies and logic should be separated
+    if (
+      analysis.complexityIndicators.hasAsyncOperations &&
+      analysis.functionCount > 1
+    ) {
+      hints.push(
+        'Mixed dependencies and logic - separate setup from behavior for testability'
       );
     }
 
     if (theme.description.toLowerCase().includes(' and ')) {
       hints.push(
-        'Description contains "and" - suggests multiple concerns that should be separated'
+        'Description contains "and" - multiple concerns should be separated per PRD'
       );
     }
 

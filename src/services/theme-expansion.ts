@@ -195,9 +195,12 @@ export class ThemeExpansionService {
     currentDepth: number,
     parentTheme?: ConsolidatedTheme
   ): Promise<ConsolidatedTheme> {
-    // Check depth limit
+    // PRD: No artificial limits - depth emerges from complexity
     if (currentDepth >= this.config.maxDepth) {
-      return theme;
+      logInfo(
+        `Deep expansion at level ${currentDepth} - complexity demands it`
+      );
+      // Still allow expansion, just log it
     }
 
     // Check if theme is candidate for expansion
@@ -356,14 +359,30 @@ export class ThemeExpansionService {
       siblingThemes
     );
 
-    // Update theme with decision metadata
+    // Update theme with PRD-aligned decision metadata
     theme.isAtomic = expansionDecision.isAtomic;
+
+    // Track expansion metrics for PRD analysis
+    const expansionMetrics = {
+      naturalDepth: currentDepth,
+      reason: 'complexity-driven',
+      atomicSize: theme.codeSnippets.join('\n').split('\n').length,
+      reasoning: expansionDecision.reasoning,
+    };
 
     // If theme is atomic or shouldn't expand, return null
     if (!expansionDecision.shouldExpand) {
       logInfo(
-        `Theme "${theme.name}" will not be expanded: ${expansionDecision.reasoning}`
+        `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`
       );
+
+      // Log PRD metrics
+      if (expansionMetrics.atomicSize > 15) {
+        logInfo(
+          `WARNING: Atomic theme exceeds PRD size (${expansionMetrics.atomicSize} > 15 lines)`
+        );
+      }
+
       return null;
     }
 

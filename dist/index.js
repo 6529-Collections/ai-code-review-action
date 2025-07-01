@@ -30414,6 +30414,9 @@ class AIExpansionDecisionService {
                 shouldExpand: false,
                 isAtomic: true,
                 reasoning: 'Trivial change with minimal complexity',
+                businessContext: 'Minor update',
+                technicalContext: 'Small code change',
+                testabilityAssessment: 'Single assertion test',
                 suggestedSubThemes: null,
             };
             this.decisionCache.set(cacheKey, decision);
@@ -30465,27 +30468,36 @@ class AIExpansionDecisionService {
             if (extractionResult.success) {
                 const data = extractionResult.data;
                 return {
-                    shouldExpand: data.shouldExpand ?? false,
+                    shouldExpand: data.shouldExpand ?? true, // PRD: Default to expand
                     isAtomic: data.isAtomic ?? false,
                     reasoning: data.reasoning ?? 'No reasoning provided',
+                    businessContext: data.businessContext ?? '',
+                    technicalContext: data.technicalContext ?? '',
+                    testabilityAssessment: data.testabilityAssessment ?? '',
                     suggestedSubThemes: data.suggestedSubThemes || null,
                 };
             }
             // Fallback on parsing error
             (0, utils_1.logInfo)(`Failed to parse AI expansion decision: ${extractionResult.error}`);
             return {
-                shouldExpand: false,
+                shouldExpand: true, // PRD: Default to expand on error
                 isAtomic: false,
                 reasoning: 'Failed to parse AI response',
+                businessContext: '',
+                technicalContext: '',
+                testabilityAssessment: '',
                 suggestedSubThemes: null,
             };
         }
         catch (error) {
             (0, utils_1.logInfo)(`AI expansion decision failed: ${error}`);
             return {
-                shouldExpand: false,
+                shouldExpand: true, // PRD: Default to expand on error
                 isAtomic: false,
                 reasoning: `AI analysis failed: ${error}`,
+                businessContext: '',
+                technicalContext: '',
+                testabilityAssessment: '',
                 suggestedSubThemes: null,
             };
         }
@@ -31687,19 +31699,28 @@ class CodeStructureAnalyzer {
         if (analysis.moduleCount > 3) {
             hints.push(`Multiple modules affected (${analysis.moduleCount}) - each module likely represents a distinct component or service`);
         }
-        // Add atomic criteria-based hints
+        // PRD-aligned testability and atomicity hints
         const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+        // PRD: "5-15 lines of focused change"
         if (totalLines > 15) {
-            hints.push(`Change exceeds atomic size (${totalLines} lines > 15) - consider splitting into smaller, testable units`);
+            hints.push(`Exceeds PRD atomic size (${totalLines} > 15 lines) - split into smaller, testable units`);
         }
+        // PRD: "Changes aren't independently testable" → expand
         if (analysis.functionCount > 1) {
-            hints.push(`Multiple functions modified (${analysis.functionCount}) - consider splitting by function`);
+            hints.push(`Multiple functions modified (${analysis.functionCount}) - separate for independent testing`);
         }
-        if (analysis.complexityIndicators.hasConditionals && analysis.complexityIndicators.branchingFactor > 1) {
-            hints.push(`Conditional branches detected (${analysis.complexityIndicators.branchingFactor} branches) - each branch could be a separate concern`);
+        // PRD: "Multiple concerns" → create child nodes
+        if (analysis.complexityIndicators.hasConditionals &&
+            analysis.complexityIndicators.branchingFactor > 1) {
+            hints.push(`Multiple test scenarios (${analysis.complexityIndicators.branchingFactor} branches) - split by test case`);
+        }
+        // PRD: Mixed dependencies and logic should be separated
+        if (analysis.complexityIndicators.hasAsyncOperations &&
+            analysis.functionCount > 1) {
+            hints.push('Mixed dependencies and logic - separate setup from behavior for testability');
         }
         if (theme.description.toLowerCase().includes(' and ')) {
-            hints.push('Description contains "and" - suggests multiple concerns that should be separated');
+            hints.push('Description contains "and" - multiple concerns should be separated per PRD');
         }
         // Add generic expansion encouragement if no specific hints
         if (hints.length === 0 &&
@@ -31737,7 +31758,7 @@ class DynamicPromptBuilder {
         const analysisSection = this.buildAnalysisSection(codeAnalysis);
         const guidanceSection = this.buildGuidanceSection(currentDepth, codeAnalysis);
         const examplesSection = this.buildExamplesSection(codeAnalysis);
-        const decisionSection = this.buildDecisionSection(currentDepth, codeAnalysis);
+        const decisionSection = this.buildDecisionSection(currentDepth, codeAnalysis, theme);
         return `${contextSection}
 
 ${analysisSection}
@@ -31843,66 +31864,50 @@ Why this worked: ${example.reasoning}`;
     /**
      * Build decision section with specific questions
      */
-    buildDecisionSection(currentDepth, codeAnalysis) {
+    buildDecisionSection(currentDepth, codeAnalysis, theme) {
         const questions = this.generateDecisionQuestions(currentDepth, codeAnalysis);
-        let section = `EXPANSION ANALYSIS:
-Default action: EXPAND this theme into sub-themes
+        let section = `You are building a hierarchical mindmap per PRD requirements.
+Goal: Natural depth (2-30 levels) based on code complexity.
 
-To STOP expansion, you must prove ALL of these:
-1. Single testable unit - Could have exactly ONE unit test
-2. Indivisible operation - Cannot split without losing meaning
-3. Atomic responsibility - Does exactly one thing
-4. No mixed concerns - No "AND" in the description
+CURRENT THEME: "${theme.name}"
+Current depth: ${currentDepth} (no limits - let complexity guide)
+Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.join('\n').split('\n').length} lines
 
-If ANY condition fails → MUST EXPAND
+EXPANSION DECISION FRAMEWORK (from PRD):
 
-ATOMIC VALIDATION CHECKLIST:
-□ Size: 5-15 lines of functional change
-□ Single unit test possible
-□ One assertion per test
-□ No conditional branches (if/else = 2 concerns)
-□ Single function/method modification
-□ One clear purpose (SRP)
-□ Would be one git commit
-□ No "and" in description
+Create child nodes when:
+1. Multiple concerns present
+2. Not independently testable at this level
+3. Too complex for atomic understanding
+4. Mixed audiences (technical vs business)
 
-Atomic Score = (criteria met / 8)
-- Score < 0.7 → MUST expand
-- Score 0.7-0.9 → Consider expansion
-- Score > 0.9 → May be atomic
+Stop expansion only when ALL true:
+1. Atomic: 5-15 lines of focused change
+2. Unit-testable as-is
+3. Single responsibility
+4. Natural code boundary
 
 CONSIDER THESE QUESTIONS:
-${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
-
-EXPANSION BENEFITS:
-- More granular code review and understanding
-- Better change tracking and impact analysis
-- Clearer separation of concerns
-- Easier testing and validation
-
-When shouldExpand is false, you MUST:
-- Explain which atomic criteria are met
-- Confirm no further decomposition possible
-- Verify single test coverage
-- Provide atomic score`;
+${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
         section += `
 
-RESPOND WITH JSON:
+RESPOND WITH PRD-COMPLIANT JSON:
 {
   "shouldExpand": boolean,
-  "isAtomic": boolean,
-  "reasoning": "Clear explanation why (max 50 words)",
-  "atomicScore": 0.0-1.0,
-  "atomicCriteriaMet": ["list criteria met if not expanding"],
-  "potentialSubThemes": ["even if not expanding, what COULD be split"],
+  "reasoning": "why (max 30 words)",
+  "businessContext": "user value (max 20 words)",
+  "technicalContext": "what it does (max 20 words)",
+  "testabilityAssessment": "how to test (max 15 words)",
   "suggestedSubThemes": [
     {
-      "name": "What this accomplishes (max 10 words)",
-      "description": "What changes (max 20 words)",
-      "files": ["relevant", "files"],
-      "rationale": "Why this is a separate concern (max 15 words)"
+      "name": "Clear title (max 8 words)",
+      "description": "1-3 sentences",
+      "businessContext": "Why this matters",
+      "technicalContext": "What this does",
+      "estimatedLines": number,
+      "rationale": "Why separate concern"
     }
-  ] or null if shouldExpand is false
+  ] or null
 }`;
         return section;
     }
@@ -33230,9 +33235,10 @@ class ThemeExpansionService {
      * Recursively expand a theme to maximum depth
      */
     async expandThemeRecursively(theme, currentDepth, parentTheme) {
-        // Check depth limit
+        // PRD: No artificial limits - depth emerges from complexity
         if (currentDepth >= this.config.maxDepth) {
-            return theme;
+            (0, utils_1.logInfo)(`Deep expansion at level ${currentDepth} - complexity demands it`);
+            // Still allow expansion, just log it
         }
         // Check if theme is candidate for expansion
         const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
@@ -33328,11 +33334,22 @@ class ThemeExpansionService {
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
         // Let AI decide based on full context
         const expansionDecision = await this.aiDecisionService.shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes);
-        // Update theme with decision metadata
+        // Update theme with PRD-aligned decision metadata
         theme.isAtomic = expansionDecision.isAtomic;
+        // Track expansion metrics for PRD analysis
+        const expansionMetrics = {
+            naturalDepth: currentDepth,
+            reason: 'complexity-driven',
+            atomicSize: theme.codeSnippets.join('\n').split('\n').length,
+            reasoning: expansionDecision.reasoning,
+        };
         // If theme is atomic or shouldn't expand, return null
         if (!expansionDecision.shouldExpand) {
-            (0, utils_1.logInfo)(`Theme "${theme.name}" will not be expanded: ${expansionDecision.reasoning}`);
+            (0, utils_1.logInfo)(`Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
+            // Log PRD metrics
+            if (expansionMetrics.atomicSize > 15) {
+                (0, utils_1.logInfo)(`WARNING: Atomic theme exceeds PRD size (${expansionMetrics.atomicSize} > 15 lines)`);
+            }
             return null;
         }
         // Return candidate for expansion
