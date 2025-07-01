@@ -6,7 +6,7 @@ export interface TimingEntry {
   endTime?: number;
   duration?: number;
   children: TimingEntry[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface AICallMetrics {
@@ -42,7 +42,12 @@ export interface StageMetrics {
 }
 
 export interface BottleneckWarning {
-  type: 'high_ai_latency' | 'low_batch_efficiency' | 'sequential_processing' | 'large_file_analysis' | 'unnecessary_work';
+  type:
+    | 'high_ai_latency'
+    | 'low_batch_efficiency'
+    | 'sequential_processing'
+    | 'large_file_analysis'
+    | 'unnecessary_work';
   description: string;
   currentValue: string;
   suggestion: string;
@@ -61,7 +66,10 @@ export interface EffectivenessMetrics {
 export class PerformanceTracker {
   private static instance: PerformanceTracker;
   private timingStack: TimingEntry[] = [];
-  private aiMetrics: Map<string, { calls: number; totalTime: number; times: number[]; operations: string[] }> = new Map();
+  private aiMetrics: Map<
+    string,
+    { calls: number; totalTime: number; times: number[]; operations: string[] }
+  > = new Map();
   private resourceMetrics: ResourceMetrics = {
     memoryStart: this.getMemoryUsage(),
     memoryPeak: this.getMemoryUsage(),
@@ -69,7 +77,7 @@ export class PerformanceTracker {
     tempFilesCreated: 0,
     tempFilesCleaned: 0,
     cacheHits: 0,
-    cacheMisses: 0
+    cacheMisses: 0,
   };
   private stages: TimingEntry[] = [];
   private bottlenecks: BottleneckWarning[] = [];
@@ -87,12 +95,12 @@ export class PerformanceTracker {
   /**
    * Start timing an operation
    */
-  startTiming(name: string, metadata?: Record<string, any>): void {
+  startTiming(name: string, metadata?: Record<string, unknown>): void {
     const entry: TimingEntry = {
       name,
       startTime: Date.now(),
       children: [],
-      metadata
+      metadata,
     };
 
     if (this.timingStack.length > 0) {
@@ -113,7 +121,10 @@ export class PerformanceTracker {
   endTiming(name: string): number {
     const entry = this.timingStack.pop();
     if (!entry || entry.name !== name) {
-      logger.warn('PERF', `Timing mismatch: expected ${name}, got ${entry?.name || 'none'}`);
+      logger.warn(
+        'PERF',
+        `Timing mismatch: expected ${name}, got ${entry?.name || 'none'}`
+      );
       return 0;
     }
 
@@ -122,28 +133,37 @@ export class PerformanceTracker {
 
     // Log completion with sub-stage breakdown
     if (entry.children.length > 0) {
-      logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s total)`);
-      
+      logger.info(
+        'PERF',
+        `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s total)`
+      );
+
       // Log sub-stages with bottleneck detection
       for (const child of entry.children) {
         const childDuration = child.duration || 0;
         const percentOfParent = (childDuration / entry.duration) * 100;
         const isBottleneck = percentOfParent > 70; // More than 70% of parent time
-        
+
         const bottleneckIcon = isBottleneck ? ' ⚠️' : '';
-        logger.info('PERF', `└─ ${child.name}: ${(childDuration / 1000).toFixed(1)}s (${percentOfParent.toFixed(0)}% of stage)${bottleneckIcon}`);
-        
+        logger.info(
+          'PERF',
+          `└─ ${child.name}: ${(childDuration / 1000).toFixed(1)}s (${percentOfParent.toFixed(0)}% of stage)${bottleneckIcon}`
+        );
+
         if (isBottleneck) {
           this.addBottleneck({
             type: 'sequential_processing',
             description: `${child.name} consuming ${percentOfParent.toFixed(0)}% of ${name}`,
             currentValue: `${(childDuration / 1000).toFixed(1)}s`,
-            suggestion: 'Consider parallelization or optimization'
+            suggestion: 'Consider parallelization or optimization',
           });
         }
       }
     } else {
-      logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s)`);
+      logger.info(
+        'PERF',
+        `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s)`
+      );
     }
 
     return entry.duration;
@@ -154,7 +174,12 @@ export class PerformanceTracker {
    */
   trackAICall(context: string, duration: number, operation?: string): void {
     if (!this.aiMetrics.has(context)) {
-      this.aiMetrics.set(context, { calls: 0, totalTime: 0, times: [], operations: [] });
+      this.aiMetrics.set(context, {
+        calls: 0,
+        totalTime: 0,
+        times: [],
+        operations: [],
+      });
     }
 
     const metrics = this.aiMetrics.get(context)!;
@@ -166,24 +191,33 @@ export class PerformanceTracker {
     }
 
     // Check for high latency
-    if (duration > 5000) { // 5+ seconds
+    if (duration > 5000) {
+      // 5+ seconds
       this.addBottleneck({
         type: 'high_ai_latency',
         description: `High AI latency in ${context}`,
         currentValue: `${(duration / 1000).toFixed(1)}s`,
         suggestion: 'Consider reducing prompt size or splitting into chunks',
-        estimatedSavings: `${((duration - 3000) / 1000).toFixed(1)}s per call`
+        estimatedSavings: `${((duration - 3000) / 1000).toFixed(1)}s per call`,
       });
     }
 
     // Update memory peak
-    this.resourceMetrics.memoryPeak = Math.max(this.resourceMetrics.memoryPeak, this.getMemoryUsage());
+    this.resourceMetrics.memoryPeak = Math.max(
+      this.resourceMetrics.memoryPeak,
+      this.getMemoryUsage()
+    );
   }
 
   /**
    * Track effectiveness of an operation
    */
-  trackEffectiveness(operation: string, input: number, output: number, timeSpent: number): void {
+  trackEffectiveness(
+    operation: string,
+    input: number,
+    output: number,
+    timeSpent: number
+  ): void {
     const reductionRate = input > 0 ? ((input - output) / input) * 100 : 0;
     const worthwhile = reductionRate > 10 || timeSpent < 5000; // Either good reduction or fast
 
@@ -193,16 +227,17 @@ export class PerformanceTracker {
       output,
       reductionRate,
       timeSpent,
-      worthwhile
+      worthwhile,
     });
 
-    if (!worthwhile && timeSpent > 10000) { // 10+ seconds for minimal benefit
+    if (!worthwhile && timeSpent > 10000) {
+      // 10+ seconds for minimal benefit
       this.addBottleneck({
         type: 'unnecessary_work',
         description: `${operation}: ${timeSpent / 1000}s for ${reductionRate.toFixed(1)}% improvement`,
         currentValue: `${reductionRate.toFixed(1)}% reduction`,
         suggestion: 'Consider skipping this step or optimizing thresholds',
-        estimatedSavings: `${(timeSpent / 1000).toFixed(1)}s`
+        estimatedSavings: `${(timeSpent / 1000).toFixed(1)}s`,
       });
     }
   }
@@ -238,20 +273,29 @@ export class PerformanceTracker {
    */
   generateReport(): void {
     this.resourceMetrics.memoryEnd = this.getMemoryUsage();
-    
+
     logger.info('PERFORMANCE', '📊 === PERFORMANCE ANALYSIS REPORT ===');
-    
+
     // Overall timing breakdown
-    const totalTime = this.stages.reduce((sum, stage) => sum + (stage.duration || 0), 0);
-    logger.info('PERFORMANCE', `Total execution time: ${(totalTime / 1000).toFixed(1)}s`);
-    
+    const totalTime = this.stages.reduce(
+      (sum, stage) => sum + (stage.duration || 0),
+      0
+    );
+    logger.info(
+      'PERFORMANCE',
+      `Total execution time: ${(totalTime / 1000).toFixed(1)}s`
+    );
+
     // Stage breakdown
     if (this.stages.length > 0) {
       logger.info('PERFORMANCE', '\n🎯 Stage Breakdown:');
       this.stages.forEach((stage, index) => {
         const duration = stage.duration || 0;
         const percent = totalTime > 0 ? (duration / totalTime) * 100 : 0;
-        logger.info('PERFORMANCE', `${index + 1}. ${stage.name}: ${(duration / 1000).toFixed(1)}s (${percent.toFixed(0)}%)`);
+        logger.info(
+          'PERFORMANCE',
+          `${index + 1}. ${stage.name}: ${(duration / 1000).toFixed(1)}s (${percent.toFixed(0)}%)`
+        );
       });
     }
 
@@ -262,16 +306,25 @@ export class PerformanceTracker {
         const avgTime = metrics.totalTime / metrics.calls;
         const maxTime = Math.max(...metrics.times);
         const minTime = Math.min(...metrics.times);
-        
+
         logger.info('PERFORMANCE', `${context}:`);
-        logger.info('PERFORMANCE', `├─ Calls: ${metrics.calls}, Total: ${(metrics.totalTime / 1000).toFixed(1)}s`);
-        logger.info('PERFORMANCE', `├─ Avg: ${(avgTime / 1000).toFixed(1)}s, Max: ${(maxTime / 1000).toFixed(1)}s, Min: ${(minTime / 1000).toFixed(1)}s`);
-        
+        logger.info(
+          'PERFORMANCE',
+          `├─ Calls: ${metrics.calls}, Total: ${(metrics.totalTime / 1000).toFixed(1)}s`
+        );
+        logger.info(
+          'PERFORMANCE',
+          `├─ Avg: ${(avgTime / 1000).toFixed(1)}s, Max: ${(maxTime / 1000).toFixed(1)}s, Min: ${(minTime / 1000).toFixed(1)}s`
+        );
+
         // Find slowest operation
         if (metrics.operations.length > 0) {
           const slowestIndex = metrics.times.indexOf(maxTime);
           if (slowestIndex >= 0 && metrics.operations[slowestIndex]) {
-            logger.info('PERFORMANCE', `└─ Slowest: ${metrics.operations[slowestIndex]} (${(maxTime / 1000).toFixed(1)}s)`);
+            logger.info(
+              'PERFORMANCE',
+              `└─ Slowest: ${metrics.operations[slowestIndex]} (${(maxTime / 1000).toFixed(1)}s)`
+            );
           }
         }
       }
@@ -279,52 +332,92 @@ export class PerformanceTracker {
 
     // Resource utilization
     logger.info('PERFORMANCE', '\n💾 Resource Utilization:');
-    logger.info('PERFORMANCE', `Memory: ${this.resourceMetrics.memoryStart}MB → ${this.resourceMetrics.memoryEnd}MB (peak: ${this.resourceMetrics.memoryPeak}MB)`);
-    
-    const tempFileLeaks = this.resourceMetrics.tempFilesCreated - this.resourceMetrics.tempFilesCleaned;
-    logger.info('PERFORMANCE', `Temp files: ${this.resourceMetrics.tempFilesCreated} created, ${this.resourceMetrics.tempFilesCleaned} cleaned${tempFileLeaks > 0 ? ` (${tempFileLeaks} leaked!)` : ''}`);
-    
-    const totalCacheOps = this.resourceMetrics.cacheHits + this.resourceMetrics.cacheMisses;
-    const cacheHitRate = totalCacheOps > 0 ? (this.resourceMetrics.cacheHits / totalCacheOps) * 100 : 0;
-    logger.info('PERFORMANCE', `Cache: ${this.resourceMetrics.cacheHits}/${totalCacheOps} hits (${cacheHitRate.toFixed(0)}% hit rate)`);
+    logger.info(
+      'PERFORMANCE',
+      `Memory: ${this.resourceMetrics.memoryStart}MB → ${this.resourceMetrics.memoryEnd}MB (peak: ${this.resourceMetrics.memoryPeak}MB)`
+    );
+
+    const tempFileLeaks =
+      this.resourceMetrics.tempFilesCreated -
+      this.resourceMetrics.tempFilesCleaned;
+    logger.info(
+      'PERFORMANCE',
+      `Temp files: ${this.resourceMetrics.tempFilesCreated} created, ${this.resourceMetrics.tempFilesCleaned} cleaned${tempFileLeaks > 0 ? ` (${tempFileLeaks} leaked!)` : ''}`
+    );
+
+    const totalCacheOps =
+      this.resourceMetrics.cacheHits + this.resourceMetrics.cacheMisses;
+    const cacheHitRate =
+      totalCacheOps > 0
+        ? (this.resourceMetrics.cacheHits / totalCacheOps) * 100
+        : 0;
+    logger.info(
+      'PERFORMANCE',
+      `Cache: ${this.resourceMetrics.cacheHits}/${totalCacheOps} hits (${cacheHitRate.toFixed(0)}% hit rate)`
+    );
 
     // Effectiveness tracking
     if (this.effectiveness.length > 0) {
       logger.info('PERFORMANCE', '\n📈 Effectiveness Analysis:');
-      this.effectiveness.forEach(eff => {
+      this.effectiveness.forEach((eff) => {
         const worthwhileIcon = eff.worthwhile ? '✅' : '⚠️';
-        logger.info('PERFORMANCE', `${worthwhileIcon} ${eff.operation}: ${eff.input}→${eff.output} (${eff.reductionRate.toFixed(1)}% reduction, ${(eff.timeSpent / 1000).toFixed(1)}s)`);
+        logger.info(
+          'PERFORMANCE',
+          `${worthwhileIcon} ${eff.operation}: ${eff.input}→${eff.output} (${eff.reductionRate.toFixed(1)}% reduction, ${(eff.timeSpent / 1000).toFixed(1)}s)`
+        );
       });
     }
 
     // Bottleneck warnings and suggestions
     if (this.bottlenecks.length > 0) {
-      logger.info('PERFORMANCE', '\n⚠️ Bottlenecks & Optimization Opportunities:');
+      logger.info(
+        'PERFORMANCE',
+        '\n⚠️ Bottlenecks & Optimization Opportunities:'
+      );
       this.bottlenecks.forEach((bottleneck, index) => {
         logger.info('PERFORMANCE', `${index + 1}. ${bottleneck.description}`);
         logger.info('PERFORMANCE', `   Current: ${bottleneck.currentValue}`);
         logger.info('PERFORMANCE', `   Suggestion: ${bottleneck.suggestion}`);
         if (bottleneck.estimatedSavings) {
-          logger.info('PERFORMANCE', `   Est. savings: ${bottleneck.estimatedSavings}`);
+          logger.info(
+            'PERFORMANCE',
+            `   Est. savings: ${bottleneck.estimatedSavings}`
+          );
         }
       });
     }
 
     // Final insights
-    const totalAICalls = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.calls, 0);
-    const totalAITime = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.totalTime, 0);
-    
+    const totalAICalls = Array.from(this.aiMetrics.values()).reduce(
+      (sum, m) => sum + m.calls,
+      0
+    );
+    const totalAITime = Array.from(this.aiMetrics.values()).reduce(
+      (sum, m) => sum + m.totalTime,
+      0
+    );
+
     logger.info('PERFORMANCE', '\n🎯 Key Insights:');
-    logger.info('PERFORMANCE', `• Total AI calls: ${totalAICalls} (${(totalAITime / 1000).toFixed(1)}s, ${((totalAITime / totalTime) * 100).toFixed(0)}% of total time)`);
-    
+    logger.info(
+      'PERFORMANCE',
+      `• Total AI calls: ${totalAICalls} (${(totalAITime / 1000).toFixed(1)}s, ${((totalAITime / totalTime) * 100).toFixed(0)}% of total time)`
+    );
+
     if (totalAICalls > 50) {
-      logger.warn('PERFORMANCE', `• High AI usage detected (${totalAICalls} calls) - consider batch optimization`);
+      logger.warn(
+        'PERFORMANCE',
+        `• High AI usage detected (${totalAICalls} calls) - consider batch optimization`
+      );
     }
-    
-    if (totalTime > 120000) { // 2+ minutes
-      logger.warn('PERFORMANCE', `• Long processing time (${(totalTime / 1000).toFixed(1)}s) - see bottleneck suggestions above`);
+
+    if (totalTime > 120000) {
+      // 2+ minutes
+      logger.warn(
+        'PERFORMANCE',
+        `• Long processing time (${(totalTime / 1000).toFixed(1)}s) - see bottleneck suggestions above`
+      );
     }
-    
+
     logger.info('PERFORMANCE', '📊 === END PERFORMANCE REPORT ===');
   }
 
@@ -344,7 +437,7 @@ export class PerformanceTracker {
       tempFilesCreated: 0,
       tempFilesCleaned: 0,
       cacheHits: 0,
-      cacheMisses: 0
+      cacheMisses: 0,
     };
   }
 

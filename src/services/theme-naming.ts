@@ -23,6 +23,7 @@ export class ThemeNamingService {
       let output = '';
       try {
         await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          silent: true,
           listeners: {
             stdout: (data: Buffer) => {
               output += data.toString();

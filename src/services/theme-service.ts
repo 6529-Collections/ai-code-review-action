@@ -163,6 +163,7 @@ class ClaudeService {
 
       try {
         await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          silent: true,
           listeners: {
             stdout: (data: Buffer) => {
               output += data.toString();
@@ -672,7 +673,7 @@ export class ThemeService {
         {
           concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
           maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-          enableLogging: true,
+          enableLogging: false,
           onProgress: (completed, total) => {
             console.log(
               `[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`
@@ -746,7 +747,7 @@ export class ThemeService {
       let consolidatedThemes = consolidatedThemesResult;
 
       const consolidationTime = Date.now() - consolidationStartTime;
-      
+
       // Track consolidation effectiveness
       performanceTracker.trackEffectiveness(
         'Theme Consolidation',
@@ -754,9 +755,9 @@ export class ThemeService {
         consolidatedThemes.length,
         consolidationTime
       );
-      
+
       performanceTracker.endTiming('Theme Consolidation');
-      
+
       console.log(
         `[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`
       );
@@ -792,11 +793,11 @@ export class ThemeService {
             console.log('[THEME-SERVICE] Running cross-level deduplication...');
             const beforeDedup = expandedThemes.length;
             const dedupStartTime = Date.now();
-            
+
             await this.hierarchicalSimilarityService.deduplicateHierarchy(
               expandedThemes
             );
-            
+
             // Track deduplication effectiveness
             performanceTracker.trackEffectiveness(
               'Cross-Level Deduplication',
@@ -804,7 +805,7 @@ export class ThemeService {
               expandedThemes.length,
               Date.now() - dedupStartTime
             );
-            
+
             performanceTracker.endTiming('Cross-Level Deduplication');
           } else {
             console.log(
@@ -1079,21 +1080,21 @@ export class ThemeService {
   /**
    * Get effectiveness metrics from similarity service
    */
-  getSimilarityEffectiveness() {
+  getSimilarityEffectiveness(): unknown {
     return this.similarityService.getEffectiveness();
   }
 
   /**
    * Get effectiveness metrics from expansion service
    */
-  getExpansionEffectiveness() {
+  getExpansionEffectiveness(): unknown {
     return this.expansionService.getEffectiveness();
   }
 
   /**
    * Get effectiveness metrics from hierarchical similarity service
    */
-  getHierarchicalEffectiveness() {
+  getHierarchicalEffectiveness(): unknown {
     return this.hierarchicalSimilarityService.getEffectiveness();
   }
 }
