@@ -21,7 +21,7 @@ export class AISimilarityService {
     const prompt = this.buildSimilarityPrompt(theme1, theme2);
 
     try {
-      const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis');
+      const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
       const result = this.parseAISimilarityResponse(output);
       
       logger.debug('AI-SIMILARITY', 
@@ -220,7 +220,7 @@ CRITICAL: Respond with ONLY valid JSON.
     expectedResults: number
   ): Promise<{ results: unknown[] }> {
     try {
-      const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity');
+      const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
 
       console.log(
         `[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`

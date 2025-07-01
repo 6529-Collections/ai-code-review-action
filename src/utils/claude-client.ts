@@ -1,5 +1,6 @@
 import * as exec from '@actions/exec';
 import { SecureFileNamer } from './secure-file-namer';
+import { performanceTracker } from './performance-tracker';
 
 /**
  * Performance tracking for AI calls
@@ -48,7 +49,7 @@ export class ClaudeClient {
     };
   }
 
-  async callClaude(prompt: string, context: string = 'unknown'): Promise<string> {
+  async callClaude(prompt: string, context: string = 'unknown', operation?: string): Promise<string> {
     const startTime = Date.now();
     this.metrics.totalCalls++;
     this.updateContextCounter(this.metrics.callsByContext, context);
@@ -60,6 +61,9 @@ export class ClaudeClient {
       // Track successful call metrics
       this.metrics.totalTime += duration;
       this.updateContextCounter(this.metrics.timeByContext, context, duration);
+      
+      // Track with performance tracker
+      performanceTracker.trackAICall(context, duration, operation);
       
       return result;
     } catch (error) {
@@ -80,6 +84,7 @@ export class ClaudeClient {
         prompt
       );
       tempFile = filePath;
+      performanceTracker.trackTempFile(true);
 
       let output = '';
       try {
@@ -94,6 +99,7 @@ export class ClaudeClient {
         return output.trim();
       } finally {
         cleanup(); // Use secure cleanup
+        performanceTracker.trackTempFile(false);
       }
     } catch (error) {
       throw new Error(`Claude API call failed: ${error}`);
