@@ -1034,4 +1034,25 @@ export class ThemeService {
       foundActions.length > 1 || hasConnectors || foundFileTypes.length > 1
     );
   }
+
+  /**
+   * Get effectiveness metrics from similarity service
+   */
+  getSimilarityEffectiveness() {
+    return this.similarityService.getEffectiveness();
+  }
+
+  /**
+   * Get effectiveness metrics from expansion service
+   */
+  getExpansionEffectiveness() {
+    return this.expansionService.getEffectiveness();
+  }
+
+  /**
+   * Get effectiveness metrics from hierarchical similarity service
+   */
+  getHierarchicalEffectiveness() {
+    return this.hierarchicalSimilarityService.getEffectiveness();
+  }
 }

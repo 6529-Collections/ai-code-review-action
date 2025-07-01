@@ -13,6 +13,18 @@ import { BatchProcessor } from './batch-processor';
 import { BusinessDomainService } from './business-domain';
 import { ThemeNamingService } from './theme-naming';
 import { ConcurrencyManager } from '../utils/concurrency-manager';
+import { logger } from '../utils/logger';
+
+/**
+ * Effectiveness tracking for similarity analysis
+ */
+export interface SimilarityEffectiveness {
+  pairsAnalyzed: number;
+  mergesDecided: number;
+  mergeRate: number;
+  processingTime: number;
+  aiCallsUsed: number;
+}
 
 export class ThemeSimilarityService {
   private config: ConsolidationConfig;
@@ -24,6 +36,13 @@ export class ThemeSimilarityService {
   private themeNamingService: ThemeNamingService;
   private pendingCalculations: Map<string, Promise<SimilarityMetrics>> =
     new Map();
+  private effectiveness: SimilarityEffectiveness = {
+    pairsAnalyzed: 0,
+    mergesDecided: 0,
+    mergeRate: 0,
+    processingTime: 0,
+    aiCallsUsed: 0
+  };
 
   constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>) {
     this.config = {
@@ -44,8 +63,8 @@ export class ThemeSimilarityService {
     this.businessDomainService = new BusinessDomainService(anthropicApiKey);
     this.themeNamingService = new ThemeNamingService();
 
-    console.log(
-      `[CONFIG] Consolidation config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`
+    logger.info('SIMILARITY', 
+      `Config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`
     );
   }
 
@@ -148,37 +167,65 @@ export class ThemeSimilarityService {
     console.log(`[CONSOLIDATION] Starting with ${themes.length} themes`);
     if (themes.length === 0) return [];
 
+    const startTime = Date.now();
+    const initialAICalls = this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls;
+
     // Step 1: Find merge candidates
-    console.log(`[CONSOLIDATION] Step 1: Finding merge candidates`);
+    logger.info('SIMILARITY', 'Step 1: Finding merge candidates');
     const mergeGroups = await this.findMergeGroups(themes);
-    console.log(`[CONSOLIDATION] Found ${mergeGroups.size} merge groups`);
+    logger.info('SIMILARITY', `Found ${mergeGroups.size} merge groups`);
 
     // Step 2: Create consolidated themes
-    console.log(`[CONSOLIDATION] Step 2: Creating consolidated themes`);
+    logger.info('SIMILARITY', 'Step 2: Creating consolidated themes');
     const consolidated = await this.createConsolidatedThemes(
       mergeGroups,
       themes
     );
-    console.log(
-      `[CONSOLIDATION] Created ${consolidated.length} consolidated themes`
-    );
+    logger.info('SIMILARITY', `Created ${consolidated.length} consolidated themes`);
 
     // Step 3: Build hierarchies
-    console.log(`[CONSOLIDATION] Step 3: Building hierarchies`);
+    logger.info('SIMILARITY', 'Step 3: Building hierarchies');
     const hierarchical = await this.buildHierarchies(consolidated);
-    console.log(
-      `[CONSOLIDATION] Final result: ${hierarchical.length} themes (${(((themes.length - hierarchical.length) / themes.length) * 100).toFixed(1)}% reduction)`
+    
+    // Update effectiveness metrics
+    this.effectiveness.processingTime = Date.now() - startTime;
+    this.effectiveness.aiCallsUsed = this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls - initialAICalls;
+    this.effectiveness.mergeRate = this.effectiveness.pairsAnalyzed > 0 
+      ? (this.effectiveness.mergesDecided / this.effectiveness.pairsAnalyzed) * 100 
+      : 0;
+    
+    const reductionPercent = ((themes.length - hierarchical.length) / themes.length * 100).toFixed(1);
+    logger.info('SIMILARITY', 
+      `Final result: ${hierarchical.length} themes (${reductionPercent}% reduction, ${this.effectiveness.mergeRate.toFixed(1)}% merge rate)`
     );
 
     return hierarchical;
   }
 
+  /**
+   * Get effectiveness metrics for this similarity analysis
+   */
+  getEffectiveness(): SimilarityEffectiveness {
+    return { ...this.effectiveness };
+  }
+
+  /**
+   * Reset effectiveness metrics
+   */
+  resetEffectiveness(): void {
+    this.effectiveness = {
+      pairsAnalyzed: 0,
+      mergesDecided: 0,
+      mergeRate: 0,
+      processingTime: 0,
+      aiCallsUsed: 0
+    };
+  }
+
   private async findMergeGroups(
     themes: Theme[]
   ): Promise<Map<string, string[]>> {
-    console.log(
-      `[OPTIMIZATION] Using batch processing for ${themes.length} themes`
-    );
+    logger.debug('SIMILARITY', `Using batch processing for ${themes.length} themes`);
 
     // Step 1: Collect all theme pairs that need comparison
     const allPairs: ThemePair[] = [];
@@ -192,7 +239,8 @@ export class ThemeSimilarityService {
       }
     }
 
-    console.log(`[OPTIMIZATION] Total pairs to analyze: ${allPairs.length}`);
+    this.effectiveness.pairsAnalyzed = allPairs.length;
+    logger.info('SIMILARITY', `Total pairs to analyze: ${allPairs.length}`);
 
     // Step 2: Calculate similarities using batch processing and early termination
     const similarities = await this.calculateBatchSimilarities(allPairs);

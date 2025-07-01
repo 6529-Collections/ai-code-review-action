@@ -8,6 +8,19 @@ import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
 import { logInfo } from '../utils';
 import { ConcurrencyManager } from '../utils/concurrency-manager';
+import { logger } from '../utils/logger';
+
+/**
+ * Effectiveness tracking for hierarchical similarity analysis
+ */
+export interface HierarchicalEffectiveness {
+  crossLevelComparisonsGenerated: number;
+  duplicatesFound: number;
+  overlapsResolved: number;
+  processingTime: number;
+  aiCallsUsed: number;
+  filteringReduction: number;
+}
 
 /**
  * Enhanced similarity service for multi-level theme hierarchies
@@ -16,6 +29,14 @@ import { ConcurrencyManager } from '../utils/concurrency-manager';
 export class HierarchicalSimilarityService {
   private claudeClient: ClaudeClient;
   private cache: GenericCache;
+  private effectiveness: HierarchicalEffectiveness = {
+    crossLevelComparisonsGenerated: 0,
+    duplicatesFound: 0,
+    overlapsResolved: 0,
+    processingTime: 0,
+    aiCallsUsed: 0,
+    filteringReduction: 0
+  };
 
   constructor(anthropicApiKey: string) {
     this.claudeClient = new ClaudeClient(anthropicApiKey);
@@ -29,7 +50,13 @@ export class HierarchicalSimilarityService {
   async analyzeCrossLevelSimilarity(
     hierarchy: ConsolidatedTheme[]
   ): Promise<CrossLevelSimilarity[]> {
-    logInfo('Starting cross-level similarity analysis');
+    const startTime = Date.now();
+    const initialAICalls = this.claudeClient.getMetrics().totalCalls;
+    
+    logger.info('HIERARCHICAL', 'Starting cross-level similarity analysis');
+
+    // Reset effectiveness tracking
+    this.resetEffectiveness();
 
     const allThemes = this.flattenHierarchy(hierarchy);
     const comparisons: CrossLevelSimilarityRequest[] = [];
@@ -55,20 +82,21 @@ export class HierarchicalSimilarityService {
     // Track pre-filtering effectiveness
     const totalPossibleComparisons =
       (allThemes.length * (allThemes.length - 1)) / 2;
-    const filteringReduction = (
+    this.effectiveness.filteringReduction = (
       ((totalPossibleComparisons - comparisons.length) /
         totalPossibleComparisons) *
       100
-    ).toFixed(1);
+    );
+    this.effectiveness.crossLevelComparisonsGenerated = comparisons.length;
 
-    logInfo(`Generated ${comparisons.length} cross-level comparisons`);
-    logInfo(
-      `Pre-filtering reduced comparisons by ${filteringReduction}% (${totalPossibleComparisons} → ${comparisons.length})`
+    logger.info('HIERARCHICAL', `Generated ${comparisons.length} cross-level comparisons`);
+    logger.info('HIERARCHICAL',
+      `Pre-filtering reduced comparisons by ${this.effectiveness.filteringReduction.toFixed(1)}% (${totalPossibleComparisons} → ${comparisons.length})`
     );
 
     if (comparisons.length > 100) {
-      logInfo(
-        `WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`
+      logger.warn('HIERARCHICAL',
+        `Too many comparisons (${comparisons.length}), this may cause performance issues`
       );
     }
 
@@ -120,8 +148,12 @@ export class HierarchicalSimilarityService {
       );
     }
 
-    logInfo(
-      `Completed cross-level similarity analysis: ${successfulResults.length} successful results`
+    // Update effectiveness metrics
+    this.effectiveness.processingTime = Date.now() - startTime;
+    this.effectiveness.aiCallsUsed = this.claudeClient.getMetrics().totalCalls - initialAICalls;
+
+    logger.info('HIERARCHICAL',
+      `Completed cross-level similarity analysis: ${successfulResults.length} successful results in ${this.effectiveness.processingTime}ms`
     );
     return successfulResults;
   }
@@ -172,8 +204,10 @@ export class HierarchicalSimilarityService {
 
       if (duplicate.relationshipType === 'duplicate') {
         duplicatesRemoved++;
+        this.effectiveness.duplicatesFound++;
       } else {
         overlapsResolved++;
+        this.effectiveness.overlapsResolved++;
       }
     }
 
@@ -734,6 +768,27 @@ Focus on business value and avoid merging themes with distinct business purposes
 
     visited.delete(theme.id); // Remove from visited when backtracking
     return false;
+  }
+
+  /**
+   * Get effectiveness metrics for this hierarchical analysis
+   */
+  getEffectiveness(): HierarchicalEffectiveness {
+    return { ...this.effectiveness };
+  }
+
+  /**
+   * Reset effectiveness metrics
+   */
+  resetEffectiveness(): void {
+    this.effectiveness = {
+      crossLevelComparisonsGenerated: 0,
+      duplicatesFound: 0,
+      overlapsResolved: 0,
+      processingTime: 0,
+      aiCallsUsed: 0,
+      filteringReduction: 0
+    };
   }
 }
 

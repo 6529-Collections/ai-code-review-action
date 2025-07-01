@@ -2,14 +2,16 @@ import { Theme } from './theme-service';
 import { AISimilarityResult } from '../types/similarity-types';
 import { SimilarityCalculator } from '../utils/similarity-calculator';
 import { JsonExtractor } from '../utils/json-extractor';
-import * as exec from '@actions/exec';
-import { SecureFileNamer } from '../utils/secure-file-namer';
+import { ClaudeClient } from '../utils/claude-client';
+import { logger } from '../utils/logger';
 
 export class AISimilarityService {
   private similarityCalculator: SimilarityCalculator;
+  private claudeClient: ClaudeClient;
 
   constructor(private readonly anthropicApiKey: string) {
     this.similarityCalculator = new SimilarityCalculator();
+    this.claudeClient = new ClaudeClient(anthropicApiKey);
   }
 
   async calculateAISimilarity(
@@ -19,37 +21,29 @@ export class AISimilarityService {
     const prompt = this.buildSimilarityPrompt(theme1, theme2);
 
     try {
-      const { filePath: tempFile, cleanup } =
-        SecureFileNamer.createSecureTempFile('claude-similarity', prompt);
+      const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis');
+      const result = this.parseAISimilarityResponse(output);
+      
+      logger.debug('AI-SIMILARITY', 
+        `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
+      );
+      logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
 
-      let output = '';
-      try {
-        await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-          listeners: {
-            stdout: (data: Buffer) => {
-              output += data.toString();
-            },
-          },
-        });
-
-        const result = this.parseAISimilarityResponse(output);
-        console.log(
-          `[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
-        );
-        console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
-
-        return result;
-      } finally {
-        cleanup(); // Ensure file is cleaned up even if execution fails
-      }
+      return result;
     } catch (error) {
-      console.warn(
-        `AI similarity failed for "${theme1.name}" vs "${theme2.name}":`,
-        error
+      logger.warn('AI-SIMILARITY', 
+        `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`
       );
       // Fallback to basic string matching
       return this.createFallbackSimilarity(theme1, theme2);
     }
+  }
+
+  /**
+   * Get Claude client for external metrics access
+   */
+  getClaudeClient(): ClaudeClient {
+    return this.claudeClient;
   }
 
   private buildSimilarityPrompt(theme1: Theme, theme2: Theme): string {
@@ -225,32 +219,16 @@ CRITICAL: Respond with ONLY valid JSON.
     batchPrompt: string,
     expectedResults: number
   ): Promise<{ results: unknown[] }> {
-    const { filePath: tempFile, cleanup } =
-      SecureFileNamer.createSecureTempFile(
-        'claude-batch-similarity',
-        batchPrompt
-      );
-
-    let output = '';
     try {
-      await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-        listeners: {
-          stdout: (data: Buffer) => {
-            output += data.toString();
-          },
-          stderr: (data: Buffer) => {
-            console.warn(`[AI-BATCH-SIMILARITY] stderr: ${data.toString()}`);
-          },
-        },
-      });
+      const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity');
 
       console.log(
-        `[AI-BATCH-SIMILARITY] Raw response length: ${output.length}`
+        `[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`
       );
 
       // Extract and validate JSON response
       const jsonResult = JsonExtractor.extractAndValidateJson(
-        output,
+        response,
         'object',
         ['results']
       );
@@ -280,11 +258,9 @@ CRITICAL: Respond with ONLY valid JSON.
     } catch (error) {
       console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
       console.log(
-        `[AI-BATCH-SIMILARITY] Raw output: ${output.substring(0, 500)}...`
+        `[AI-BATCH-SIMILARITY] Raw output: ${response.substring(0, 500)}...`
       );
       throw error;
-    } finally {
-      cleanup();
     }
   }
 }
