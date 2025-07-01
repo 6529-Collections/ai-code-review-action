@@ -29988,7 +29988,9 @@ async function run() {
         (0, utils_1.logInfo)('Starting AI code review analysis...');
         // Initialize services with AI code analysis
         const gitService = new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
+        // Initialize theme service with AI-driven expansion
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
+        (0, utils_1.logInfo)('Using AI-driven theme expansion for natural hierarchy depth');
         // Get PR context and changed files
         const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
@@ -30060,6 +30062,442 @@ async function run() {
 if (require.main === require.cache[eval('__filename')]) {
     run();
 }
+
+
+/***/ }),
+
+/***/ 6244:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AIDomainAnalyzer = void 0;
+const claude_client_1 = __nccwpck_require__(3831);
+const json_extractor_1 = __nccwpck_require__(2642);
+const concurrency_manager_1 = __nccwpck_require__(8692);
+const utils_1 = __nccwpck_require__(1798);
+/**
+ * AI-driven business domain analyzer
+ * Replaces mechanical keyword matching with semantic understanding
+ * PRD: "AI decides" domain classification based on actual business impact
+ */
+class AIDomainAnalyzer {
+    constructor(anthropicApiKey) {
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
+    }
+    /**
+     * Classify business domain using AI semantic understanding
+     * PRD: Root level represents "distinct user flow, story, or business capability"
+     */
+    async classifyBusinessDomain(context, semanticDiff) {
+        const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'domain',
+                'userValue',
+                'businessCapability',
+                'confidence',
+                'reasoning',
+            ]);
+            if (result.success) {
+                const data = result.data;
+                return this.validateDomainClassification(data);
+            }
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`AI domain classification failed: ${error}`);
+        }
+        // Graceful degradation: return generic domain with low confidence
+        return this.createFallbackDomain(context);
+    }
+    /**
+     * Build AI prompt for business domain classification
+     * PRD: "Structure emerges from code, not forced into preset levels"
+     */
+    buildDomainClassificationPrompt(context, semanticDiff) {
+        const additionalContext = semanticDiff
+            ? this.formatSemanticDiffContext(semanticDiff)
+            : '';
+        return `You are a product manager analyzing code changes for business impact.
+
+CONTEXT:
+File: ${context.filePath}
+${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
+${context.prDescription ? `PR Description: ${context.prDescription}` : ''}
+
+COMPLETE CODE CHANGES:
+${context.completeDiff}
+
+SURROUNDING CODE CONTEXT:
+${context.surroundingContext}
+
+${additionalContext}
+
+TASK: Identify the PRIMARY business domain this change affects.
+
+PERSPECTIVE: Focus on end-user value and business capability, not technical implementation.
+
+CONSIDER:
+1. What user problem does this solve or improve?
+2. What business process does it enable or enhance?
+3. What user journey or workflow does it affect?
+4. Is this creating new capability or improving existing?
+
+EXAMPLES:
+✅ Good domains: "User Account Management", "Payment Processing", "Content Discovery"
+✅ Good user value: "Users can reset passwords securely"
+✅ Good capability: "Enable secure self-service account recovery"
+
+❌ Avoid technical terms: "Database Migration", "Refactor Utils"
+❌ Avoid generic: "Fix Issues", "Update Code"
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "domain": "Clear business domain (max 5 words)",
+  "userValue": "End user benefit (max 12 words)", 
+  "businessCapability": "What this enables users to do (max 15 words)",
+  "confidence": 0.0-1.0,
+  "reasoning": "Why this domain classification (max 20 words)",
+  "subDomains": ["Optional specific user flows within capability"],
+  "crossCuttingConcerns": ["Optional other domains this also affects"]
+}`;
+    }
+    /**
+     * Format semantic diff context for additional insight
+     */
+    formatSemanticDiffContext(semanticDiff) {
+        const patterns = semanticDiff.businessPatterns
+            .map((p) => `- ${p.name}: ${p.description}`)
+            .join('\n');
+        const complexity = `Total complexity: ${semanticDiff.totalComplexity}`;
+        const fileCount = `Files affected: ${semanticDiff.files.length}`;
+        return `
+BROADER CHANGE CONTEXT:
+${complexity}
+${fileCount}
+
+DETECTED PATTERNS:
+${patterns || 'No specific patterns detected'}
+
+CROSS-FILE RELATIONSHIPS:
+${semanticDiff.crossFileRelationships.length} relationships detected
+`;
+    }
+    /**
+     * Validate and normalize AI domain classification response
+     */
+    validateDomainClassification(data) {
+        return {
+            domain: this.trimToWordLimit(data.domain || 'Code Changes', 5),
+            userValue: this.trimToWordLimit(data.userValue || 'Improve system functionality', 12),
+            businessCapability: this.trimToWordLimit(data.businessCapability || 'Enable users to accomplish tasks', 15),
+            confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
+            reasoning: this.trimToWordLimit(data.reasoning || 'Standard code modification', 20),
+            subDomains: data.subDomains?.slice(0, 3) || [], // Limit to 3 sub-domains
+            crossCuttingConcerns: data.crossCuttingConcerns?.slice(0, 2) || [], // Limit to 2 concerns
+        };
+    }
+    /**
+     * Create fallback domain when AI analysis fails
+     * PRD: "Graceful degradation - never fail completely"
+     */
+    createFallbackDomain(context) {
+        const fileName = context.filePath.split('/').pop() || 'unknown';
+        const isTest = context.filePath.includes('test') || context.filePath.includes('spec');
+        const isConfig = context.filePath.includes('config') || fileName.endsWith('.json');
+        const isUI = context.filePath.includes('component') || context.filePath.includes('ui');
+        if (isTest) {
+            return {
+                domain: 'Test Coverage',
+                userValue: 'Ensure system reliability and quality',
+                businessCapability: 'Maintain high-quality user experience through testing',
+                confidence: 0.4,
+                reasoning: 'Test file detected - quality assurance domain',
+                subDomains: ['Unit Testing'],
+            };
+        }
+        if (isConfig) {
+            return {
+                domain: 'System Configuration',
+                userValue: 'Maintain system operational stability',
+                businessCapability: 'Configure system behavior and settings',
+                confidence: 0.4,
+                reasoning: 'Configuration file detected - infrastructure domain',
+                subDomains: ['Infrastructure Management'],
+            };
+        }
+        if (isUI) {
+            return {
+                domain: 'User Interface',
+                userValue: 'Improve user interaction experience',
+                businessCapability: 'Enable intuitive user interactions and workflows',
+                confidence: 0.4,
+                reasoning: 'UI component detected - user experience domain',
+                subDomains: ['User Experience'],
+            };
+        }
+        // Generic fallback
+        return {
+            domain: 'System Enhancement',
+            userValue: 'Improve overall system functionality',
+            businessCapability: 'Enhance system capabilities for users',
+            confidence: 0.3,
+            reasoning: 'AI analysis unavailable - generic enhancement domain',
+        };
+    }
+    /**
+     * Analyze multiple changes for domain grouping
+     * PRD: "Intelligent cross-referencing" and domain relationships
+     */
+    async analyzeMultiDomainChanges(contexts) {
+        const prompt = this.buildMultiDomainAnalysisPrompt(contexts);
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'primaryDomains',
+            ]);
+            if (result.success) {
+                return result.data;
+            }
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Multi-domain analysis failed: ${error}`);
+        }
+        // Fallback: analyze each individually with concurrency control
+        console.log(`[AI-DOMAIN] Fallback to individual analysis for ${contexts.length} contexts`);
+        const domains = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(contexts, async (ctx) => await this.classifyBusinessDomain(ctx), {
+            concurrencyLimit: 5,
+            maxRetries: 2,
+            enableLogging: true,
+            onProgress: (completed, total) => {
+                console.log(`[AI-DOMAIN] Individual analysis progress: ${completed}/${total}`);
+            },
+            onError: (error, ctx, retryCount) => {
+                console.warn(`[AI-DOMAIN] Retry ${retryCount} for context: ${error.message}`);
+            },
+        });
+        // Filter successful results and handle errors
+        const successfulDomains = [];
+        for (const result of domains) {
+            if (result && typeof result === 'object' && 'error' in result) {
+                console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback`);
+                // Add fallback domain for failed analysis
+                successfulDomains.push({
+                    domain: 'System Enhancement',
+                    userValue: 'Improve system functionality',
+                    businessCapability: 'Enhance system capabilities',
+                    confidence: 0.3,
+                    reasoning: 'AI analysis failed - using fallback',
+                });
+            }
+            else {
+                successfulDomains.push(result);
+            }
+        }
+        return {
+            primaryDomains: successfulDomains,
+            crossCuttingDomains: [],
+            domainRelationships: [],
+        };
+    }
+    /**
+     * Build prompt for multi-domain analysis
+     */
+    buildMultiDomainAnalysisPrompt(contexts) {
+        const changesContext = contexts
+            .map((ctx, i) => `
+CHANGE ${i + 1}:
+File: ${ctx.filePath}
+${ctx.commitMessage ? `Commit: ${ctx.commitMessage}` : ''}
+Diff: ${ctx.completeDiff}
+`)
+            .join('\n');
+        return `You are a product manager analyzing multiple related code changes for business domain organization.
+
+MULTIPLE CODE CHANGES:
+${changesContext}
+
+TASK: Analyze these changes as a cohesive set and identify:
+1. Primary business domains (distinct user capabilities)
+2. Cross-cutting concerns that span domains
+3. Relationships between domains
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "primaryDomains": [
+    {
+      "domain": "Domain name (max 5 words)",
+      "userValue": "User benefit (max 12 words)",
+      "businessCapability": "What this enables (max 15 words)",
+      "confidence": 0.0-1.0,
+      "reasoning": "Why this domain (max 20 words)",
+      "affectedChanges": [0, 1, 2]
+    }
+  ],
+  "crossCuttingDomains": [
+    {
+      "domain": "Cross-cutting concern",
+      "userValue": "Benefit across domains",
+      "businessCapability": "What this enables across system",
+      "confidence": 0.0-1.0,
+      "reasoning": "Why cross-cutting",
+      "affectedChanges": [0, 1, 2]
+    }
+  ],
+  "domainRelationships": [
+    {
+      "domain1": "First domain",
+      "domain2": "Second domain", 
+      "relationship": "depends-on|enables|shares-utility|related-flow",
+      "strength": 0.0-1.0
+    }
+  ]
+}`;
+    }
+    /**
+     * Trim text to word limit
+     */
+    trimToWordLimit(text, maxWords) {
+        if (!text)
+            return '';
+        const words = text.split(/\s+/);
+        if (words.length <= maxWords) {
+            return text;
+        }
+        return words.slice(0, maxWords).join(' ');
+    }
+}
+exports.AIDomainAnalyzer = AIDomainAnalyzer;
+
+
+/***/ }),
+
+/***/ 7257:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AIExpansionDecisionService = void 0;
+const claude_client_1 = __nccwpck_require__(3831);
+const json_extractor_1 = __nccwpck_require__(2642);
+const utils_1 = __nccwpck_require__(1798);
+const code_structure_analyzer_1 = __nccwpck_require__(8318);
+const dynamic_prompt_builder_1 = __nccwpck_require__(1814);
+/**
+ * Simplified AI-driven expansion decision service
+ * Implements PRD vision: "AI decides when further decomposition is needed"
+ */
+class AIExpansionDecisionService {
+    constructor(anthropicApiKey) {
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
+        this.decisionCache = new Map();
+        this.codeAnalyzer = new code_structure_analyzer_1.CodeStructureAnalyzer();
+        this.promptBuilder = new dynamic_prompt_builder_1.DynamicPromptBuilder();
+    }
+    /**
+     * Main decision point: Should this theme be expanded?
+     * Uses intelligent code analysis and dynamic prompting for optimal decisions
+     */
+    async shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes) {
+        // Enhanced cache check with analysis hash
+        const analysisHash = await this.getAnalysisHash(theme);
+        const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
+        if (this.decisionCache.has(cacheKey)) {
+            return this.decisionCache.get(cacheKey);
+        }
+        // Very conservative atomic check - let AI decide most cases
+        if (this.isObviouslyAtomic(theme)) {
+            const decision = {
+                shouldExpand: false,
+                isAtomic: true,
+                reasoning: 'Trivial change with minimal complexity',
+                suggestedSubThemes: null,
+            };
+            this.decisionCache.set(cacheKey, decision);
+            return decision;
+        }
+        // Analyze code structure for intelligent hints
+        const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
+        // Build dynamic, context-aware prompt
+        const prompt = this.promptBuilder.buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes);
+        (0, utils_1.logInfo)(`Enhanced AI analysis for "${theme.name}": ${codeAnalysis.functionCount} functions, ${codeAnalysis.changeTypes.length} change types, ${codeAnalysis.expansionHints.length} hints`);
+        const decision = await this.getAIDecision(prompt);
+        this.decisionCache.set(cacheKey, decision);
+        return decision;
+    }
+    /**
+     * Generate a simple hash for theme analysis caching
+     */
+    async getAnalysisHash(theme) {
+        const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
+        // Simple hash - in production you might want a proper hash function
+        return Buffer.from(content).toString('base64').slice(0, 16);
+    }
+    /**
+     * Simple check for obviously atomic changes - extremely conservative
+     */
+    isObviouslyAtomic(theme) {
+        // Only stop expansion for truly trivial changes
+        // Almost everything should go through AI analysis for natural decomposition
+        if (theme.affectedFiles.length === 1) {
+            const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+            const description = theme.description.toLowerCase();
+            // Only consider atomic if: very few lines AND simple operation
+            return (totalLines < 3 &&
+                !description.includes('refactor') &&
+                !description.includes('update') &&
+                !description.includes('improve') &&
+                !description.includes('enhance') &&
+                !description.includes('modify'));
+        }
+        return false;
+    }
+    /**
+     * Get AI decision from Claude
+     */
+    async getAIDecision(prompt) {
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'reasoning']);
+            if (extractionResult.success) {
+                const data = extractionResult.data;
+                return {
+                    shouldExpand: data.shouldExpand ?? false,
+                    isAtomic: data.isAtomic ?? false,
+                    reasoning: data.reasoning ?? 'No reasoning provided',
+                    suggestedSubThemes: data.suggestedSubThemes || null,
+                };
+            }
+            // Fallback on parsing error
+            (0, utils_1.logInfo)(`Failed to parse AI expansion decision: ${extractionResult.error}`);
+            return {
+                shouldExpand: false,
+                isAtomic: false,
+                reasoning: 'Failed to parse AI response',
+                suggestedSubThemes: null,
+            };
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`AI expansion decision failed: ${error}`);
+            return {
+                shouldExpand: false,
+                isAtomic: false,
+                reasoning: `AI analysis failed: ${error}`,
+                suggestedSubThemes: null,
+            };
+        }
+    }
+    /**
+     * Clear the decision cache
+     */
+    clearCache() {
+        this.decisionCache.clear();
+    }
+}
+exports.AIExpansionDecisionService = AIExpansionDecisionService;
 
 
 /***/ }),
@@ -30204,13 +30642,10 @@ CRITICAL: Respond with ONLY valid JSON.
         if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
             details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
         }
-        // Add code snippets (limit to avoid token overflow)
-        const snippets = theme.codeSnippets.slice(0, 2).join('\n\n');
+        // Add all code snippets - modern context windows can handle it
+        const snippets = theme.codeSnippets.join('\n\n');
         if (snippets) {
             details += `\n\nActual Code Changes:\n${snippets}`;
-            if (theme.codeSnippets.length > 2) {
-                details += `\n... (${theme.codeSnippets.length - 2} more code snippets)`;
-            }
         }
         return details;
     }
@@ -30266,6 +30701,50 @@ CRITICAL: Respond with ONLY valid JSON.
             patternScore: 0,
             businessScore: 0,
         };
+    }
+    /**
+     * Calculate similarity for multiple theme pairs in a single AI call
+     * This is the key performance optimization method
+     */
+    async calculateBatchSimilarity(batchPrompt, expectedResults) {
+        const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', batchPrompt);
+        let output = '';
+        try {
+            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                listeners: {
+                    stdout: (data) => {
+                        output += data.toString();
+                    },
+                    stderr: (data) => {
+                        console.warn(`[AI-BATCH-SIMILARITY] stderr: ${data.toString()}`);
+                    },
+                },
+            });
+            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${output.length}`);
+            // Extract and validate JSON response
+            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['results']);
+            if (!jsonResult.success) {
+                throw new Error(`JSON extraction failed: ${jsonResult.error}`);
+            }
+            const batchData = jsonResult.data;
+            // Validate we got the expected number of results
+            if (!batchData.results || !Array.isArray(batchData.results)) {
+                throw new Error('Invalid batch response: missing results array');
+            }
+            if (batchData.results.length !== expectedResults) {
+                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
+            }
+            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
+            return batchData;
+        }
+        catch (error) {
+            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
+            console.log(`[AI-BATCH-SIMILARITY] Raw output: ${output.substring(0, 500)}...`);
+            throw error;
+        }
+        finally {
+            cleanup();
+        }
     }
 }
 exports.AISimilarityService = AISimilarityService;
@@ -30516,46 +30995,130 @@ exports.BusinessDomainService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
 const concurrency_manager_1 = __nccwpck_require__(8692);
 const secure_file_namer_1 = __nccwpck_require__(1661);
+const ai_domain_analyzer_1 = __nccwpck_require__(6244);
 class BusinessDomainService {
+    constructor(anthropicApiKey) {
+        this.aiDomainAnalyzer = new ai_domain_analyzer_1.AIDomainAnalyzer(anthropicApiKey);
+    }
     async groupByBusinessDomain(themes) {
         const domains = new Map();
-        console.log(`[DOMAIN] Extracting business domains for ${themes.length} themes`);
-        // Extract domains concurrently
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(themes, async (theme) => ({
-            theme,
-            domain: await this.extractBusinessDomain(theme.name, theme.description),
-        }), {
-            concurrencyLimit: 5, // Lower limit for domain extraction
-            maxRetries: 3,
+        console.log(`[DOMAIN] Extracting business domains for ${themes.length} themes using batch processing`);
+        // Use batch processing for significant performance improvement
+        const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
+        const batches = this.createDomainBatches(themes, batchSize);
+        console.log(`[DOMAIN-BATCH] Split into ${batches.length} batches of ~${batchSize} themes each`);
+        // Process batches concurrently
+        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
+            return await this.processDomainBatch(batch);
+        }, {
+            concurrencyLimit: 3, // Fewer concurrent batches since each is larger
+            maxRetries: 2,
             enableLogging: true,
             onProgress: (completed, total) => {
-                console.log(`[DOMAIN] Domain extraction progress: ${completed}/${total} themes`);
+                const themesCompleted = completed * batchSize;
+                const totalThemes = themes.length;
+                console.log(`[DOMAIN-BATCH] Progress: ${themesCompleted}/${totalThemes} themes processed (${completed}/${total} batches)`);
             },
-            onError: (error, theme, retryCount) => {
-                console.warn(`[DOMAIN] Retry ${retryCount} for theme "${theme.name}": ${error.message}`);
+            onError: (error, batch, retryCount) => {
+                console.warn(`[DOMAIN-BATCH] Retry ${retryCount} for batch of ${batch.length} themes: ${error.message}`);
             },
         });
-        // Group results by domain
-        for (const result of results) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                // Use fallback domain for failed extractions
-                const fallbackDomain = this.extractBusinessDomainFallback(result.item.name, result.item.description);
-                console.warn(`[DOMAIN] Using fallback domain "${fallbackDomain}" for "${result.item.name}"`);
-                if (!domains.has(fallbackDomain)) {
-                    domains.set(fallbackDomain, []);
-                }
-                domains.get(fallbackDomain).push(result.item);
+        // Flatten batch results and group by domain
+        const flatResults = [];
+        for (const batchResult of results) {
+            if (batchResult &&
+                typeof batchResult === 'object' &&
+                'error' in batchResult) {
+                console.warn(`[DOMAIN-BATCH] Batch processing failed, using fallback`);
+                // Handle failed batch - use fallback for all themes in the failed batch
+                continue;
             }
-            else {
-                const { theme, domain } = result;
-                console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
-                if (!domains.has(domain)) {
-                    domains.set(domain, []);
-                }
-                domains.get(domain).push(theme);
+            else if (Array.isArray(batchResult)) {
+                flatResults.push(...batchResult);
             }
         }
+        // Group results by domain
+        for (const result of flatResults) {
+            const { theme, domain } = result;
+            console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
+            if (!domains.has(domain)) {
+                domains.set(domain, []);
+            }
+            domains.get(domain).push(theme);
+        }
         return domains;
+    }
+    /**
+     * Extract business domain using AI semantic understanding
+     * PRD: "AI decides" domain classification based on actual business impact
+     */
+    async extractBusinessDomainWithAI(theme) {
+        try {
+            // Build AI analysis context from theme
+            const context = {
+                filePath: theme.affectedFiles?.[0] || 'unknown',
+                completeDiff: theme.description,
+                surroundingContext: `Theme: ${theme.name}\nDescription: ${theme.description}`,
+                commitMessage: theme.name, // Use theme name as commit message proxy
+            };
+            // Get AI domain classification
+            const domainClassification = await this.aiDomainAnalyzer.classifyBusinessDomain(context);
+            // Return the primary domain with confidence consideration
+            if (domainClassification.confidence >= 0.6) {
+                return domainClassification.domain;
+            }
+            else {
+                // Medium confidence - use with warning
+                console.log(`[DOMAIN] Medium confidence (${domainClassification.confidence}) for theme "${theme.name}": ${domainClassification.domain}`);
+                return domainClassification.domain;
+            }
+        }
+        catch (error) {
+            console.warn(`[DOMAIN] AI classification failed for theme "${theme.name}": ${error}`);
+            // Graceful degradation: use simplified heuristic fallback
+            return this.extractBusinessDomainFallback(theme.name, theme.description);
+        }
+    }
+    /**
+     * Fallback domain extraction for when AI fails
+     * PRD: "Graceful degradation - never fail completely"
+     */
+    extractBusinessDomainFallback(name, description) {
+        const text = (name + ' ' + description).toLowerCase();
+        // Simple heuristics for common domains
+        if (text.includes('test') || text.includes('spec')) {
+            return 'Quality Assurance';
+        }
+        if (text.includes('config') || text.includes('setting')) {
+            return 'System Configuration';
+        }
+        if (text.includes('auth') ||
+            text.includes('login') ||
+            text.includes('user')) {
+            return 'User Management';
+        }
+        if (text.includes('api') ||
+            text.includes('endpoint') ||
+            text.includes('service')) {
+            return 'API Services';
+        }
+        if (text.includes('ui') ||
+            text.includes('component') ||
+            text.includes('interface')) {
+            return 'User Interface';
+        }
+        if (text.includes('data') ||
+            text.includes('database') ||
+            text.includes('storage')) {
+            return 'Data Management';
+        }
+        if (text.includes('error') ||
+            text.includes('fix') ||
+            text.includes('bug')) {
+            return 'Error Resolution';
+        }
+        // Default domain
+        return 'System Enhancement';
     }
     async extractBusinessDomainWithContext(name, description, enhancedContext) {
         // Build code context summary if available
@@ -30587,6 +31150,23 @@ class BusinessDomainService {
         return this.executeDomainExtraction(name, prompt, description);
     }
     async executeDomainExtraction(name, prompt, description) {
+        // Stage 1: Try simple prompt first
+        const simplePrompt = this.buildSimpleDomainPrompt(name, description || '');
+        const stage1Result = await this.tryDomainExtraction(name, simplePrompt, 'Stage 1 (Simple)');
+        if (stage1Result && this.isValidDomainName(stage1Result)) {
+            return stage1Result;
+        }
+        // Stage 2: Try structured prompt with context
+        console.log(`[AI-DOMAIN] Stage 1 failed for "${name}", trying Stage 2`);
+        const stage2Result = await this.tryDomainExtraction(name, prompt, 'Stage 2 (Detailed)');
+        if (stage2Result && this.isValidDomainName(stage2Result)) {
+            return stage2Result;
+        }
+        // Stage 3: Enhanced fallback using AI response keywords
+        console.warn(`[AI-DOMAIN] Both stages failed for "${name}", using enhanced fallback`);
+        return this.extractBusinessDomainFallback(name, description || '');
+    }
+    async tryDomainExtraction(name, prompt, stage) {
         try {
             const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-domain', prompt);
             let output = '';
@@ -30599,166 +31179,931 @@ class BusinessDomainService {
                     },
                 });
                 const domain = this.parseDomainExtractionResponse(output);
-                console.log(`[AI-DOMAIN] Generated domain for "${name}": "${domain}"`);
-                // Validate the generated domain
-                if (this.isValidDomainName(domain)) {
-                    return domain;
-                }
-                else {
-                    console.warn(`[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`);
-                    return this.extractBusinessDomainFallback(name, description || '');
-                }
+                console.log(`[AI-DOMAIN] ${stage} result for "${name}": "${domain}"`);
+                return domain;
             }
             finally {
-                cleanup(); // Ensure file is cleaned up even if execution fails
+                cleanup();
             }
         }
         catch (error) {
-            console.warn('AI domain extraction failed:', error);
-            return this.extractBusinessDomainFallback(name, description || '');
+            console.warn(`[AI-DOMAIN] ${stage} extraction failed:`, error);
+            return null;
         }
     }
     buildDomainExtractionPrompt(name, description) {
-        // Check if we have enhanced context available
-        return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
+        return this.buildSimpleDomainPrompt(name, description);
+    }
+    buildSimpleDomainPrompt(name, description) {
+        return `OUTPUT: 2-5 word domain name ONLY. No sentences. No explanation.
+
+CORRECT examples:
+✓ "Fix User Errors"
+✓ "Handle Failed Payments"
+✓ "Improve Error Messages"
+✓ "Debug Login Issues"
+✓ "Streamline Development"
+✓ "Clean Up Legacy"
+
+WRONG examples:
+✗ "This fixes user errors"
+✗ "Based on the changes, this improves error handling"
+✗ "Fix user errors in the login system"
+
+Theme: "${name}"
+Description: "${description}"
+
+Domain (2-5 words only):`;
+    }
+    buildEnhancedDomainExtractionPrompt(name, description, codeContext) {
+        return `STRICT FORMAT: Output ONLY a domain name (2-5 words, max 30 characters)
+
+GOOD EXAMPLES:
+• "Fix Build Errors"
+• "Handle Failed Auth"
+• "Improve Error Handling"
+• "Debug API Failures"
+• "Streamline Development"
+• "Clean Up Legacy"
+• "Enhance Automation"
+• "Simplify Configuration"
+
+BAD EXAMPLES (DO NOT DO THIS):
+• "This change fixes build errors" (sentence)
+• "Based on analysis, Fix Build Errors" (explanation)
+• "Fix build errors in the CI/CD pipeline" (too long)
 
 Theme Name: "${name}"
 Description: "${description}"
+${codeContext ? `\nCODE CONTEXT:\n${codeContext}` : ''}
 
-Describe the user-facing change in one clear sentence (max 15 words):
-- What can users now do?
-- What workflow is now easier/faster/better?
-
-Choose from these USER-FOCUSED domains or create similar (max 4 words):
+CHOOSE FROM THESE OR CREATE SIMILAR (2-5 words):
+- Fix Build Errors
+- Handle Failed Requests
+- Improve Error Messages
+- Debug API Failures
+- Fix User Issues
+- Recover Failed Jobs
 - Remove Demo Content
-- Improve Code Review  
+- Improve Code Review
 - Streamline Development
 - Enhance Automation
 - Simplify Configuration
 - Add User Feedback
 - Clean Up Legacy
 - Improve Documentation
-- Fix User Issues
 - Optimize Performance
 - Enable Integrations
 - Modernize Interface
 
-Respond with just the user-focused domain name (2-5 words, no extra text):`;
-    }
-    buildEnhancedDomainExtractionPrompt(name, description, codeContext) {
-        return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
-
-Theme Name: "${name}"
-Description: "${description}"
-${codeContext ? `\nACTUAL CODE CONTEXT:\n${codeContext}` : ''}
-
-IMPORTANT: Focus on the end-user or business outcome, not the technical details. The code context above shows what was actually changed - use this to understand the real business purpose.
-
-Ask yourself:
-- What user experience is being improved by these specific code changes?
-- What business capability is being added/enhanced/removed?
-- What problem do these changes solve for end users?
-- What workflow or process is being streamlined?
-
-Choose from these USER-FOCUSED domains or create a similar category:
-- Remove Demo/Scaffolding Content
-- Improve Code Review Experience  
-- Streamline Development Workflow
-- Enhance Automation Capabilities
-- Simplify Configuration & Setup
-- Add User Feedback Features
-- Clean Up Legacy Code
-- Improve Documentation & Onboarding
-- Fix User-Facing Issues
-- Optimize Performance for Users
-- Enable New Integrations
-- Modernize User Interface
-
-Think like a product manager explaining value to users, not a developer describing implementation.
-
-Respond with just the user-focused domain name (2-5 words, no extra text):`;
+OUTPUT THE DOMAIN NAME NOW (nothing else):`;
     }
     parseDomainExtractionResponse(output) {
-        // Clean up the response - take first line, trim whitespace, remove quotes
+        // First try: simple first line parsing
         const lines = output.trim().split('\n');
         const domain = lines[0].trim().replace(/^["']|["']$/g, '');
+        if (this.isValidDomainName(domain)) {
+            return domain;
+        }
+        // Second try: extract domain from longer response
+        const extractedDomain = this.extractDomainFromResponse(output);
+        if (extractedDomain && this.isValidDomainName(extractedDomain)) {
+            console.log(`[AI-DOMAIN] Extracted domain from response: "${extractedDomain}"`);
+            return extractedDomain;
+        }
         return domain || 'General Changes';
     }
-    isValidDomainName(domain) {
-        return (domain.length >= 3 &&
-            domain.length <= 30 &&
-            !domain.toLowerCase().includes('error') &&
-            !domain.toLowerCase().includes('failed') &&
-            domain.trim() === domain);
+    extractDomainFromResponse(response) {
+        // Look for patterns that match domain format
+        const actionVerbs = [
+            'fix',
+            'handle',
+            'improve',
+            'debug',
+            'resolve',
+            'add',
+            'remove',
+            'enable',
+            'enhance',
+            'streamline',
+            'simplify',
+            'optimize',
+            'modernize',
+            'clean',
+        ];
+        // Split by common delimiters and look for domain-like phrases
+        const candidates = response
+            .toLowerCase()
+            .split(/[.,:;!?\n]/)
+            .map((phrase) => phrase.trim())
+            .filter((phrase) => phrase.length > 0);
+        for (const candidate of candidates) {
+            // Look for 2-5 word sequences starting with action verbs
+            const words = candidate.split(/\s+/);
+            for (let i = 0; i < words.length - 1; i++) {
+                for (let length = 2; length <= Math.min(5, words.length - i); length++) {
+                    const sequence = words.slice(i, i + length).join(' ');
+                    // Check if it starts with an action verb and looks domain-like
+                    if (actionVerbs.some((verb) => sequence.startsWith(verb)) &&
+                        sequence.length <= 30 &&
+                        !sequence.includes('the ') &&
+                        !sequence.includes('this ') &&
+                        !sequence.includes('that ')) {
+                        // Capitalize first letter of each word
+                        const formatted = sequence
+                            .split(' ')
+                            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                            .join(' ');
+                        return formatted;
+                    }
+                }
+            }
+        }
+        return null;
     }
-    extractBusinessDomainFallback(name, description) {
-        const text = (name + ' ' + description).toLowerCase();
-        // User-focused domain keywords (fallback)
-        if (text.includes('greeting') ||
-            text.includes('demo') ||
-            text.includes('scaffolding') ||
-            text.includes('example')) {
-            return 'Remove Demo/Scaffolding Content';
+    isValidDomainName(domain) {
+        // Basic format validation
+        if (domain.length < 3 || domain.length > 30 || domain.trim() !== domain) {
+            return false;
         }
-        if (text.includes('review') ||
-            text.includes('analysis') ||
-            text.includes('feedback')) {
-            return 'Improve Code Review Experience';
+        // Word count validation (2-5 words)
+        const wordCount = domain.trim().split(/\s+/).length;
+        if (wordCount < 2 || wordCount > 5) {
+            return false;
         }
-        if (text.includes('workflow') ||
-            text.includes('action') ||
-            text.includes('automation')) {
-            return 'Streamline Development Workflow';
+        // Reject full sentences (common explanation patterns)
+        const sentenceIndicators = [
+            /^(this|it|based|the)\s/i,
+            /\.$/, // ends with period
+            /\bthat\b/i,
+            /\bwhich\b/i,
+            /^".*"$/, // wrapped in quotes with explanation
+        ];
+        for (const pattern of sentenceIndicators) {
+            if (pattern.test(domain)) {
+                return false;
+            }
         }
-        if (text.includes('config') ||
-            text.includes('setup') ||
-            text.includes('install')) {
-            return 'Simplify Configuration & Setup';
+        return true;
+    }
+    /**
+     * Calculate optimal batch size for domain classification
+     * PRD: "Dynamic batch sizing" - adapt to content complexity
+     */
+    calculateOptimalDomainBatchSize(totalThemes) {
+        // Smaller batches for domain classification due to context complexity
+        if (totalThemes <= 5)
+            return Math.max(1, totalThemes); // Very small PRs
+        if (totalThemes <= 20)
+            return 10; // Small PRs - moderate batching
+        if (totalThemes <= 50)
+            return 15; // Medium PRs - larger batches
+        return 20; // Large PRs - maximum batch size for domain analysis
+    }
+    /**
+     * Split themes into optimally-sized batches for domain processing
+     */
+    createDomainBatches(themes, batchSize) {
+        const batches = [];
+        for (let i = 0; i < themes.length; i += batchSize) {
+            batches.push(themes.slice(i, i + batchSize));
         }
-        if (text.includes('comment') ||
-            text.includes('pr') ||
-            text.includes('pull request')) {
-            return 'Add User Feedback Features';
+        return batches;
+    }
+    /**
+     * Process a batch of themes for domain classification with a single AI call
+     * This is the key optimization - multiple themes analyzed in one API call
+     */
+    async processDomainBatch(themes) {
+        try {
+            // Use AI domain analyzer for batch processing
+            const contexts = themes.map((theme) => ({
+                filePath: theme.affectedFiles?.[0] || 'unknown',
+                completeDiff: theme.context || '',
+                surroundingContext: theme.description || '',
+                commitMessage: `Theme: ${theme.name}`,
+                prDescription: theme.businessImpact,
+            }));
+            // Single AI call for multiple themes
+            const batchResults = await this.aiDomainAnalyzer.analyzeMultiDomainChanges(contexts);
+            // Map results back to themes
+            const results = [];
+            for (let i = 0; i < themes.length; i++) {
+                const theme = themes[i];
+                let domain = 'System Enhancement'; // Default fallback
+                // Try to find domain from batch results
+                if (batchResults.primaryDomains && batchResults.primaryDomains[i]) {
+                    domain = batchResults.primaryDomains[i].domain;
+                }
+                results.push({ theme, domain });
+                console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
+            }
+            return results;
         }
-        if (text.includes('test') ||
-            text.includes('validation') ||
-            text.includes('quality')) {
-            return 'Enhance Automation Capabilities';
+        catch (error) {
+            console.warn(`[DOMAIN-BATCH] Batch processing failed for ${themes.length} themes, falling back to individual processing: ${error}`);
+            // Fallback to individual processing
+            return await this.processDomainBatchIndividually(themes);
         }
-        if (text.includes('documentation') ||
-            text.includes('readme') ||
-            text.includes('guide')) {
-            return 'Improve Documentation & Onboarding';
+    }
+    /**
+     * Fallback to individual domain processing if batch fails
+     */
+    async processDomainBatchIndividually(themes) {
+        const results = [];
+        for (const theme of themes) {
+            try {
+                const domain = await this.extractBusinessDomainWithAI(theme);
+                results.push({ theme, domain });
+            }
+            catch (error) {
+                console.warn(`[DOMAIN-BATCH-FALLBACK] Failed individual processing for "${theme.name}": ${error}`);
+                // Use fallback domain for failed individual processing
+                const fallbackDomain = this.extractBusinessDomainFallback(theme.name, theme.description);
+                results.push({ theme, domain: fallbackDomain });
+            }
         }
-        if (text.includes('performance') ||
-            text.includes('speed') ||
-            text.includes('optimization')) {
-            return 'Optimize Performance for Users';
-        }
-        if (text.includes('integration') ||
-            text.includes('api') ||
-            text.includes('service')) {
-            return 'Enable New Integrations';
-        }
-        if (text.includes('interface') ||
-            text.includes('ui') ||
-            text.includes('user')) {
-            return 'Modernize User Interface';
-        }
-        if (text.includes('remove') ||
-            text.includes('delete') ||
-            text.includes('cleanup')) {
-            return 'Clean Up Legacy Code';
-        }
-        if (text.includes('fix') ||
-            text.includes('bug') ||
-            text.includes('error')) {
-            return 'Fix User-Facing Issues';
-        }
-        return 'General Improvements';
+        return results;
     }
 }
 exports.BusinessDomainService = BusinessDomainService;
+
+
+/***/ }),
+
+/***/ 8318:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CodeStructureAnalyzer = void 0;
+const utils_1 = __nccwpck_require__(1798);
+/**
+ * Analyzes code structure to provide intelligent hints for theme expansion
+ */
+class CodeStructureAnalyzer {
+    /**
+     * Analyze code structure to generate expansion hints
+     */
+    async analyzeThemeStructure(theme) {
+        const analysis = {
+            functionCount: this.countFunctions(theme),
+            classCount: this.countClasses(theme),
+            moduleCount: this.countModules(theme),
+            changeTypes: this.identifyChangeTypes(theme),
+            complexityIndicators: this.analyzeComplexity(theme),
+            fileStructure: this.analyzeFileStructure(theme),
+            expansionHints: [],
+        };
+        // Generate contextual hints based on analysis
+        analysis.expansionHints = this.generateExpansionHints(analysis, theme);
+        (0, utils_1.logInfo)(`Code structure analysis for "${theme.name}": ${analysis.functionCount} functions, ${analysis.classCount} classes, ${analysis.changeTypes.length} change types`);
+        return analysis;
+    }
+    /**
+     * Count distinct functions/methods in code changes
+     */
+    countFunctions(theme) {
+        let functionCount = 0;
+        theme.codeSnippets.forEach((snippet) => {
+            // Match function declarations in various formats
+            const patterns = [
+                /function\s+\w+/g, // function name()
+                /\w+\s*:\s*function/g, // name: function
+                /\w+\s*=>\s*{/g, // arrow functions
+                /async\s+\w+\s*\(/g, // async functions
+                /\w+\s*\([^)]*\)\s*{/g, // method declarations
+                /export\s+function\s+\w+/g, // exported functions
+                /private\s+\w+\s*\(/g, // private methods
+                /public\s+\w+\s*\(/g, // public methods
+            ];
+            patterns.forEach((pattern) => {
+                const matches = snippet.match(pattern);
+                if (matches) {
+                    functionCount += matches.length;
+                }
+            });
+        });
+        return functionCount;
+    }
+    /**
+     * Count distinct classes/interfaces in code changes
+     */
+    countClasses(theme) {
+        let classCount = 0;
+        theme.codeSnippets.forEach((snippet) => {
+            const patterns = [
+                /class\s+\w+/g, // class declarations
+                /interface\s+\w+/g, // interface declarations
+                /type\s+\w+\s*=/g, // type definitions
+                /enum\s+\w+/g, // enum declarations
+                /export\s+class\s+\w+/g, // exported classes
+                /export\s+interface\s+\w+/g, // exported interfaces
+            ];
+            patterns.forEach((pattern) => {
+                const matches = snippet.match(pattern);
+                if (matches) {
+                    classCount += matches.length;
+                }
+            });
+        });
+        return classCount;
+    }
+    /**
+     * Count distinct modules/files with significant changes
+     */
+    countModules(theme) {
+        return theme.affectedFiles.length;
+    }
+    /**
+     * Identify types of changes (config, logic, UI, test, etc.)
+     */
+    identifyChangeTypes(theme) {
+        const types = new Set();
+        theme.affectedFiles.forEach((file) => {
+            if (file.includes('.test.') ||
+                file.includes('.spec.') ||
+                file.includes('/test/')) {
+                types.add('test');
+            }
+            else if (file.includes('config') ||
+                file.endsWith('.json') ||
+                file.endsWith('.yaml') ||
+                file.endsWith('.yml')) {
+                types.add('config');
+            }
+            else if (file.includes('/components/') ||
+                file.includes('/ui/') ||
+                file.includes('.css') ||
+                file.includes('.scss')) {
+                types.add('ui');
+            }
+            else if (file.includes('/api/') ||
+                file.includes('/services/') ||
+                file.includes('/business/')) {
+                types.add('logic');
+            }
+            else if (file.includes('/types/') || file.endsWith('.d.ts')) {
+                types.add('types');
+            }
+            else if (file.includes('/utils/') || file.includes('/helpers/')) {
+                types.add('utils');
+            }
+            else if (file.includes('README') || file.endsWith('.md')) {
+                types.add('docs');
+            }
+            else {
+                types.add('implementation');
+            }
+        });
+        // Also analyze code content for additional type detection
+        theme.codeSnippets.forEach((snippet) => {
+            if (snippet.includes('import') || snippet.includes('export')) {
+                types.add('imports');
+            }
+            if (snippet.includes('test(') ||
+                snippet.includes('describe(') ||
+                snippet.includes('it(')) {
+                types.add('test');
+            }
+            if (snippet.includes('interface') || snippet.includes('type ')) {
+                types.add('types');
+            }
+        });
+        return Array.from(types);
+    }
+    /**
+     * Analyze code complexity indicators
+     */
+    analyzeComplexity(theme) {
+        const indicators = {
+            hasConditionals: false,
+            hasLoops: false,
+            hasErrorHandling: false,
+            hasAsyncOperations: false,
+            nestingDepth: 0,
+            branchingFactor: 0,
+        };
+        theme.codeSnippets.forEach((snippet) => {
+            // Check for conditionals
+            if (/if\s*\(|switch\s*\(|case\s+|ternary\s*\?/.test(snippet)) {
+                indicators.hasConditionals = true;
+                indicators.branchingFactor += (snippet.match(/if\s*\(|case\s+/g) || []).length;
+            }
+            // Check for loops
+            if (/for\s*\(|while\s*\(|forEach|map\(|filter\(/.test(snippet)) {
+                indicators.hasLoops = true;
+            }
+            // Check for error handling
+            if (/try\s*{|catch\s*\(|throw\s+|\.catch\(/.test(snippet)) {
+                indicators.hasErrorHandling = true;
+            }
+            // Check for async operations
+            if (/async\s+|await\s+|Promise\.|\.then\(/.test(snippet)) {
+                indicators.hasAsyncOperations = true;
+            }
+            // Calculate nesting depth (simplified)
+            const openBraces = (snippet.match(/{/g) || []).length;
+            const closeBraces = (snippet.match(/}/g) || []).length;
+            const netDepth = Math.abs(openBraces - closeBraces);
+            indicators.nestingDepth = Math.max(indicators.nestingDepth, netDepth);
+        });
+        return indicators;
+    }
+    /**
+     * Analyze file structure patterns
+     */
+    analyzeFileStructure(theme) {
+        const analysis = {
+            directories: new Set(),
+            fileExtensions: new Set(),
+            isMultiDirectory: false,
+            isMultiLanguage: false,
+            hasTestFiles: false,
+            hasConfigFiles: false,
+        };
+        theme.affectedFiles.forEach((file) => {
+            const dir = file.substring(0, file.lastIndexOf('/'));
+            const ext = file.substring(file.lastIndexOf('.'));
+            analysis.directories.add(dir);
+            analysis.fileExtensions.add(ext);
+            if (file.includes('.test.') || file.includes('.spec.')) {
+                analysis.hasTestFiles = true;
+            }
+            if (file.includes('config') || ext === '.json' || ext === '.yaml') {
+                analysis.hasConfigFiles = true;
+            }
+        });
+        analysis.isMultiDirectory = analysis.directories.size > 1;
+        analysis.isMultiLanguage = analysis.fileExtensions.size > 2; // More than 2 different extensions
+        return analysis;
+    }
+    /**
+     * Generate contextual expansion hints based on analysis
+     */
+    generateExpansionHints(analysis, theme) {
+        const hints = [];
+        // Function-based hints
+        if (analysis.functionCount > 3) {
+            hints.push(`This theme modifies ${analysis.functionCount} functions - consider analyzing each function's purpose separately`);
+        }
+        else if (analysis.functionCount > 1) {
+            hints.push(`Multiple functions modified (${analysis.functionCount}) - each may serve a distinct purpose`);
+        }
+        // Class-based hints
+        if (analysis.classCount > 2) {
+            hints.push(`Multiple classes/interfaces affected (${analysis.classCount}) - each likely represents a separate concern`);
+        }
+        // Change type hints
+        if (analysis.changeTypes.length > 2) {
+            hints.push(`Mixed change types detected (${analysis.changeTypes.join(', ')}) - different types often benefit from separation`);
+        }
+        // Complexity hints
+        if (analysis.complexityIndicators.hasConditionals &&
+            analysis.complexityIndicators.hasErrorHandling) {
+            hints.push('Both control flow and error handling present - these are typically distinct responsibilities');
+        }
+        if (analysis.complexityIndicators.hasAsyncOperations &&
+            analysis.complexityIndicators.hasConditionals) {
+            hints.push('Async operations with conditional logic - consider separating flow control from async handling');
+        }
+        if (analysis.complexityIndicators.branchingFactor > 3) {
+            hints.push(`High branching complexity (${analysis.complexityIndicators.branchingFactor} branches) - multiple decision points suggest multiple concerns`);
+        }
+        // File structure hints
+        if (analysis.fileStructure.isMultiDirectory) {
+            hints.push('Changes span multiple directories - different locations often indicate different architectural concerns');
+        }
+        if (analysis.fileStructure.hasTestFiles &&
+            analysis.changeTypes.includes('implementation')) {
+            hints.push('Both implementation and test changes - consider separating test updates from feature implementation');
+        }
+        if (analysis.changeTypes.includes('config') &&
+            analysis.changeTypes.includes('logic')) {
+            hints.push('Configuration and logic changes - these typically serve different purposes and can be analyzed separately');
+        }
+        // Module-based hints
+        if (analysis.moduleCount > 3) {
+            hints.push(`Multiple modules affected (${analysis.moduleCount}) - each module likely represents a distinct component or service`);
+        }
+        // Add generic expansion encouragement if no specific hints
+        if (hints.length === 0 &&
+            theme.codeSnippets.join('\n').split('\n').length > 10) {
+            hints.push('This change has sufficient complexity to potentially benefit from decomposition into more specific sub-themes');
+        }
+        return hints;
+    }
+}
+exports.CodeStructureAnalyzer = CodeStructureAnalyzer;
+
+
+/***/ }),
+
+/***/ 1814:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DynamicPromptBuilder = void 0;
+/**
+ * Builds dynamic, context-aware prompts for AI expansion decisions
+ */
+class DynamicPromptBuilder {
+    constructor() {
+        this.expansionExamples = [];
+        this.initializeExamples();
+    }
+    /**
+     * Build a context-rich prompt for expansion decisions
+     */
+    buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes) {
+        const contextSection = this.buildContextSection(theme, currentDepth, parentTheme, siblingThemes);
+        const analysisSection = this.buildAnalysisSection(codeAnalysis);
+        const guidanceSection = this.buildGuidanceSection(currentDepth, codeAnalysis);
+        const examplesSection = this.buildExamplesSection(codeAnalysis);
+        const decisionSection = this.buildDecisionSection(currentDepth, codeAnalysis);
+        return `${contextSection}
+
+${analysisSection}
+
+${guidanceSection}
+
+${examplesSection}
+
+${decisionSection}`;
+    }
+    /**
+     * Build context section with theme information
+     */
+    buildContextSection(theme, currentDepth, parentTheme, siblingThemes) {
+        let context = `You are analyzing a code change to build a hierarchical mindmap.
+This mindmap should naturally organize code from high-level themes down to specific, reviewable units.
+
+CURRENT THEME:
+Name: "${theme.name}"
+Description: ${theme.description}
+Current depth: ${currentDepth}
+Files involved: ${theme.affectedFiles.length} files`;
+        if (parentTheme) {
+            context += `
+
+PARENT THEME: "${parentTheme.name}"
+Purpose: ${parentTheme.description}`;
+        }
+        if (siblingThemes && siblingThemes.length > 0) {
+            context += `
+
+SIBLING THEMES (already identified at this level):
+${siblingThemes.map((s) => `- "${s.name}": ${s.description}`).join('\n')}
+
+Ensure suggested sub-themes don't duplicate these existing themes.`;
+        }
+        return context;
+    }
+    /**
+     * Build analysis section with code structure insights
+     */
+    buildAnalysisSection(codeAnalysis) {
+        let section = `CODE STRUCTURE ANALYSIS:
+- Functions/Methods: ${codeAnalysis.functionCount}
+- Classes/Interfaces: ${codeAnalysis.classCount}
+- Modules/Files: ${codeAnalysis.moduleCount}
+- Change Types: ${codeAnalysis.changeTypes.join(', ')}
+- Complexity: ${this.formatComplexityIndicators(codeAnalysis.complexityIndicators)}`;
+        if (codeAnalysis.expansionHints.length > 0) {
+            section += `
+
+EXPANSION INSIGHTS:
+${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
+        }
+        return section;
+    }
+    /**
+     * Build dynamic guidance based on depth and complexity
+     */
+    buildGuidanceSection(currentDepth, codeAnalysis) {
+        const achievements = this.identifyAchievements(currentDepth, codeAnalysis);
+        const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
+        let section = `EXPANSION GUIDANCE:`;
+        if (currentDepth === 0) {
+            section += `
+Level ${currentDepth} Focus: Identify major functional areas and capabilities
+- Look for distinct business features or technical components
+- Consider architectural boundaries and user-facing functionality
+- Each theme should represent a coherent area of change`;
+        }
+        else if (currentDepth <= 2) {
+            section += `
+Level ${currentDepth} Focus: Break down capabilities into specific concerns
+- Identify distinct responsibilities within larger themes
+- Look for changes that address different requirements or use cases
+- Consider separating different types of modifications (logic vs config vs UI)`;
+        }
+        else if (currentDepth <= 4) {
+            section += `
+Level ${currentDepth} Focus: Identify specific implementation units
+- Look for changes that could be reviewed or tested independently
+- Consider separating different functions, classes, or logical units
+- Focus on reviewability and understanding`;
+        }
+        else {
+            section += `
+Level ${currentDepth} Focus: Atomic, focused changes
+- Each theme should represent a single, specific modification
+- Look for the smallest meaningful units of change
+- Consider if different aspects could be tested separately`;
+        }
+        if (achievements.length > 0) {
+            section += `
+
+ACHIEVEMENTS SO FAR:
+${achievements.map((achievement) => `✓ ${achievement}`).join('\n')}`;
+        }
+        if (nextGoals.length > 0) {
+            section += `
+
+NEXT GOALS TO CONSIDER:
+${nextGoals.map((goal) => `→ ${goal}`).join('\n')}`;
+        }
+        return section;
+    }
+    /**
+     * Build examples section with relevant expansion patterns
+     */
+    buildExamplesSection(codeAnalysis) {
+        const relevantExamples = this.selectRelevantExamples(codeAnalysis);
+        if (relevantExamples.length === 0) {
+            return '';
+        }
+        let section = `EXPANSION EXAMPLES (similar patterns):`;
+        relevantExamples.forEach((example, index) => {
+            section += `
+
+Example ${index + 1}: "${example.themeName}"
+Pattern: ${example.pattern}
+Sub-themes created:
+${example.subThemes.map((sub) => `  - "${sub.name}": ${sub.description}`).join('\n')}
+Why this worked: ${example.reasoning}`;
+        });
+        return section;
+    }
+    /**
+     * Build decision section with specific questions
+     */
+    buildDecisionSection(currentDepth, codeAnalysis) {
+        const questions = this.generateDecisionQuestions(currentDepth, codeAnalysis);
+        let section = `DECISION NEEDED:
+Should this theme be broken down into sub-themes?
+
+CONSIDER THESE QUESTIONS:
+${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+
+EXPANSION BENEFITS:
+- More granular code review and understanding
+- Better change tracking and impact analysis
+- Clearer separation of concerns
+- Easier testing and validation
+
+NATURAL STOPPING POINTS:
+- When further breakdown would add noise without clarity
+- When the change represents a single, focused responsibility
+- When sub-themes would be too small to be meaningful`;
+        // Add atomic check guidance only at deeper levels
+        if (currentDepth >= 4) {
+            section += `
+
+ATOMIC EVALUATION:
+Consider this atomic if it represents a single logical operation that:
+- Has one clear purpose or responsibility
+- Would be tested as a single unit
+- Cannot be meaningfully separated without losing coherence
+- Represents the natural granularity for review`;
+        }
+        section += `
+
+RESPOND WITH JSON:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean,
+  "reasoning": "Clear explanation why (max 50 words)",
+  "suggestedSubThemes": [
+    {
+      "name": "What this accomplishes (max 10 words)",
+      "description": "What changes (max 20 words)",
+      "files": ["relevant", "files"],
+      "rationale": "Why this is a separate concern (max 15 words)"
+    }
+  ] or null if shouldExpand is false
+}`;
+        return section;
+    }
+    /**
+     * Format complexity indicators for display
+     */
+    formatComplexityIndicators(indicators) {
+        const features = [];
+        if (indicators.hasConditionals)
+            features.push(`conditionals (${indicators.branchingFactor} branches)`);
+        if (indicators.hasLoops)
+            features.push('loops');
+        if (indicators.hasErrorHandling)
+            features.push('error handling');
+        if (indicators.hasAsyncOperations)
+            features.push('async operations');
+        if (indicators.nestingDepth > 2)
+            features.push(`deep nesting (${indicators.nestingDepth})`);
+        return features.length > 0 ? features.join(', ') : 'low complexity';
+    }
+    /**
+     * Identify what has been achieved at current depth
+     */
+    identifyAchievements(currentDepth, codeAnalysis) {
+        const achievements = [];
+        if (currentDepth >= 1) {
+            if (codeAnalysis.changeTypes.length <= 2) {
+                achievements.push('Focused change types identified');
+            }
+            if (codeAnalysis.moduleCount <= 3) {
+                achievements.push('Module scope well-defined');
+            }
+        }
+        if (currentDepth >= 2) {
+            if (codeAnalysis.functionCount <= 2) {
+                achievements.push('Function-level granularity reached');
+            }
+            if (codeAnalysis.classCount <= 1) {
+                achievements.push('Single class/interface focus');
+            }
+        }
+        if (currentDepth >= 3) {
+            if (!codeAnalysis.complexityIndicators.hasConditionals ||
+                !codeAnalysis.complexityIndicators.hasLoops) {
+                achievements.push('Simplified control flow');
+            }
+        }
+        return achievements;
+    }
+    /**
+     * Identify next goals based on current state
+     */
+    identifyNextGoals(currentDepth, codeAnalysis) {
+        const goals = [];
+        if (codeAnalysis.changeTypes.length > 2) {
+            goals.push('Separate different types of changes (config vs logic vs UI)');
+        }
+        if (codeAnalysis.functionCount > 3) {
+            goals.push('Break down into individual function modifications');
+        }
+        if (codeAnalysis.complexityIndicators.hasConditionals &&
+            codeAnalysis.complexityIndicators.hasErrorHandling) {
+            goals.push('Separate control flow from error handling');
+        }
+        if (codeAnalysis.complexityIndicators.hasAsyncOperations &&
+            codeAnalysis.functionCount > 1) {
+            goals.push('Isolate asynchronous operations');
+        }
+        if (codeAnalysis.fileStructure.isMultiDirectory) {
+            goals.push('Group changes by architectural component');
+        }
+        // Add depth-specific goals
+        if (currentDepth < 2 && codeAnalysis.moduleCount > 1) {
+            goals.push('Achieve module-level separation');
+        }
+        if (currentDepth < 3 && codeAnalysis.classCount > 1) {
+            goals.push('Reach class/interface level granularity');
+        }
+        return goals;
+    }
+    /**
+     * Generate context-specific decision questions
+     */
+    generateDecisionQuestions(currentDepth, codeAnalysis) {
+        const questions = [
+            'Does this theme contain multiple distinct concerns that could be understood separately?',
+            'Would decomposition make the changes clearer and more reviewable?',
+            'Are there natural boundaries in the code that suggest separate sub-themes?',
+        ];
+        // Add complexity-specific questions
+        if (codeAnalysis.functionCount > 1) {
+            questions.push('Could different functions/methods be analyzed as separate concerns?');
+        }
+        if (codeAnalysis.changeTypes.length > 1) {
+            questions.push('Should different types of changes (config vs logic vs UI) be separated?');
+        }
+        if (codeAnalysis.complexityIndicators.hasConditionals) {
+            questions.push('Could different conditional branches or logic paths be treated separately?');
+        }
+        if (codeAnalysis.complexityIndicators.hasErrorHandling) {
+            questions.push('Should error handling be separated from main logic flow?');
+        }
+        // Add depth-specific questions
+        if (currentDepth >= 3) {
+            questions.push('Could different parts of this change be tested independently?');
+            questions.push('Would a code reviewer comment on different aspects separately?');
+        }
+        return questions;
+    }
+    /**
+     * Select relevant examples based on code patterns
+     */
+    selectRelevantExamples(codeAnalysis) {
+        return this.expansionExamples
+            .filter((example) => this.isExampleRelevant(example, codeAnalysis))
+            .slice(0, 2); // Limit to 2 most relevant examples
+    }
+    /**
+     * Check if an example is relevant to current analysis
+     */
+    isExampleRelevant(example, analysis) {
+        // Match by change types
+        const typeMatch = example.changeTypes.some((type) => analysis.changeTypes.includes(type));
+        // Match by complexity
+        const complexityMatch = example.hasConditionals ===
+            analysis.complexityIndicators.hasConditionals ||
+            (example.hasMultipleFunctions && analysis.functionCount > 1) ||
+            (example.hasMultipleFiles && analysis.moduleCount > 1);
+        return typeMatch || complexityMatch;
+    }
+    /**
+     * Initialize example expansion patterns
+     */
+    initializeExamples() {
+        this.expansionExamples = [
+            {
+                themeName: 'Refactor authentication service',
+                pattern: 'service-refactor',
+                changeTypes: ['logic', 'types'],
+                hasConditionals: true,
+                hasMultipleFunctions: true,
+                hasMultipleFiles: true,
+                subThemes: [
+                    {
+                        name: 'Update token validation logic',
+                        description: 'Modify JWT token verification and expiration handling',
+                    },
+                    {
+                        name: 'Add new authentication methods',
+                        description: 'Implement OAuth2 and SAML authentication options',
+                    },
+                    {
+                        name: 'Refactor user session management',
+                        description: 'Improve session storage and cleanup mechanisms',
+                    },
+                ],
+                reasoning: 'Each sub-theme addresses a distinct aspect of authentication',
+            },
+            {
+                themeName: 'Add user feedback system',
+                pattern: 'feature-addition',
+                changeTypes: ['ui', 'logic', 'config'],
+                hasConditionals: false,
+                hasMultipleFunctions: true,
+                hasMultipleFiles: true,
+                subThemes: [
+                    {
+                        name: 'Create feedback UI components',
+                        description: 'Build feedback forms and display components',
+                    },
+                    {
+                        name: 'Implement feedback storage',
+                        description: 'Add database schema and API endpoints',
+                    },
+                    {
+                        name: 'Configure feedback notifications',
+                        description: 'Set up email and in-app notification system',
+                    },
+                ],
+                reasoning: 'UI, backend, and notifications are separate technical concerns',
+            },
+            {
+                themeName: 'Fix error handling in data processing',
+                pattern: 'error-handling-fix',
+                changeTypes: ['logic'],
+                hasConditionals: true,
+                hasMultipleFunctions: false,
+                hasMultipleFiles: false,
+                subThemes: [
+                    {
+                        name: 'Add input validation',
+                        description: 'Validate data format and requirements before processing',
+                    },
+                    {
+                        name: 'Improve error messages',
+                        description: 'Provide more descriptive error messages to users',
+                    },
+                    {
+                        name: 'Add retry logic',
+                        description: 'Implement automatic retry for transient failures',
+                    },
+                ],
+                reasoning: 'Prevention, messaging, and recovery are distinct error handling strategies',
+            },
+        ];
+    }
+}
+exports.DynamicPromptBuilder = DynamicPromptBuilder;
 
 
 /***/ }),
@@ -31240,7 +32585,13 @@ class HierarchicalSimilarityService {
                 }
             }
         }
+        // Track pre-filtering effectiveness
+        const totalPossibleComparisons = (allThemes.length * (allThemes.length - 1)) / 2;
+        const filteringReduction = (((totalPossibleComparisons - comparisons.length) /
+            totalPossibleComparisons) *
+            100).toFixed(1);
         (0, utils_1.logInfo)(`Generated ${comparisons.length} cross-level comparisons`);
+        (0, utils_1.logInfo)(`Pre-filtering reduced comparisons by ${filteringReduction}% (${totalPossibleComparisons} → ${comparisons.length})`);
         if (comparisons.length > 100) {
             (0, utils_1.logInfo)(`WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`);
         }
@@ -31367,20 +32718,186 @@ class HierarchicalSimilarityService {
         return flattened;
     }
     shouldCompareThemes(theme1, theme2) {
-        // Don't compare themes at the same level with the same parent
+        // Basic hierarchy rules
         if (theme1.level === theme2.level && theme1.parentId === theme2.parentId) {
             return false;
         }
-        // Don't compare parent-child relationships
         if (theme1.parentId === theme2.id || theme2.parentId === theme1.id) {
             return false;
         }
-        // Don't compare themes that are too far apart in the hierarchy
         const levelDifference = Math.abs(theme1.level - theme2.level);
         if (levelDifference > 1) {
             return false;
         }
+        // Intelligent pre-filtering optimizations (PRD: "Efficient cross-reference indexing")
+        // 1. File overlap check - skip if zero file overlap
+        const fileOverlap = this.calculateFileOverlap(theme1, theme2);
+        if (fileOverlap === 0) {
+            // Check name similarity as secondary filter
+            const nameSimilarity = this.calculateNameSimilarity(theme1.name, theme2.name);
+            if (nameSimilarity < 0.3) {
+                // No file overlap AND very different names = very unlikely to be related
+                return false;
+            }
+        }
+        // 2. Business domain filtering - skip if clearly different domains
+        if (this.areDifferentBusinessDomains(theme1, theme2)) {
+            return false;
+        }
+        // 3. Size mismatch filtering - skip if one is much larger than the other
+        if (this.hasSevereSizeMismatch(theme1, theme2)) {
+            return false;
+        }
+        // 4. Type mismatch filtering - skip incompatible change types
+        if (this.hasIncompatibleChangeTypes(theme1, theme2)) {
+            return false;
+        }
         return true;
+    }
+    /**
+     * Calculate file overlap between two themes
+     * Returns ratio 0.0-1.0 of overlapping files
+     */
+    calculateFileOverlap(theme1, theme2) {
+        const files1 = new Set(theme1.affectedFiles || []);
+        const files2 = new Set(theme2.affectedFiles || []);
+        if (files1.size === 0 || files2.size === 0) {
+            return 0;
+        }
+        const intersection = new Set([...files1].filter((x) => files2.has(x)));
+        const union = new Set([...files1, ...files2]);
+        return intersection.size / union.size;
+    }
+    /**
+     * Calculate name similarity using simple token matching
+     * Returns ratio 0.0-1.0 of similarity
+     */
+    calculateNameSimilarity(name1, name2) {
+        const tokens1 = new Set(name1.toLowerCase().split(/\s+/));
+        const tokens2 = new Set(name2.toLowerCase().split(/\s+/));
+        const intersection = new Set([...tokens1].filter((x) => tokens2.has(x)));
+        const union = new Set([...tokens1, ...tokens2]);
+        return union.size > 0 ? intersection.size / union.size : 0;
+    }
+    /**
+     * Check if themes belong to clearly different business domains
+     * Uses heuristic domain detection from descriptions
+     */
+    areDifferentBusinessDomains(theme1, theme2) {
+        const domain1 = this.inferBusinessDomain(theme1);
+        const domain2 = this.inferBusinessDomain(theme2);
+        // Known incompatible domain pairs
+        const incompatiblePairs = [
+            ['ui', 'api'],
+            ['auth', 'docs'],
+            ['test', 'feature'],
+            ['config', 'logic'],
+        ];
+        for (const [d1, d2] of incompatiblePairs) {
+            if ((domain1 === d1 && domain2 === d2) ||
+                (domain1 === d2 && domain2 === d1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /**
+     * Simple domain inference from theme content
+     */
+    inferBusinessDomain(theme) {
+        const text = `${theme.name} ${theme.description}`.toLowerCase();
+        if (text.includes('ui') ||
+            text.includes('interface') ||
+            text.includes('component')) {
+            return 'ui';
+        }
+        if (text.includes('api') ||
+            text.includes('endpoint') ||
+            text.includes('service')) {
+            return 'api';
+        }
+        if (text.includes('auth') ||
+            text.includes('login') ||
+            text.includes('security')) {
+            return 'auth';
+        }
+        if (text.includes('test') ||
+            text.includes('spec') ||
+            text.includes('mock')) {
+            return 'test';
+        }
+        if (text.includes('config') ||
+            text.includes('setting') ||
+            text.includes('env')) {
+            return 'config';
+        }
+        if (text.includes('doc') ||
+            text.includes('readme') ||
+            text.includes('comment')) {
+            return 'docs';
+        }
+        return 'general';
+    }
+    /**
+     * Check if themes have severe size mismatch (one much larger than other)
+     */
+    hasSevereSizeMismatch(theme1, theme2) {
+        const size1 = (theme1.affectedFiles?.length || 0) +
+            (theme1.codeMetrics?.linesAdded || 0);
+        const size2 = (theme2.affectedFiles?.length || 0) +
+            (theme2.codeMetrics?.linesAdded || 0);
+        if (size1 === 0 || size2 === 0) {
+            return false; // Can't judge size mismatch
+        }
+        const ratio = Math.max(size1, size2) / Math.min(size1, size2);
+        return ratio > 10; // One is 10x larger than the other
+    }
+    /**
+     * Check if themes have incompatible change types
+     */
+    hasIncompatibleChangeTypes(theme1, theme2) {
+        // Extract change type indicators from descriptions
+        const type1 = this.inferChangeType(theme1);
+        const type2 = this.inferChangeType(theme2);
+        // Incompatible type pairs
+        const incompatibleTypes = [
+            ['add', 'remove'],
+            ['create', 'delete'],
+            ['new', 'fix'],
+        ];
+        for (const [t1, t2] of incompatibleTypes) {
+            if ((type1 === t1 && type2 === t2) || (type1 === t2 && type2 === t1)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    /**
+     * Simple change type inference
+     */
+    inferChangeType(theme) {
+        const text = `${theme.name} ${theme.description}`.toLowerCase();
+        if (text.includes('add') ||
+            text.includes('create') ||
+            text.includes('new')) {
+            return 'add';
+        }
+        if (text.includes('remove') ||
+            text.includes('delete') ||
+            text.includes('drop')) {
+            return 'remove';
+        }
+        if (text.includes('fix') ||
+            text.includes('bug') ||
+            text.includes('error')) {
+            return 'fix';
+        }
+        if (text.includes('update') ||
+            text.includes('modify') ||
+            text.includes('change')) {
+            return 'update';
+        }
+        return 'general';
     }
     async analyzeCrossLevelSimilarityPair(request) {
         const { theme1, theme2, levelDifference } = request;
@@ -31627,11 +33144,9 @@ const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
 const concurrency_manager_1 = __nccwpck_require__(8692);
 const secure_file_namer_1 = __nccwpck_require__(1661);
+const ai_expansion_decision_service_1 = __nccwpck_require__(7257);
 exports.DEFAULT_EXPANSION_CONFIG = {
-    maxDepth: 4,
-    minComplexityScore: 0.7,
-    minFilesForExpansion: 2,
-    businessImpactThreshold: 0.6,
+    maxDepth: 20, // Allow very deep natural expansion
     concurrencyLimit: 5,
     maxRetries: 3,
     retryDelay: 1000,
@@ -31645,6 +33160,7 @@ class ThemeExpansionService {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
         this.cache = new generic_cache_1.GenericCache(3600000); // 1 hour TTL
         this.config = { ...exports.DEFAULT_EXPANSION_CONFIG, ...config };
+        this.aiDecisionService = new ai_expansion_decision_service_1.AIExpansionDecisionService(anthropicApiKey);
     }
     /**
      * Process items concurrently with limit and retry logic
@@ -31712,7 +33228,7 @@ class ThemeExpansionService {
             return theme;
         }
         // Check if theme is candidate for expansion
-        const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme);
+        const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
         if (!expansionCandidate) {
             // Still process existing child themes recursively
             const childResults = await this.processConcurrentlyWithLimit(theme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, theme), {
@@ -31735,13 +33251,13 @@ class ThemeExpansionService {
             }
             return { ...theme, childThemes: expandedChildren };
         }
-        // Create expansion request
+        // Create expansion request with the expansion candidate as context
         const expansionRequest = {
             id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('expansion', theme.id),
             theme,
             parentTheme,
             depth: currentDepth,
-            context: await this.buildExpansionContext(theme, parentTheme),
+            context: expansionCandidate, // Pass the expansion candidate with AI decision
         };
         // Process expansion
         const result = await this.processExpansionRequest(expansionRequest);
@@ -31798,47 +33314,26 @@ class ThemeExpansionService {
         };
     }
     /**
-     * Evaluate if a theme is a candidate for expansion
+     * Evaluate if a theme is a candidate for expansion using AI-driven decisions
      */
-    async evaluateExpansionCandidate(theme, parentTheme) {
-        // Basic checks
-        if (theme.affectedFiles.length < this.config.minFilesForExpansion) {
+    async evaluateExpansionCandidate(theme, parentTheme, currentDepth = 0) {
+        // Get sibling themes for context
+        const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
+        // Let AI decide based on full context
+        const expansionDecision = await this.aiDecisionService.shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes);
+        // Update theme with decision metadata
+        theme.isAtomic = expansionDecision.isAtomic;
+        // If theme is atomic or shouldn't expand, return null
+        if (!expansionDecision.shouldExpand) {
+            (0, utils_1.logInfo)(`Theme "${theme.name}" will not be expanded: ${expansionDecision.reasoning}`);
             return null;
         }
-        // Calculate complexity score based on various factors
-        const complexityScore = this.calculateComplexityScore(theme);
-        if (complexityScore < this.config.minComplexityScore) {
-            return null;
-        }
-        // Analyze business patterns
-        const businessPatterns = await this.identifyBusinessPatterns(theme);
-        if (businessPatterns.length < 2) {
-            return null; // Need at least 2 distinct patterns for expansion
-        }
+        // Return candidate for expansion
         return {
             theme,
             parentTheme,
-            expansionReason: `Complex theme with ${businessPatterns.length} business patterns`,
-            complexityScore,
-            businessPatterns,
+            expansionDecision,
         };
-    }
-    /**
-     * Calculate complexity score for expansion candidacy
-     */
-    calculateComplexityScore(theme) {
-        let score = 0;
-        // File count factor (normalized)
-        score += Math.min(theme.affectedFiles.length / 10, 0.3);
-        // Description length factor (complexity often correlates with description length)
-        score += Math.min(theme.description.length / 500, 0.2);
-        // Business impact factor
-        score += Math.min(theme.businessImpact.length / 300, 0.2);
-        // Code snippets diversity
-        score += Math.min(theme.codeSnippets.length / 20, 0.15);
-        // Child theme count (existing complexity)
-        score += Math.min(theme.childThemes.length / 5, 0.15);
-        return Math.min(score, 1.0);
     }
     /**
      * Deduplicate sub-themes using AI to identify duplicates
@@ -32149,66 +33644,6 @@ CRITICAL: Respond with ONLY valid JSON.
         return 10; // Huge PRs: maximum batch size
     }
     /**
-     * Identify distinct business patterns within a theme
-     */
-    async identifyBusinessPatterns(theme) {
-        const cacheKey = `business_patterns_${theme.id}`;
-        const cached = this.cache.get(cacheKey);
-        if (cached) {
-            return cached;
-        }
-        const prompt = `
-Analyze this code theme for distinct business logic patterns and user flows:
-
-Theme: ${theme.name}
-Description: ${theme.description}
-Business Impact: ${theme.businessImpact}
-Affected Files: ${theme.affectedFiles.join(', ')}
-
-Code Context:
-${theme.codeSnippets.slice(0, 3).join('\n---\n')}
-
-Identify distinct business patterns within this theme. Look for:
-1. Different user interaction flows
-2. Separate business logic concerns
-3. Distinct functional areas
-4. Different data processing patterns
-5. Separate integration points
-
-Return a JSON array of distinct business pattern names (max 6):
-["pattern1", "pattern2", ...]
-
-Focus on business value, not technical implementation details.
-`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'array', undefined);
-            if (!extractionResult.success) {
-                (0, utils_1.logInfo)(`Failed to parse business patterns for ${theme.name}: ${extractionResult.error}`);
-                return [];
-            }
-            const patterns = extractionResult.data;
-            this.cache.set(cacheKey, patterns, 3600000); // Cache for 1 hour
-            return patterns;
-        }
-        catch (error) {
-            (0, utils_1.logInfo)(`Failed to identify business patterns for ${theme.name}: ${error}`);
-            return [];
-        }
-    }
-    /**
-     * Build expansion context for AI analysis
-     */
-    async buildExpansionContext(theme, parentTheme) {
-        return {
-            relevantFiles: theme.affectedFiles,
-            codeChanges: [], // Would be populated from theme context
-            smartContext: {}, // Would be populated from theme context
-            businessScope: theme.businessImpact,
-            parentBusinessLogic: parentTheme?.businessImpact,
-        };
-    }
-    /**
      * Process a single expansion request
      */
     async processExpansionRequest(request) {
@@ -32250,98 +33685,92 @@ Focus on business value, not technical implementation details.
         }
     }
     /**
-     * Analyze theme for potential sub-themes using AI
+     * Analyze theme for potential sub-themes using expansion decision
      */
     async analyzeThemeForSubThemes(request) {
         const { theme, parentTheme, depth } = request;
+        const expansionCandidate = request.context;
+        // We already have the expansion decision from evaluateExpansionCandidate
+        if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
+            // Convert suggested sub-themes to ConsolidatedThemes
+            const subThemes = this.convertSuggestedToConsolidatedThemes(expansionCandidate.expansionDecision.suggestedSubThemes, theme);
+            return {
+                subThemes,
+                shouldExpand: true,
+                confidence: 0.8,
+                reasoning: expansionCandidate.expansionDecision.reasoning,
+                businessLogicPatterns: [],
+                userFlowPatterns: [],
+            };
+        }
+        // Fallback: Ask for sub-theme analysis if not already provided
+        const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
         const prompt = `
-Analyze this code theme for potential sub-theme expansion:
+You already decided this theme should be expanded. Now create the specific sub-themes.
 
-THEME TO ANALYZE:
+THEME TO EXPAND:
 Name: ${theme.name}
 Description: ${theme.description}
 Business Impact: ${theme.businessImpact}
 Current Level: ${theme.level}
-Expansion Depth: ${depth}
+Depth: ${depth}
 Files: ${theme.affectedFiles.join(', ')}
 
 ${parentTheme
-            ? `PARENT THEME CONTEXT:
-Name: ${parentTheme.name}
-Business Logic: ${parentTheme.businessImpact}`
+            ? `PARENT CONTEXT: ${parentTheme.name} - ${parentTheme.businessImpact}`
             : ''}
 
-CODE CONTEXT:
+${siblingThemes.length > 0
+            ? `SIBLING THEMES (avoid duplication):
+${siblingThemes.map((s) => `- ${s.name}`).join('\n')}
+`
+            : ''}
+
+CODE TO ANALYZE:
 ${theme.codeSnippets.slice(0, 5).join('\n---\n')}
 
-ANALYSIS TASK:
-Create concise sub-themes if distinct business functions exist.
+CREATE SUB-THEMES:
+${depth < 3
+            ? `Focus on distinct business capabilities or user features within this theme.`
+            : `Focus on atomic, testable units (5-15 lines, single responsibility).`}
 
-EXPANSION CRITERIA:
-- Different user capabilities (not implementation details)
-- Separate workflows or processes
-- Only if genuinely distinct business value
-
-Return JSON:
+Return JSON with specific sub-themes:
 {
-  "shouldExpand": boolean,
-  "confidence": number (0-1),
-  "reasoning": "brief explanation (max 15 words)",
-  "businessLogicPatterns": ["pattern1", "pattern2"],
-  "userFlowPatterns": ["flow1", "flow2"],
   "subThemes": [
     {
-      "name": "Sub-theme name (max 8 words)",
-      "description": "What changed (max 15 words)",
+      "name": "What this accomplishes (max 8 words)",
+      "description": "What changes (max 15 words)",
       "businessImpact": "User benefit (max 12 words)",
-      "relevantFiles": ["file1.ts", "file2.ts"],
-      "confidence": number (0-1)
+      "relevantFiles": ["specific files for this sub-theme"],
+      "rationale": "Why this is separate (max 15 words)"
     }
-  ]
-}
-
-Only create sub-themes if there are genuinely distinct business concerns.
-`;
+  ],
+  "reasoning": "Overall expansion rationale (max 20 words)"
+}`;
         try {
             const response = await this.claudeClient.callClaude(prompt);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'confidence', 'reasoning', 'subThemes']);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['subThemes']);
             if (!extractionResult.success) {
-                (0, utils_1.logInfo)(`Failed to parse expansion analysis for ${theme.name}: ${extractionResult.error}`);
-                // Return no expansion
+                (0, utils_1.logInfo)(`Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`);
                 return {
                     subThemes: [],
                     shouldExpand: false,
                     confidence: 0.3,
-                    reasoning: `Analysis parsing failed: ${extractionResult.error}`,
+                    reasoning: `Sub-theme parsing failed: ${extractionResult.error}`,
                     businessLogicPatterns: [],
                     userFlowPatterns: [],
                 };
             }
             const analysis = extractionResult.data;
             // Convert to ConsolidatedTheme objects
-            const subThemes = (analysis.subThemes || []).map((subTheme, index) => ({
-                id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', theme.id, index),
-                name: subTheme.name,
-                description: subTheme.description,
-                level: theme.level + 1,
-                parentId: theme.id,
-                childThemes: [],
-                affectedFiles: subTheme.relevantFiles.filter((file) => theme.affectedFiles.includes(file)),
-                confidence: subTheme.confidence,
-                businessImpact: subTheme.businessImpact,
-                codeSnippets: theme.codeSnippets.filter((snippet) => subTheme.relevantFiles.some((file) => snippet.includes(file))),
-                context: theme.context,
-                lastAnalysis: new Date(),
-                sourceThemes: [theme.id],
-                consolidationMethod: 'hierarchy',
-            }));
+            const subThemes = this.convertSuggestedToConsolidatedThemes(analysis.subThemes || [], theme);
             return {
                 subThemes,
-                shouldExpand: (analysis.shouldExpand || false) && subThemes.length > 0,
-                confidence: analysis.confidence || 0.5,
-                reasoning: analysis.reasoning || 'No reasoning provided',
-                businessLogicPatterns: analysis.businessLogicPatterns || [],
-                userFlowPatterns: analysis.userFlowPatterns || [],
+                shouldExpand: subThemes.length > 0,
+                confidence: 0.8,
+                reasoning: analysis.reasoning || 'Sub-themes identified',
+                businessLogicPatterns: [],
+                userFlowPatterns: [],
             };
         }
         catch (error) {
@@ -32355,6 +33784,34 @@ Only create sub-themes if there are genuinely distinct business concerns.
                 userFlowPatterns: [],
             };
         }
+    }
+    /**
+     * Convert suggested sub-themes to ConsolidatedTheme objects
+     */
+    convertSuggestedToConsolidatedThemes(suggestedThemes, parentTheme) {
+        return suggestedThemes.map((suggested, index) => {
+            const relevantFiles = suggested.files || suggested.relevantFiles || [];
+            const validFiles = relevantFiles.filter((file) => parentTheme.affectedFiles.includes(file));
+            return {
+                id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', parentTheme.id, index),
+                name: suggested.name,
+                description: suggested.description,
+                level: parentTheme.level + 1,
+                parentId: parentTheme.id,
+                childThemes: [],
+                affectedFiles: validFiles.length > 0 ? validFiles : [parentTheme.affectedFiles[0]], // Fallback to first parent file
+                confidence: 0.8,
+                businessImpact: suggested.businessImpact ||
+                    suggested.rationale ||
+                    suggested.description,
+                codeSnippets: parentTheme.codeSnippets.filter((snippet) => validFiles.some((file) => snippet.includes(file))),
+                context: `${parentTheme.context}\n\nSub-theme: ${suggested.description}`,
+                lastAnalysis: new Date(),
+                sourceThemes: [parentTheme.id],
+                consolidationMethod: 'expansion',
+                isAtomic: parentTheme.level >= 3, // Deeper levels likely atomic
+            };
+        });
     }
 }
 exports.ThemeExpansionService = ThemeExpansionService;
@@ -32696,11 +34153,8 @@ class ClaudeService {
         }
     }
     buildAnalysisPrompt(chunk, context, codeChange) {
-        // Limit content length to avoid overwhelming Claude
-        const maxContentLength = 2000;
-        const truncatedContent = chunk.content.length > maxContentLength
-            ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
-            : chunk.content;
+        // Use full content - modern context windows can handle it
+        const truncatedContent = chunk.content;
         // Build enhanced context with pre-extracted data
         let enhancedContext = context;
         if (codeChange) {
@@ -32989,7 +34443,7 @@ class ThemeService {
     constructor(anthropicApiKey, consolidationConfig) {
         this.anthropicApiKey = anthropicApiKey;
         this.similarityService = new theme_similarity_1.ThemeSimilarityService(anthropicApiKey, consolidationConfig);
-        // Initialize expansion services
+        // Initialize expansion services with simplified AI-driven approach
         this.expansionService = new theme_expansion_1.ThemeExpansionService(anthropicApiKey);
         this.hierarchicalSimilarityService = new hierarchical_similarity_1.HierarchicalSimilarityService(anthropicApiKey);
         // Enable expansion by default
@@ -33093,19 +34547,28 @@ class ThemeService {
             contextManager.processBatchResults(analysisResults, codeChangeMap);
             contextManager.setProcessingState('complete');
             const originalThemes = contextManager.getRootThemes();
+            // Pipeline optimization: Overlap consolidation and expansion preparation
+            console.log('[THEME-SERVICE] Starting pipeline optimization with overlapped phases');
             const consolidationStartTime = Date.now();
-            // Apply theme consolidation
-            let consolidatedThemes = await this.similarityService.consolidateThemes(originalThemes);
+            // Start consolidation and expansion candidate identification in parallel
+            const [consolidatedThemesResult, expansionCandidates] = await Promise.all([
+                this.similarityService.consolidateThemes(originalThemes),
+                this.expansionEnabled && originalThemes.length > 0
+                    ? this.identifyExpansionCandidates(originalThemes)
+                    : Promise.resolve([]),
+            ]);
+            let consolidatedThemes = consolidatedThemesResult;
             const consolidationTime = Date.now() - consolidationStartTime;
+            console.log(`[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`);
             // Apply hierarchical expansion if enabled
             let expansionTime = 0;
             let expansionStats = undefined;
             if (this.expansionEnabled && consolidatedThemes.length > 0) {
-                console.log('[THEME-SERVICE] Starting hierarchical expansion');
+                console.log('[THEME-SERVICE] Starting AI-driven hierarchical expansion');
                 const expansionStartTime = Date.now();
                 try {
-                    // Expand themes hierarchically
-                    console.log(`[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes`);
+                    // Expand themes hierarchically using pre-identified candidates for optimization
+                    console.log(`[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`);
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
                     console.log(`[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`);
                     // Apply cross-level deduplication
@@ -33252,6 +34715,65 @@ class ThemeService {
             },
         ];
     }
+    /**
+     * Pipeline optimization: Identify expansion candidates in parallel with consolidation
+     * PRD: "Progressive rendering of deep trees" and "Lazy expansion for large PRs"
+     */
+    async identifyExpansionCandidates(themes) {
+        console.log(`[THEME-SERVICE] Identifying expansion candidates for ${themes.length} themes`);
+        const candidates = [];
+        // Quick heuristic-based candidate identification (fast, runs in parallel with consolidation)
+        for (const theme of themes) {
+            if (this.shouldConsiderForExpansion(theme)) {
+                candidates.push(theme);
+            }
+        }
+        console.log(`[THEME-SERVICE] Identified ${candidates.length} expansion candidates`);
+        return candidates;
+    }
+    /**
+     * Quick heuristic to determine if a theme should be considered for expansion
+     * This is much faster than full AI analysis
+     */
+    shouldConsiderForExpansion(theme) {
+        // Heuristic indicators for expansion potential
+        const affectedFileCount = theme.affectedFiles?.length || 0;
+        const descriptionLength = theme.description.length;
+        const hasMultipleAspects = this.hasMultipleAspects(theme);
+        const isComplex = affectedFileCount > 2 || descriptionLength > 100;
+        // Only consider themes that are likely to benefit from expansion
+        return isComplex && hasMultipleAspects;
+    }
+    /**
+     * Check if theme has multiple aspects that could be separated
+     */
+    hasMultipleAspects(theme) {
+        const text = `${theme.name} ${theme.description}`.toLowerCase();
+        // Look for multiple action words or aspects
+        const actionWords = [
+            'add',
+            'update',
+            'fix',
+            'remove',
+            'modify',
+            'create',
+            'implement',
+        ];
+        const foundActions = actionWords.filter((action) => text.includes(action));
+        // Look for "and" connectors indicating multiple aspects
+        const hasConnectors = text.includes(' and ') || text.includes(', ');
+        // Look for multiple file types
+        const fileTypes = [
+            'test',
+            'config',
+            'component',
+            'service',
+            'util',
+            'model',
+        ];
+        const foundFileTypes = fileTypes.filter((type) => text.includes(type));
+        return (foundActions.length > 1 || hasConnectors || foundFileTypes.length > 1);
+    }
 }
 exports.ThemeService = ThemeService;
 
@@ -33282,9 +34804,6 @@ class ThemeSimilarityService {
             maxHierarchyDepth: 4,
             expansionEnabled: true,
             crossLevelSimilarityCheck: true,
-            // Remove unused weight configurations
-            confidenceWeight: 0.3, // Keep for backwards compatibility
-            businessDomainWeight: 0.4, // Keep for backwards compatibility
             ...config,
         };
         // Initialize services
@@ -33292,7 +34811,7 @@ class ThemeSimilarityService {
         this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
         this.aiSimilarityService = new ai_similarity_1.AISimilarityService(anthropicApiKey);
         this.batchProcessor = new batch_processor_1.BatchProcessor();
-        this.businessDomainService = new business_domain_1.BusinessDomainService();
+        this.businessDomainService = new business_domain_1.BusinessDomainService(anthropicApiKey);
         this.themeNamingService = new theme_naming_1.ThemeNamingService();
         console.log(`[CONFIG] Consolidation config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
     }
@@ -33395,20 +34914,26 @@ class ThemeSimilarityService {
     }
     async calculateBatchSimilarities(pairs) {
         const similarities = new Map();
-        console.log(`[SIMILARITY] Processing ${pairs.length} pairs with concurrency limit of 10`);
-        // Process all pairs concurrently with controlled parallelism
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(pairs, async (pair) => {
-            const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
-            return { id: pair.id, similarity };
+        // Use batch AI processing for significant performance improvement
+        console.log(`[SIMILARITY-BATCH] Processing ${pairs.length} pairs with batch AI calls`);
+        // Split into batches for optimal processing
+        const batchSize = this.calculateOptimalBatchSize(pairs.length);
+        const batches = this.createPairBatches(pairs, batchSize);
+        console.log(`[SIMILARITY-BATCH] Split into ${batches.length} batches of ~${batchSize} pairs each`);
+        // Process batches concurrently
+        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
+            return await this.processSimilarityBatch(batch);
         }, {
-            concurrencyLimit: 5,
-            maxRetries: 3,
+            concurrencyLimit: 3, // Fewer concurrent batches since each is larger
+            maxRetries: 2,
             enableLogging: true,
             onProgress: (completed, total) => {
-                console.log(`[SIMILARITY] Progress: ${completed}/${total} pairs processed`);
+                const pairsCompleted = completed * batchSize;
+                const totalPairs = pairs.length;
+                console.log(`[SIMILARITY-BATCH] Progress: ${pairsCompleted}/${totalPairs} pairs processed (${completed}/${total} batches)`);
             },
-            onError: (error, pair, retryCount) => {
-                console.warn(`[SIMILARITY] Retry ${retryCount} for pair ${pair.id}: ${error.message}`);
+            onError: (error, batch, retryCount) => {
+                console.warn(`[SIMILARITY-BATCH] Retry ${retryCount} for batch of ${batch.length} pairs: ${error.message}`);
             },
         });
         // Store successful results
@@ -33417,19 +34942,16 @@ class ThemeSimilarityService {
         for (const result of results) {
             if (result && typeof result === 'object' && 'error' in result) {
                 failedCount++;
-                // Use non-match result for failed comparisons
-                similarities.set(result.item.id, {
-                    combinedScore: 0,
-                    nameScore: 0,
-                    descriptionScore: 0,
-                    fileOverlap: 0,
-                    patternScore: 0,
-                    businessScore: 0,
-                });
+                // For failed batches, we can't process individual pairs, so skip them
+                console.warn(`[SIMILARITY-BATCH] Batch failed: ${result.error}`);
             }
             else {
                 successCount++;
-                similarities.set(result.id, result.similarity);
+                // result is a Map<string, SimilarityMetrics> from processSimilarityBatch
+                const batchResultMap = result;
+                for (const [pairId, similarity] of batchResultMap) {
+                    similarities.set(pairId, similarity);
+                }
             }
         }
         console.log(`[SIMILARITY] Completed: ${successCount} successful, ${failedCount} failed`);
@@ -33606,6 +35128,164 @@ class ThemeSimilarityService {
                 }
                 : undefined,
             codeExamples: allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
+        };
+    }
+    /**
+     * Calculate optimal batch size based on total pairs and complexity
+     * PRD: "Dynamic batch sizing" - adapt to content complexity
+     */
+    calculateOptimalBatchSize(totalPairs) {
+        // Dynamic batch sizing based on total pairs and estimated complexity
+        if (totalPairs <= 10)
+            return Math.max(1, totalPairs); // Small PRs - process all at once
+        if (totalPairs <= 50)
+            return 25; // Medium PRs - moderate batching
+        if (totalPairs <= 200)
+            return 50; // Large PRs - larger batches for efficiency
+        return 75; // Very large PRs - maximum batch size for token limits
+    }
+    /**
+     * Split pairs into optimally-sized batches for AI processing
+     */
+    createPairBatches(pairs, batchSize) {
+        const batches = [];
+        for (let i = 0; i < pairs.length; i += batchSize) {
+            batches.push(pairs.slice(i, i + batchSize));
+        }
+        return batches;
+    }
+    /**
+     * Process a batch of theme pairs with a single AI call
+     * This is the key optimization - multiple pairs analyzed in one API call
+     */
+    async processSimilarityBatch(pairs) {
+        const batchResults = new Map();
+        // Build batch prompt for multiple pair analysis
+        const batchPrompt = this.buildBatchSimilarityPrompt(pairs);
+        try {
+            // Single AI call for entire batch
+            const response = await this.aiSimilarityService.calculateBatchSimilarity(batchPrompt, pairs.length);
+            // Parse batch response into individual similarity metrics
+            this.parseBatchSimilarityResponse(response, pairs, batchResults);
+            console.log(`[SIMILARITY-BATCH] Successfully processed batch of ${pairs.length} pairs`);
+        }
+        catch (error) {
+            console.warn(`[SIMILARITY-BATCH] Batch processing failed for ${pairs.length} pairs, falling back to individual processing: ${error}`);
+            // Fallback to individual processing if batch fails
+            await this.processBatchIndividually(pairs, batchResults);
+        }
+        return batchResults;
+    }
+    /**
+     * Build optimized prompt for batch similarity analysis
+     * PRD: "Structured prompts with clear sections"
+     */
+    buildBatchSimilarityPrompt(pairs) {
+        const pairDescriptions = pairs
+            .map((pair, index) => {
+            return `Pair ${index + 1}:
+Theme A: "${pair.theme1.name}" - ${pair.theme1.description}
+Theme B: "${pair.theme2.name}" - ${pair.theme2.description}
+Files A: ${pair.theme1.affectedFiles?.join(', ') || 'none'}
+Files B: ${pair.theme2.affectedFiles?.join(', ') || 'none'}`;
+        })
+            .join('\n\n');
+        return `You are analyzing theme similarity for code review mindmap organization.
+
+Analyze similarity between these ${pairs.length} theme pairs:
+
+${pairDescriptions}
+
+For each pair, consider:
+- Business logic overlap (most important)
+- Affected file overlap
+- Functional relationship
+- User impact similarity
+
+Respond with ONLY valid JSON:
+{
+  "results": [
+    {
+      "pairIndex": 1,
+      "shouldMerge": boolean,
+      "combinedScore": 0.0-1.0,
+      "nameScore": 0.0-1.0,
+      "descriptionScore": 0.0-1.0,
+      "businessScore": 0.0-1.0,
+      "reasoning": "max 20 words"
+    }
+  ]
+}
+
+Threshold: >0.7 for merge recommendation.
+Be conservative - only merge when themes serve the same business purpose.`;
+    }
+    /**
+     * Parse batch AI response into individual similarity metrics
+     */
+    parseBatchSimilarityResponse(response, pairs, results) {
+        try {
+            const batchData = typeof response === 'string' ? JSON.parse(response) : response;
+            if (!batchData.results || !Array.isArray(batchData.results)) {
+                throw new Error('Invalid batch response format');
+            }
+            for (const result of batchData.results) {
+                const pairIndex = result.pairIndex - 1; // Convert to 0-based
+                if (pairIndex >= 0 && pairIndex < pairs.length) {
+                    const pair = pairs[pairIndex];
+                    const similarity = {
+                        combinedScore: Math.max(0, Math.min(1, result.combinedScore || 0)),
+                        nameScore: Math.max(0, Math.min(1, result.nameScore || 0)),
+                        descriptionScore: Math.max(0, Math.min(1, result.descriptionScore || 0)),
+                        businessScore: Math.max(0, Math.min(1, result.businessScore || 0)),
+                        fileOverlap: Math.max(0, Math.min(1, result.fileOverlap || 0)),
+                        patternScore: Math.max(0, Math.min(1, result.patternScore || 0)),
+                    };
+                    results.set(pair.id, similarity);
+                }
+            }
+            console.log(`[SIMILARITY-BATCH] Parsed ${results.size}/${pairs.length} similarity results from batch`);
+        }
+        catch (error) {
+            console.warn(`[SIMILARITY-BATCH] Failed to parse batch response: ${error}`);
+            throw error;
+        }
+    }
+    /**
+     * Fallback to individual processing if batch fails
+     */
+    async processBatchIndividually(pairs, results) {
+        console.log(`[SIMILARITY-FALLBACK] Processing ${pairs.length} pairs individually`);
+        for (const pair of pairs) {
+            try {
+                const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
+                results.set(pair.id, similarity);
+            }
+            catch (error) {
+                console.warn(`[SIMILARITY-FALLBACK] Failed individual processing for ${pair.id}: ${error}`);
+                // Set default non-match result
+                results.set(pair.id, {
+                    combinedScore: 0,
+                    nameScore: 0,
+                    descriptionScore: 0,
+                    businessScore: 0,
+                    fileOverlap: 0,
+                    patternScore: 0,
+                });
+            }
+        }
+    }
+    /**
+     * Convert AI similarity result to SimilarityMetrics
+     */
+    convertAIResultToMetrics(aiResult) {
+        return {
+            combinedScore: Math.max(0, Math.min(1, aiResult.semanticScore || 0)),
+            nameScore: Math.max(0, Math.min(1, aiResult.nameScore || 0)),
+            descriptionScore: Math.max(0, Math.min(1, aiResult.descriptionScore || 0)),
+            businessScore: Math.max(0, Math.min(1, aiResult.businessScore || 0)),
+            fileOverlap: 0, // Not available in AI result, would need separate calculation
+            patternScore: Math.max(0, Math.min(1, aiResult.patternScore || 0)),
         };
     }
 }
@@ -34438,7 +36118,7 @@ class ConcurrencyManager {
         const processItem = async (item, itemIndex) => {
             log(`Processing item ${itemIndex + 1}/${items.length}: starting`);
             try {
-                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.retryBackoffMultiplier, config.onError, config.enableJitter, config.context);
+                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.onError, config.enableJitter, config.context);
                 log(`Processing item ${itemIndex + 1}/${items.length}: success`);
                 results[itemIndex] = result;
             }
@@ -34496,15 +36176,11 @@ class ConcurrencyManager {
      * @param processor Processing function
      * @param maxRetries Maximum number of retry attempts
      * @param baseDelay Base delay between retries in milliseconds
-     * @param backoffMultiplier Multiplier for exponential backoff
      * @param onError Optional error callback
      * @returns Processed result
      * @throws Error if all retry attempts fail
      */
-    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _backoffMultiplier = 2, // Legacy parameter, now unused
-    onError, enableJitter = true, context = 'general') {
+    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, onError, enableJitter = true, context = 'general') {
         let lastError;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
@@ -34583,6 +36259,152 @@ class ConcurrencyManager {
         }
         return { successful, failed };
     }
+    /**
+     * Enhanced processing with dynamic concurrency adjustment based on API performance
+     * PRD: "Adaptive concurrency: Start with 5 concurrent operations, adjust based on API response times"
+     */
+    static async processConcurrentlyWithAdaptiveLimit(items, processor, options) {
+        const config = {
+            ...DEFAULT_OPTIONS,
+            initialConcurrency: 5, // PRD requirement
+            targetResponseTime: 2000, // 2 seconds target
+            adjustmentInterval: 10,
+            ...options,
+        };
+        let currentConcurrency = config.initialConcurrency;
+        const results = [];
+        const responseTimes = [];
+        const errorCounts = [];
+        console.log(`[ADAPTIVE-CONCURRENCY] Starting with ${currentConcurrency} concurrent operations`);
+        // Process items in chunks to allow for concurrency adjustment
+        const chunkSize = config.adjustmentInterval;
+        for (let i = 0; i < items.length; i += chunkSize) {
+            const chunk = items.slice(i, i + chunkSize);
+            // Process chunk with current concurrency limit
+            const chunkResults = await ConcurrencyManager.processConcurrentlyWithLimit(chunk, async (item) => {
+                const itemStartTime = Date.now();
+                try {
+                    const result = await processor(item);
+                    responseTimes.push(Date.now() - itemStartTime);
+                    return result;
+                }
+                catch (error) {
+                    responseTimes.push(Date.now() - itemStartTime);
+                    throw error;
+                }
+            }, {
+                ...config,
+                concurrencyLimit: currentConcurrency,
+                dynamicConcurrency: false, // We're handling adjustment manually
+            });
+            results.push(...chunkResults);
+            // Calculate metrics for this chunk
+            const chunkErrors = chunkResults.filter((r) => r && typeof r === 'object' && 'error' in r).length;
+            const errorRate = chunkErrors / chunk.length;
+            errorCounts.push(chunkErrors);
+            // Adjust concurrency based on performance
+            const newConcurrency = this.calculateAdjustedConcurrency(currentConcurrency, responseTimes.slice(-chunkSize), // Recent response times
+            errorRate, config.targetResponseTime);
+            if (newConcurrency !== currentConcurrency) {
+                console.log(`[ADAPTIVE-CONCURRENCY] Adjusting concurrency: ${currentConcurrency} → ${newConcurrency} ` +
+                    `(avg response time: ${this.calculateAverageResponseTime(responseTimes.slice(-chunkSize))}ms, ` +
+                    `error rate: ${(errorRate * 100).toFixed(1)}%)`);
+                currentConcurrency = newConcurrency;
+            }
+            // Progress reporting
+            if (config.onProgress) {
+                config.onProgress(Math.min(i + chunkSize, items.length), items.length);
+            }
+        }
+        console.log(`[ADAPTIVE-CONCURRENCY] Completed with final concurrency: ${currentConcurrency}, ` +
+            `avg response time: ${this.calculateAverageResponseTime(responseTimes)}ms`);
+        return results;
+    }
+    /**
+     * Calculate adjusted concurrency based on performance metrics
+     * PRD: "Increase by 1 if avg response < 500ms, Decrease by 2 if error rate > 5%"
+     */
+    static calculateAdjustedConcurrency(currentConcurrency, recentResponseTimes, errorRate, targetResponseTime) {
+        if (recentResponseTimes.length === 0) {
+            return currentConcurrency;
+        }
+        const avgResponseTime = this.calculateAverageResponseTime(recentResponseTimes);
+        // PRD: Decrease by 2 if error rate > 5%
+        if (errorRate > 0.05) {
+            return Math.max(2, currentConcurrency - 2);
+        }
+        // PRD: Increase by 1 if avg response < 500ms (fast responses)
+        if (avgResponseTime < 500) {
+            return Math.min(10, currentConcurrency + 1); // Max limit of 10 as per PRD
+        }
+        // Decrease if responses are much slower than target
+        if (avgResponseTime > targetResponseTime * 1.5) {
+            return Math.max(2, currentConcurrency - 1);
+        }
+        // Stay the same if performance is acceptable
+        return currentConcurrency;
+    }
+    /**
+     * Calculate average response time from array of times
+     */
+    static calculateAverageResponseTime(responseTimes) {
+        if (responseTimes.length === 0)
+            return 0;
+        return (responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length);
+    }
+    /**
+     * Enhanced processing with circuit breaker pattern
+     * PRD: "Never fail completely: Always provide meaningful output"
+     */
+    static async processConcurrentlyWithCircuitBreaker(items, processor, options) {
+        const config = {
+            failureThreshold: 0.5,
+            circuitBreakerTimeout: 30000,
+            ...options,
+        };
+        let circuitOpen = false;
+        let circuitOpenTime = 0;
+        let totalRequests = 0;
+        let failedRequests = 0;
+        const wrappedProcessor = async (item) => {
+            totalRequests++;
+            // Check if circuit should be closed again
+            if (circuitOpen &&
+                Date.now() - circuitOpenTime > config.circuitBreakerTimeout) {
+                console.log('[CIRCUIT-BREAKER] Attempting to close circuit');
+                circuitOpen = false;
+                failedRequests = 0;
+                totalRequests = 0;
+            }
+            // If circuit is open, use fallback or throw
+            if (circuitOpen) {
+                if (config.fallbackProcessor) {
+                    console.log('[CIRCUIT-BREAKER] Using fallback processor');
+                    return await config.fallbackProcessor(item);
+                }
+                else {
+                    throw new Error('Circuit breaker is open - too many failures');
+                }
+            }
+            try {
+                const result = await processor(item);
+                return result;
+            }
+            catch (error) {
+                failedRequests++;
+                // Check if we should open the circuit
+                const failureRate = failedRequests / totalRequests;
+                if (totalRequests >= 10 && failureRate >= config.failureThreshold) {
+                    console.warn(`[CIRCUIT-BREAKER] Opening circuit due to high failure rate: ${(failureRate * 100).toFixed(1)}%`);
+                    circuitOpen = true;
+                    circuitOpenTime = Date.now();
+                }
+                throw error;
+            }
+        };
+        // Use adaptive concurrency with circuit breaker
+        return await ConcurrencyManager.processConcurrentlyWithAdaptiveLimit(items, wrappedProcessor, config);
+    }
 }
 exports.ConcurrencyManager = ConcurrencyManager;
 
@@ -34649,6 +36471,22 @@ class GenericCache {
             return false;
         }
         return true;
+    }
+    /**
+     * Get all keys with a specific prefix
+     * Used for semantic cache operations
+     */
+    getKeysWithPrefix(prefix) {
+        const keys = [];
+        for (const key of this.cache.keys()) {
+            if (key.startsWith(prefix)) {
+                // Check if entry is still valid (not expired)
+                if (this.has(key)) {
+                    keys.push(key);
+                }
+            }
+        }
+        return keys;
     }
 }
 exports.GenericCache = GenericCache;
@@ -34922,7 +36760,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SecureFileNamer = void 0;
-exports.createLegacyFileName = createLegacyFileName;
 const crypto = __importStar(__nccwpck_require__(6982));
 const os = __importStar(__nccwpck_require__(857));
 const path = __importStar(__nccwpck_require__(6928));
@@ -35082,14 +36919,6 @@ class SecureFileNamer {
 exports.SecureFileNamer = SecureFileNamer;
 SecureFileNamer.processId = process.pid;
 SecureFileNamer.processStartTime = Date.now();
-/**
- * Legacy compatibility wrapper for existing timestamp-based naming
- * @deprecated Use SecureFileNamer.generateSecureFileName instead
- */
-function createLegacyFileName(prefix) {
-    console.warn(`Using legacy file naming for ${prefix}. Consider migrating to SecureFileNamer.`);
-    return SecureFileNamer.generateSecureFileName(prefix);
-}
 /**
  * Setup process cleanup handlers
  */

@@ -36,7 +36,8 @@ export interface ConsolidatedTheme {
     expansionDepth?: number;
     businessLogicPatterns?: string[];
     userFlowPatterns?: string[];
-    complexityScore?: number;
+    isAtomic?: boolean;
+    expansionReason?: string;
     consolidationSummary?: string;
     childThemeSummaries?: string[];
     combinedTechnicalDetails?: string;
@@ -62,8 +63,6 @@ export interface ConsolidationConfig {
     similarityThreshold: number;
     maxThemesPerParent: number;
     minThemesForParent: number;
-    confidenceWeight: number;
-    businessDomainWeight: number;
     maxHierarchyDepth: number;
     expansionEnabled: boolean;
     crossLevelSimilarityCheck: boolean;

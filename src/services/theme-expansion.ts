@@ -2,20 +2,20 @@ import { ConsolidatedTheme } from '../types/similarity-types';
 import { GenericCache } from '../utils/generic-cache';
 import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
-import { CodeChange, SmartContext } from '../utils/ai-code-analyzer';
 import { logInfo } from '../utils';
 import {
   ConcurrencyManager,
   ConcurrencyOptions,
 } from '../utils/concurrency-manager';
 import { SecureFileNamer } from '../utils/secure-file-namer';
+import {
+  AIExpansionDecisionService,
+  ExpansionDecision,
+} from './ai-expansion-decision-service';
 
 // Configuration for theme expansion
 export interface ExpansionConfig {
-  maxDepth: number; // Maximum hierarchy depth (default: 4)
-  minComplexityScore: number; // Minimum complexity to warrant expansion (default: 0.7)
-  minFilesForExpansion: number; // Minimum files required for expansion (default: 2)
-  businessImpactThreshold: number; // Minimum business impact for expansion (default: 0.6)
+  maxDepth: number; // Maximum hierarchy depth - set high to allow natural stopping
   concurrencyLimit: number; // Maximum concurrent operations (default: 5)
   maxRetries: number; // Maximum retry attempts (default: 3)
   retryDelay: number; // Base retry delay in ms (default: 1000)
@@ -26,10 +26,7 @@ export interface ExpansionConfig {
 }
 
 export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
-  maxDepth: 4,
-  minComplexityScore: 0.7,
-  minFilesForExpansion: 2,
-  businessImpactThreshold: 0.6,
+  maxDepth: 20, // Allow very deep natural expansion
   concurrencyLimit: 5,
   maxRetries: 3,
   retryDelay: 1000,
@@ -42,9 +39,7 @@ export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
 export interface ExpansionCandidate {
   theme: ConsolidatedTheme;
   parentTheme?: ConsolidatedTheme;
-  expansionReason: string;
-  complexityScore: number;
-  businessPatterns: string[];
+  expansionDecision: ExpansionDecision;
 }
 
 export interface SubThemeAnalysis {
@@ -61,15 +56,7 @@ export interface ExpansionRequest {
   theme: ConsolidatedTheme;
   parentTheme?: ConsolidatedTheme;
   depth: number;
-  context: ExpansionContext;
-}
-
-export interface ExpansionContext {
-  relevantFiles: string[];
-  codeChanges: CodeChange[];
-  smartContext: SmartContext;
-  businessScope: string;
-  parentBusinessLogic?: string;
+  context: ExpansionCandidate;
 }
 
 export interface ExpansionResult {
@@ -85,11 +72,13 @@ export class ThemeExpansionService {
   private claudeClient: ClaudeClient;
   private cache: GenericCache;
   private config: ExpansionConfig;
+  private aiDecisionService: AIExpansionDecisionService;
 
   constructor(anthropicApiKey: string, config: Partial<ExpansionConfig> = {}) {
     this.claudeClient = new ClaudeClient(anthropicApiKey);
     this.cache = new GenericCache(3600000); // 1 hour TTL
     this.config = { ...DEFAULT_EXPANSION_CONFIG, ...config };
+    this.aiDecisionService = new AIExpansionDecisionService(anthropicApiKey);
   }
 
   /**
@@ -214,7 +203,8 @@ export class ThemeExpansionService {
     // Check if theme is candidate for expansion
     const expansionCandidate = await this.evaluateExpansionCandidate(
       theme,
-      parentTheme
+      parentTheme,
+      currentDepth
     );
     if (!expansionCandidate) {
       // Still process existing child themes recursively
@@ -249,13 +239,13 @@ export class ThemeExpansionService {
       return { ...theme, childThemes: expandedChildren };
     }
 
-    // Create expansion request
+    // Create expansion request with the expansion candidate as context
     const expansionRequest: ExpansionRequest = {
       id: SecureFileNamer.generateHierarchicalId('expansion', theme.id),
       theme,
       parentTheme,
       depth: currentDepth,
-      context: await this.buildExpansionContext(theme, parentTheme),
+      context: expansionCandidate, // Pass the expansion candidate with AI decision
     };
 
     // Process expansion
@@ -347,60 +337,42 @@ export class ThemeExpansionService {
   }
 
   /**
-   * Evaluate if a theme is a candidate for expansion
+   * Evaluate if a theme is a candidate for expansion using AI-driven decisions
    */
   private async evaluateExpansionCandidate(
     theme: ConsolidatedTheme,
-    parentTheme?: ConsolidatedTheme
+    parentTheme?: ConsolidatedTheme,
+    currentDepth: number = 0
   ): Promise<ExpansionCandidate | null> {
-    // Basic checks
-    if (theme.affectedFiles.length < this.config.minFilesForExpansion) {
+    // Get sibling themes for context
+    const siblingThemes =
+      parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
+
+    // Let AI decide based on full context
+    const expansionDecision = await this.aiDecisionService.shouldExpandTheme(
+      theme,
+      currentDepth,
+      parentTheme,
+      siblingThemes
+    );
+
+    // Update theme with decision metadata
+    theme.isAtomic = expansionDecision.isAtomic;
+
+    // If theme is atomic or shouldn't expand, return null
+    if (!expansionDecision.shouldExpand) {
+      logInfo(
+        `Theme "${theme.name}" will not be expanded: ${expansionDecision.reasoning}`
+      );
       return null;
     }
 
-    // Calculate complexity score based on various factors
-    const complexityScore = this.calculateComplexityScore(theme);
-    if (complexityScore < this.config.minComplexityScore) {
-      return null;
-    }
-
-    // Analyze business patterns
-    const businessPatterns = await this.identifyBusinessPatterns(theme);
-    if (businessPatterns.length < 2) {
-      return null; // Need at least 2 distinct patterns for expansion
-    }
-
+    // Return candidate for expansion
     return {
       theme,
       parentTheme,
-      expansionReason: `Complex theme with ${businessPatterns.length} business patterns`,
-      complexityScore,
-      businessPatterns,
+      expansionDecision,
     };
-  }
-
-  /**
-   * Calculate complexity score for expansion candidacy
-   */
-  private calculateComplexityScore(theme: ConsolidatedTheme): number {
-    let score = 0;
-
-    // File count factor (normalized)
-    score += Math.min(theme.affectedFiles.length / 10, 0.3);
-
-    // Description length factor (complexity often correlates with description length)
-    score += Math.min(theme.description.length / 500, 0.2);
-
-    // Business impact factor
-    score += Math.min(theme.businessImpact.length / 300, 0.2);
-
-    // Code snippets diversity
-    score += Math.min(theme.codeSnippets.length / 20, 0.15);
-
-    // Child theme count (existing complexity)
-    score += Math.min(theme.childThemes.length / 5, 0.15);
-
-    return Math.min(score, 1.0);
   }
 
   /**
@@ -805,87 +777,6 @@ CRITICAL: Respond with ONLY valid JSON.
   }
 
   /**
-   * Identify distinct business patterns within a theme
-   */
-  private async identifyBusinessPatterns(
-    theme: ConsolidatedTheme
-  ): Promise<string[]> {
-    const cacheKey = `business_patterns_${theme.id}`;
-    const cached = this.cache.get(cacheKey);
-
-    if (cached) {
-      return cached as string[];
-    }
-
-    const prompt = `
-Analyze this code theme for distinct business logic patterns and user flows:
-
-Theme: ${theme.name}
-Description: ${theme.description}
-Business Impact: ${theme.businessImpact}
-Affected Files: ${theme.affectedFiles.join(', ')}
-
-Code Context:
-${theme.codeSnippets.slice(0, 3).join('\n---\n')}
-
-Identify distinct business patterns within this theme. Look for:
-1. Different user interaction flows
-2. Separate business logic concerns
-3. Distinct functional areas
-4. Different data processing patterns
-5. Separate integration points
-
-Return a JSON array of distinct business pattern names (max 6):
-["pattern1", "pattern2", ...]
-
-Focus on business value, not technical implementation details.
-`;
-
-    try {
-      const response = await this.claudeClient.callClaude(prompt);
-
-      const extractionResult = JsonExtractor.extractAndValidateJson(
-        response,
-        'array',
-        undefined
-      );
-
-      if (!extractionResult.success) {
-        logInfo(
-          `Failed to parse business patterns for ${theme.name}: ${extractionResult.error}`
-        );
-        return [];
-      }
-
-      const patterns = extractionResult.data as string[];
-
-      this.cache.set(cacheKey, patterns, 3600000); // Cache for 1 hour
-      return patterns;
-    } catch (error) {
-      logInfo(
-        `Failed to identify business patterns for ${theme.name}: ${error}`
-      );
-      return [];
-    }
-  }
-
-  /**
-   * Build expansion context for AI analysis
-   */
-  private async buildExpansionContext(
-    theme: ConsolidatedTheme,
-    parentTheme?: ConsolidatedTheme
-  ): Promise<ExpansionContext> {
-    return {
-      relevantFiles: theme.affectedFiles,
-      codeChanges: [], // Would be populated from theme context
-      smartContext: {} as SmartContext, // Would be populated from theme context
-      businessScope: theme.businessImpact,
-      parentBusinessLogic: parentTheme?.businessImpact,
-    };
-  }
-
-  /**
    * Process a single expansion request
    */
   private async processExpansionRequest(
@@ -931,63 +822,84 @@ Focus on business value, not technical implementation details.
   }
 
   /**
-   * Analyze theme for potential sub-themes using AI
+   * Analyze theme for potential sub-themes using expansion decision
    */
   private async analyzeThemeForSubThemes(
     request: ExpansionRequest
   ): Promise<SubThemeAnalysis> {
     const { theme, parentTheme, depth } = request;
+    const expansionCandidate = request.context;
+
+    // We already have the expansion decision from evaluateExpansionCandidate
+    if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
+      // Convert suggested sub-themes to ConsolidatedThemes
+      const subThemes = this.convertSuggestedToConsolidatedThemes(
+        expansionCandidate.expansionDecision.suggestedSubThemes,
+        theme
+      );
+
+      return {
+        subThemes,
+        shouldExpand: true,
+        confidence: 0.8,
+        reasoning: expansionCandidate.expansionDecision.reasoning,
+        businessLogicPatterns: [],
+        userFlowPatterns: [],
+      };
+    }
+
+    // Fallback: Ask for sub-theme analysis if not already provided
+    const siblingThemes =
+      parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
 
     const prompt = `
-Analyze this code theme for potential sub-theme expansion:
+You already decided this theme should be expanded. Now create the specific sub-themes.
 
-THEME TO ANALYZE:
+THEME TO EXPAND:
 Name: ${theme.name}
 Description: ${theme.description}
 Business Impact: ${theme.businessImpact}
 Current Level: ${theme.level}
-Expansion Depth: ${depth}
+Depth: ${depth}
 Files: ${theme.affectedFiles.join(', ')}
 
 ${
   parentTheme
-    ? `PARENT THEME CONTEXT:
-Name: ${parentTheme.name}
-Business Logic: ${parentTheme.businessImpact}`
+    ? `PARENT CONTEXT: ${parentTheme.name} - ${parentTheme.businessImpact}`
     : ''
 }
 
-CODE CONTEXT:
-${theme.codeSnippets.slice(0, 5).join('\n---\n')}
-
-ANALYSIS TASK:
-Create concise sub-themes if distinct business functions exist.
-
-EXPANSION CRITERIA:
-- Different user capabilities (not implementation details)
-- Separate workflows or processes
-- Only if genuinely distinct business value
-
-Return JSON:
-{
-  "shouldExpand": boolean,
-  "confidence": number (0-1),
-  "reasoning": "brief explanation (max 15 words)",
-  "businessLogicPatterns": ["pattern1", "pattern2"],
-  "userFlowPatterns": ["flow1", "flow2"],
-  "subThemes": [
-    {
-      "name": "Sub-theme name (max 8 words)",
-      "description": "What changed (max 15 words)",
-      "businessImpact": "User benefit (max 12 words)",
-      "relevantFiles": ["file1.ts", "file2.ts"],
-      "confidence": number (0-1)
-    }
-  ]
+${
+  siblingThemes.length > 0
+    ? `SIBLING THEMES (avoid duplication):
+${siblingThemes.map((s) => `- ${s.name}`).join('\n')}
+`
+    : ''
 }
 
-Only create sub-themes if there are genuinely distinct business concerns.
-`;
+CODE TO ANALYZE:
+${theme.codeSnippets.slice(0, 5).join('\n---\n')}
+
+CREATE SUB-THEMES:
+${
+  depth < 3
+    ? `Focus on distinct business capabilities or user features within this theme.`
+    : `Focus on atomic, testable units (5-15 lines, single responsibility).`
+}
+
+Return JSON with specific sub-themes:
+{
+  "subThemes": [
+    {
+      "name": "What this accomplishes (max 8 words)",
+      "description": "What changes (max 15 words)",
+      "businessImpact": "User benefit (max 12 words)",
+      "relevantFiles": ["specific files for this sub-theme"],
+      "rationale": "Why this is separate (max 15 words)"
+    }
+  ],
+  "reasoning": "Overall expansion rationale (max 20 words)"
+}`;
 
     try {
       const response = await this.claudeClient.callClaude(prompt);
@@ -995,81 +907,47 @@ Only create sub-themes if there are genuinely distinct business concerns.
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,
         'object',
-        ['shouldExpand', 'confidence', 'reasoning', 'subThemes']
+        ['subThemes']
       );
 
       if (!extractionResult.success) {
         logInfo(
-          `Failed to parse expansion analysis for ${theme.name}: ${extractionResult.error}`
+          `Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`
         );
-        // Return no expansion
         return {
           subThemes: [],
           shouldExpand: false,
           confidence: 0.3,
-          reasoning: `Analysis parsing failed: ${extractionResult.error}`,
+          reasoning: `Sub-theme parsing failed: ${extractionResult.error}`,
           businessLogicPatterns: [],
           userFlowPatterns: [],
         };
       }
 
       const analysis = extractionResult.data as {
-        shouldExpand?: boolean;
-        confidence?: number;
-        reasoning?: string;
-        businessLogicPatterns?: string[];
-        userFlowPatterns?: string[];
         subThemes?: Array<{
           name: string;
           description: string;
           businessImpact: string;
           relevantFiles: string[];
-          confidence: number;
+          rationale: string;
         }>;
+        reasoning?: string;
       };
 
       // Convert to ConsolidatedTheme objects
-      const subThemes: ConsolidatedTheme[] = (analysis.subThemes || []).map(
-        (
-          subTheme: {
-            name: string;
-            description: string;
-            businessImpact: string;
-            relevantFiles: string[];
-            confidence: number;
-          },
-          index: number
-        ) => ({
-          id: SecureFileNamer.generateHierarchicalId('sub', theme.id, index),
-          name: subTheme.name,
-          description: subTheme.description,
-          level: theme.level + 1,
-          parentId: theme.id,
-          childThemes: [],
-          affectedFiles: subTheme.relevantFiles.filter((file: string) =>
-            theme.affectedFiles.includes(file)
-          ),
-          confidence: subTheme.confidence,
-          businessImpact: subTheme.businessImpact,
-          codeSnippets: theme.codeSnippets.filter((snippet) =>
-            subTheme.relevantFiles.some((file: string) =>
-              snippet.includes(file)
-            )
-          ),
-          context: theme.context,
-          lastAnalysis: new Date(),
-          sourceThemes: [theme.id],
-          consolidationMethod: 'hierarchy' as const,
-        })
+      const subThemes = this.convertSuggestedToConsolidatedThemes(
+        analysis.subThemes || [],
+        theme
       );
 
       return {
         subThemes,
-        shouldExpand: (analysis.shouldExpand || false) && subThemes.length > 0,
-        confidence: analysis.confidence || 0.5,
-        reasoning: analysis.reasoning || 'No reasoning provided',
-        businessLogicPatterns: analysis.businessLogicPatterns || [],
-        userFlowPatterns: analysis.userFlowPatterns || [],
+        shouldExpand: subThemes.length > 0,
+        confidence: 0.8,
+        reasoning: analysis.reasoning || 'Sub-themes identified',
+        businessLogicPatterns: [],
+        userFlowPatterns: [],
       };
     } catch (error) {
       logInfo(`AI analysis failed for theme ${theme.name}: ${error}`);
@@ -1082,5 +960,55 @@ Only create sub-themes if there are genuinely distinct business concerns.
         userFlowPatterns: [],
       };
     }
+  }
+
+  /**
+   * Convert suggested sub-themes to ConsolidatedTheme objects
+   */
+  private convertSuggestedToConsolidatedThemes(
+    suggestedThemes: Array<{
+      name: string;
+      description: string;
+      files?: string[];
+      businessImpact?: string;
+      relevantFiles?: string[];
+      rationale?: string;
+    }>,
+    parentTheme: ConsolidatedTheme
+  ): ConsolidatedTheme[] {
+    return suggestedThemes.map((suggested, index) => {
+      const relevantFiles = suggested.files || suggested.relevantFiles || [];
+      const validFiles = relevantFiles.filter((file) =>
+        parentTheme.affectedFiles.includes(file)
+      );
+
+      return {
+        id: SecureFileNamer.generateHierarchicalId(
+          'sub',
+          parentTheme.id,
+          index
+        ),
+        name: suggested.name,
+        description: suggested.description,
+        level: parentTheme.level + 1,
+        parentId: parentTheme.id,
+        childThemes: [],
+        affectedFiles:
+          validFiles.length > 0 ? validFiles : [parentTheme.affectedFiles[0]], // Fallback to first parent file
+        confidence: 0.8,
+        businessImpact:
+          suggested.businessImpact ||
+          suggested.rationale ||
+          suggested.description,
+        codeSnippets: parentTheme.codeSnippets.filter((snippet) =>
+          validFiles.some((file) => snippet.includes(file))
+        ),
+        context: `${parentTheme.context}\n\nSub-theme: ${suggested.description}`,
+        lastAnalysis: new Date(),
+        sourceThemes: [parentTheme.id],
+        consolidationMethod: 'expansion' as const,
+        isAtomic: parentTheme.level >= 3, // Deeper levels likely atomic
+      };
+    });
   }
 }

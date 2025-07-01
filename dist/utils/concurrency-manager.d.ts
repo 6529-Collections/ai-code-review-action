@@ -82,13 +82,11 @@ export declare class ConcurrencyManager {
      * @param processor Processing function
      * @param maxRetries Maximum number of retry attempts
      * @param baseDelay Base delay between retries in milliseconds
-     * @param backoffMultiplier Multiplier for exponential backoff
      * @param onError Optional error callback
      * @returns Processed result
      * @throws Error if all retry attempts fail
      */
-    static processWithRetry<T, R>(item: T, processor: (item: T) => Promise<R>, maxRetries?: number, baseDelay?: number, _backoffMultiplier?: number, // Legacy parameter, now unused
-    onError?: (error: Error, item: T, retryCount: number) => void, enableJitter?: boolean, context?: string): Promise<R>;
+    static processWithRetry<T, R>(item: T, processor: (item: T) => Promise<R>, maxRetries?: number, baseDelay?: number, onError?: (error: Error, item: T, retryCount: number) => void, enableJitter?: boolean, context?: string): Promise<R>;
     /**
      * Calculate exponential backoff delay with jitter and maximum cap.
      *
@@ -121,4 +119,43 @@ export declare class ConcurrencyManager {
             item: T;
         }>;
     };
+    /**
+     * Enhanced processing with dynamic concurrency adjustment based on API performance
+     * PRD: "Adaptive concurrency: Start with 5 concurrent operations, adjust based on API response times"
+     */
+    static processConcurrentlyWithAdaptiveLimit<T, R>(items: T[], processor: (item: T) => Promise<R>, options?: ConcurrencyOptions<T> & {
+        /** Initial concurrency limit (default: 5 as per PRD) */
+        initialConcurrency?: number;
+        /** Target response time in ms (default: 2000ms) */
+        targetResponseTime?: number;
+        /** How often to adjust concurrency (default: every 10 operations) */
+        adjustmentInterval?: number;
+    }): Promise<Array<R | {
+        error: Error;
+        item: T;
+    }>>;
+    /**
+     * Calculate adjusted concurrency based on performance metrics
+     * PRD: "Increase by 1 if avg response < 500ms, Decrease by 2 if error rate > 5%"
+     */
+    private static calculateAdjustedConcurrency;
+    /**
+     * Calculate average response time from array of times
+     */
+    private static calculateAverageResponseTime;
+    /**
+     * Enhanced processing with circuit breaker pattern
+     * PRD: "Never fail completely: Always provide meaningful output"
+     */
+    static processConcurrentlyWithCircuitBreaker<T, R>(items: T[], processor: (item: T) => Promise<R>, options?: ConcurrencyOptions<T> & {
+        /** Circuit breaker failure threshold (default: 0.5 = 50% failures) */
+        failureThreshold?: number;
+        /** Circuit breaker timeout before retry (default: 30s) */
+        circuitBreakerTimeout?: number;
+        /** Fallback processor for when circuit is open */
+        fallbackProcessor?: (item: T) => Promise<R>;
+    }): Promise<Array<R | {
+        error: Error;
+        item: T;
+    }>>;
 }

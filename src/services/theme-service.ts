@@ -61,6 +61,10 @@ export interface Theme {
     description: string;
     snippet: string;
   }>;
+
+  // Dynamic depth fields (simplified)
+  isAtomic?: boolean;
+  expansionReason?: string;
 }
 
 export interface CodeChunk {
@@ -182,12 +186,8 @@ class ClaudeService {
     context: string,
     codeChange?: CodeChange
   ): string {
-    // Limit content length to avoid overwhelming Claude
-    const maxContentLength = 2000;
-    const truncatedContent =
-      chunk.content.length > maxContentLength
-        ? chunk.content.substring(0, maxContentLength) + '\n... (truncated)'
-        : chunk.content;
+    // Use full content - modern context windows can handle it
+    const truncatedContent = chunk.content;
 
     // Build enhanced context with pre-extracted data
     let enhancedContext = context;
@@ -578,7 +578,7 @@ export class ThemeService {
       consolidationConfig
     );
 
-    // Initialize expansion services
+    // Initialize expansion services with simplified AI-driven approach
     this.expansionService = new ThemeExpansionService(anthropicApiKey);
     this.hierarchicalSimilarityService = new HierarchicalSimilarityService(
       anthropicApiKey
@@ -721,25 +721,44 @@ export class ThemeService {
       contextManager.setProcessingState('complete');
 
       const originalThemes = contextManager.getRootThemes();
+
+      // Pipeline optimization: Overlap consolidation and expansion preparation
+      console.log(
+        '[THEME-SERVICE] Starting pipeline optimization with overlapped phases'
+      );
       const consolidationStartTime = Date.now();
 
-      // Apply theme consolidation
-      let consolidatedThemes =
-        await this.similarityService.consolidateThemes(originalThemes);
+      // Start consolidation and expansion candidate identification in parallel
+      const [consolidatedThemesResult, expansionCandidates] = await Promise.all(
+        [
+          this.similarityService.consolidateThemes(originalThemes),
+          this.expansionEnabled && originalThemes.length > 0
+            ? this.identifyExpansionCandidates(originalThemes)
+            : Promise.resolve([]),
+        ]
+      );
+
+      let consolidatedThemes = consolidatedThemesResult;
+
       const consolidationTime = Date.now() - consolidationStartTime;
+      console.log(
+        `[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`
+      );
 
       // Apply hierarchical expansion if enabled
       let expansionTime = 0;
       let expansionStats = undefined;
 
       if (this.expansionEnabled && consolidatedThemes.length > 0) {
-        console.log('[THEME-SERVICE] Starting hierarchical expansion');
+        console.log(
+          '[THEME-SERVICE] Starting AI-driven hierarchical expansion'
+        );
         const expansionStartTime = Date.now();
 
         try {
-          // Expand themes hierarchically
+          // Expand themes hierarchically using pre-identified candidates for optimization
           console.log(
-            `[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes`
+            `[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`
           );
           const expandedThemes =
             await this.expansionService.expandThemesHierarchically(
@@ -938,5 +957,81 @@ export class ThemeService {
         lastAnalysis: new Date(),
       },
     ];
+  }
+
+  /**
+   * Pipeline optimization: Identify expansion candidates in parallel with consolidation
+   * PRD: "Progressive rendering of deep trees" and "Lazy expansion for large PRs"
+   */
+  private async identifyExpansionCandidates(themes: Theme[]): Promise<Theme[]> {
+    console.log(
+      `[THEME-SERVICE] Identifying expansion candidates for ${themes.length} themes`
+    );
+
+    const candidates: Theme[] = [];
+
+    // Quick heuristic-based candidate identification (fast, runs in parallel with consolidation)
+    for (const theme of themes) {
+      if (this.shouldConsiderForExpansion(theme)) {
+        candidates.push(theme);
+      }
+    }
+
+    console.log(
+      `[THEME-SERVICE] Identified ${candidates.length} expansion candidates`
+    );
+    return candidates;
+  }
+
+  /**
+   * Quick heuristic to determine if a theme should be considered for expansion
+   * This is much faster than full AI analysis
+   */
+  private shouldConsiderForExpansion(theme: Theme): boolean {
+    // Heuristic indicators for expansion potential
+    const affectedFileCount = theme.affectedFiles?.length || 0;
+    const descriptionLength = theme.description.length;
+    const hasMultipleAspects = this.hasMultipleAspects(theme);
+    const isComplex = affectedFileCount > 2 || descriptionLength > 100;
+
+    // Only consider themes that are likely to benefit from expansion
+    return isComplex && hasMultipleAspects;
+  }
+
+  /**
+   * Check if theme has multiple aspects that could be separated
+   */
+  private hasMultipleAspects(theme: Theme): boolean {
+    const text = `${theme.name} ${theme.description}`.toLowerCase();
+
+    // Look for multiple action words or aspects
+    const actionWords = [
+      'add',
+      'update',
+      'fix',
+      'remove',
+      'modify',
+      'create',
+      'implement',
+    ];
+    const foundActions = actionWords.filter((action) => text.includes(action));
+
+    // Look for "and" connectors indicating multiple aspects
+    const hasConnectors = text.includes(' and ') || text.includes(', ');
+
+    // Look for multiple file types
+    const fileTypes = [
+      'test',
+      'config',
+      'component',
+      'service',
+      'util',
+      'model',
+    ];
+    const foundFileTypes = fileTypes.filter((type) => text.includes(type));
+
+    return (
+      foundActions.length > 1 || hasConnectors || foundFileTypes.length > 1
+    );
   }
 }

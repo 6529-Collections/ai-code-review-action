@@ -207,7 +207,6 @@ export class ConcurrencyManager {
           processor,
           config.maxRetries,
           config.retryDelay,
-          config.retryBackoffMultiplier,
           config.onError,
           config.enableJitter,
           config.context
@@ -289,7 +288,6 @@ export class ConcurrencyManager {
    * @param processor Processing function
    * @param maxRetries Maximum number of retry attempts
    * @param baseDelay Base delay between retries in milliseconds
-   * @param backoffMultiplier Multiplier for exponential backoff
    * @param onError Optional error callback
    * @returns Processed result
    * @throws Error if all retry attempts fail
@@ -299,8 +297,6 @@ export class ConcurrencyManager {
     processor: (item: T) => Promise<R>,
     maxRetries: number = 3,
     baseDelay: number = 1000,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _backoffMultiplier: number = 2, // Legacy parameter, now unused
     onError?: (error: Error, item: T, retryCount: number) => void,
     enableJitter: boolean = true,
     context: string = 'general'
@@ -416,5 +412,231 @@ export class ConcurrencyManager {
     }
 
     return { successful, failed };
+  }
+
+  /**
+   * Enhanced processing with dynamic concurrency adjustment based on API performance
+   * PRD: "Adaptive concurrency: Start with 5 concurrent operations, adjust based on API response times"
+   */
+  static async processConcurrentlyWithAdaptiveLimit<T, R>(
+    items: T[],
+    processor: (item: T) => Promise<R>,
+    options?: ConcurrencyOptions<T> & {
+      /** Initial concurrency limit (default: 5 as per PRD) */
+      initialConcurrency?: number;
+      /** Target response time in ms (default: 2000ms) */
+      targetResponseTime?: number;
+      /** How often to adjust concurrency (default: every 10 operations) */
+      adjustmentInterval?: number;
+    }
+  ): Promise<Array<R | { error: Error; item: T }>> {
+    const config = {
+      ...DEFAULT_OPTIONS,
+      initialConcurrency: 5, // PRD requirement
+      targetResponseTime: 2000, // 2 seconds target
+      adjustmentInterval: 10,
+      ...options,
+    };
+
+    let currentConcurrency = config.initialConcurrency!;
+    const results: Array<R | { error: Error; item: T }> = [];
+    const responseTimes: number[] = [];
+    const errorCounts: number[] = [];
+
+    console.log(
+      `[ADAPTIVE-CONCURRENCY] Starting with ${currentConcurrency} concurrent operations`
+    );
+
+    // Process items in chunks to allow for concurrency adjustment
+    const chunkSize = config.adjustmentInterval!;
+
+    for (let i = 0; i < items.length; i += chunkSize) {
+      const chunk = items.slice(i, i + chunkSize);
+
+      // Process chunk with current concurrency limit
+      const chunkResults =
+        await ConcurrencyManager.processConcurrentlyWithLimit(
+          chunk,
+          async (item: T) => {
+            const itemStartTime = Date.now();
+            try {
+              const result = await processor(item);
+              responseTimes.push(Date.now() - itemStartTime);
+              return result;
+            } catch (error) {
+              responseTimes.push(Date.now() - itemStartTime);
+              throw error;
+            }
+          },
+          {
+            ...config,
+            concurrencyLimit: currentConcurrency,
+            dynamicConcurrency: false, // We're handling adjustment manually
+          }
+        );
+
+      results.push(...chunkResults);
+
+      // Calculate metrics for this chunk
+      const chunkErrors = chunkResults.filter(
+        (r) => r && typeof r === 'object' && 'error' in r
+      ).length;
+      const errorRate = chunkErrors / chunk.length;
+      errorCounts.push(chunkErrors);
+
+      // Adjust concurrency based on performance
+      const newConcurrency = this.calculateAdjustedConcurrency(
+        currentConcurrency,
+        responseTimes.slice(-chunkSize), // Recent response times
+        errorRate,
+        config.targetResponseTime!
+      );
+
+      if (newConcurrency !== currentConcurrency) {
+        console.log(
+          `[ADAPTIVE-CONCURRENCY] Adjusting concurrency: ${currentConcurrency} → ${newConcurrency} ` +
+            `(avg response time: ${this.calculateAverageResponseTime(responseTimes.slice(-chunkSize))}ms, ` +
+            `error rate: ${(errorRate * 100).toFixed(1)}%)`
+        );
+        currentConcurrency = newConcurrency;
+      }
+
+      // Progress reporting
+      if (config.onProgress) {
+        config.onProgress(Math.min(i + chunkSize, items.length), items.length);
+      }
+    }
+
+    console.log(
+      `[ADAPTIVE-CONCURRENCY] Completed with final concurrency: ${currentConcurrency}, ` +
+        `avg response time: ${this.calculateAverageResponseTime(responseTimes)}ms`
+    );
+
+    return results;
+  }
+
+  /**
+   * Calculate adjusted concurrency based on performance metrics
+   * PRD: "Increase by 1 if avg response < 500ms, Decrease by 2 if error rate > 5%"
+   */
+  private static calculateAdjustedConcurrency(
+    currentConcurrency: number,
+    recentResponseTimes: number[],
+    errorRate: number,
+    targetResponseTime: number
+  ): number {
+    if (recentResponseTimes.length === 0) {
+      return currentConcurrency;
+    }
+
+    const avgResponseTime =
+      this.calculateAverageResponseTime(recentResponseTimes);
+
+    // PRD: Decrease by 2 if error rate > 5%
+    if (errorRate > 0.05) {
+      return Math.max(2, currentConcurrency - 2);
+    }
+
+    // PRD: Increase by 1 if avg response < 500ms (fast responses)
+    if (avgResponseTime < 500) {
+      return Math.min(10, currentConcurrency + 1); // Max limit of 10 as per PRD
+    }
+
+    // Decrease if responses are much slower than target
+    if (avgResponseTime > targetResponseTime * 1.5) {
+      return Math.max(2, currentConcurrency - 1);
+    }
+
+    // Stay the same if performance is acceptable
+    return currentConcurrency;
+  }
+
+  /**
+   * Calculate average response time from array of times
+   */
+  private static calculateAverageResponseTime(responseTimes: number[]): number {
+    if (responseTimes.length === 0) return 0;
+    return (
+      responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length
+    );
+  }
+
+  /**
+   * Enhanced processing with circuit breaker pattern
+   * PRD: "Never fail completely: Always provide meaningful output"
+   */
+  static async processConcurrentlyWithCircuitBreaker<T, R>(
+    items: T[],
+    processor: (item: T) => Promise<R>,
+    options?: ConcurrencyOptions<T> & {
+      /** Circuit breaker failure threshold (default: 0.5 = 50% failures) */
+      failureThreshold?: number;
+      /** Circuit breaker timeout before retry (default: 30s) */
+      circuitBreakerTimeout?: number;
+      /** Fallback processor for when circuit is open */
+      fallbackProcessor?: (item: T) => Promise<R>;
+    }
+  ): Promise<Array<R | { error: Error; item: T }>> {
+    const config = {
+      failureThreshold: 0.5,
+      circuitBreakerTimeout: 30000,
+      ...options,
+    };
+
+    let circuitOpen = false;
+    let circuitOpenTime = 0;
+    let totalRequests = 0;
+    let failedRequests = 0;
+
+    const wrappedProcessor = async (item: T): Promise<R> => {
+      totalRequests++;
+
+      // Check if circuit should be closed again
+      if (
+        circuitOpen &&
+        Date.now() - circuitOpenTime > config.circuitBreakerTimeout!
+      ) {
+        console.log('[CIRCUIT-BREAKER] Attempting to close circuit');
+        circuitOpen = false;
+        failedRequests = 0;
+        totalRequests = 0;
+      }
+
+      // If circuit is open, use fallback or throw
+      if (circuitOpen) {
+        if (config.fallbackProcessor) {
+          console.log('[CIRCUIT-BREAKER] Using fallback processor');
+          return await config.fallbackProcessor(item);
+        } else {
+          throw new Error('Circuit breaker is open - too many failures');
+        }
+      }
+
+      try {
+        const result = await processor(item);
+        return result;
+      } catch (error) {
+        failedRequests++;
+
+        // Check if we should open the circuit
+        const failureRate = failedRequests / totalRequests;
+        if (totalRequests >= 10 && failureRate >= config.failureThreshold!) {
+          console.warn(
+            `[CIRCUIT-BREAKER] Opening circuit due to high failure rate: ${(failureRate * 100).toFixed(1)}%`
+          );
+          circuitOpen = true;
+          circuitOpenTime = Date.now();
+        }
+
+        throw error;
+      }
+    };
+
+    // Use adaptive concurrency with circuit breaker
+    return await ConcurrencyManager.processConcurrentlyWithAdaptiveLimit(
+      items,
+      wrappedProcessor,
+      config
+    );
   }
 }

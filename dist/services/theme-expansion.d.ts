@@ -1,10 +1,7 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { CodeChange, SmartContext } from '../utils/ai-code-analyzer';
+import { ExpansionDecision } from './ai-expansion-decision-service';
 export interface ExpansionConfig {
     maxDepth: number;
-    minComplexityScore: number;
-    minFilesForExpansion: number;
-    businessImpactThreshold: number;
     concurrencyLimit: number;
     maxRetries: number;
     retryDelay: number;
@@ -17,9 +14,7 @@ export declare const DEFAULT_EXPANSION_CONFIG: ExpansionConfig;
 export interface ExpansionCandidate {
     theme: ConsolidatedTheme;
     parentTheme?: ConsolidatedTheme;
-    expansionReason: string;
-    complexityScore: number;
-    businessPatterns: string[];
+    expansionDecision: ExpansionDecision;
 }
 export interface SubThemeAnalysis {
     subThemes: ConsolidatedTheme[];
@@ -34,14 +29,7 @@ export interface ExpansionRequest {
     theme: ConsolidatedTheme;
     parentTheme?: ConsolidatedTheme;
     depth: number;
-    context: ExpansionContext;
-}
-export interface ExpansionContext {
-    relevantFiles: string[];
-    codeChanges: CodeChange[];
-    smartContext: SmartContext;
-    businessScope: string;
-    parentBusinessLogic?: string;
+    context: ExpansionCandidate;
 }
 export interface ExpansionResult {
     requestId: string;
@@ -55,6 +43,7 @@ export declare class ThemeExpansionService {
     private claudeClient;
     private cache;
     private config;
+    private aiDecisionService;
     constructor(anthropicApiKey: string, config?: Partial<ExpansionConfig>);
     /**
      * Process items concurrently with limit and retry logic
@@ -69,13 +58,9 @@ export declare class ThemeExpansionService {
      */
     private expandThemeRecursively;
     /**
-     * Evaluate if a theme is a candidate for expansion
+     * Evaluate if a theme is a candidate for expansion using AI-driven decisions
      */
     private evaluateExpansionCandidate;
-    /**
-     * Calculate complexity score for expansion candidacy
-     */
-    private calculateComplexityScore;
     /**
      * Deduplicate sub-themes using AI to identify duplicates
      */
@@ -97,19 +82,15 @@ export declare class ThemeExpansionService {
      */
     private calculateOptimalBatchSize;
     /**
-     * Identify distinct business patterns within a theme
-     */
-    private identifyBusinessPatterns;
-    /**
-     * Build expansion context for AI analysis
-     */
-    private buildExpansionContext;
-    /**
      * Process a single expansion request
      */
     private processExpansionRequest;
     /**
-     * Analyze theme for potential sub-themes using AI
+     * Analyze theme for potential sub-themes using expansion decision
      */
     private analyzeThemeForSubThemes;
+    /**
+     * Convert suggested sub-themes to ConsolidatedTheme objects
+     */
+    private convertSuggestedToConsolidatedThemes;
 }

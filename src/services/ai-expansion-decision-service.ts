@@ -1,0 +1,184 @@
+import { ConsolidatedTheme } from '../types/similarity-types';
+import { ClaudeClient } from '../utils/claude-client';
+import { JsonExtractor } from '../utils/json-extractor';
+import { logInfo } from '../utils';
+import { CodeStructureAnalyzer } from './code-structure-analyzer';
+import { DynamicPromptBuilder } from './dynamic-prompt-builder';
+
+/**
+ * Simplified AI-driven expansion decision service
+ * Implements PRD vision: "AI decides when further decomposition is needed"
+ */
+export class AIExpansionDecisionService {
+  private claudeClient: ClaudeClient;
+  private decisionCache: Map<string, ExpansionDecision>;
+  private codeAnalyzer: CodeStructureAnalyzer;
+  private promptBuilder: DynamicPromptBuilder;
+
+  constructor(anthropicApiKey: string) {
+    this.claudeClient = new ClaudeClient(anthropicApiKey);
+    this.decisionCache = new Map();
+    this.codeAnalyzer = new CodeStructureAnalyzer();
+    this.promptBuilder = new DynamicPromptBuilder();
+  }
+
+  /**
+   * Main decision point: Should this theme be expanded?
+   * Uses intelligent code analysis and dynamic prompting for optimal decisions
+   */
+  async shouldExpandTheme(
+    theme: ConsolidatedTheme,
+    currentDepth: number,
+    parentTheme?: ConsolidatedTheme,
+    siblingThemes?: ConsolidatedTheme[]
+  ): Promise<ExpansionDecision> {
+    // Enhanced cache check with analysis hash
+    const analysisHash = await this.getAnalysisHash(theme);
+    const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
+    if (this.decisionCache.has(cacheKey)) {
+      return this.decisionCache.get(cacheKey)!;
+    }
+
+    // Very conservative atomic check - let AI decide most cases
+    if (this.isObviouslyAtomic(theme)) {
+      const decision: ExpansionDecision = {
+        shouldExpand: false,
+        isAtomic: true,
+        reasoning: 'Trivial change with minimal complexity',
+        suggestedSubThemes: null,
+      };
+      this.decisionCache.set(cacheKey, decision);
+      return decision;
+    }
+
+    // Analyze code structure for intelligent hints
+    const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
+
+    // Build dynamic, context-aware prompt
+    const prompt = this.promptBuilder.buildExpansionPrompt(
+      theme,
+      currentDepth,
+      codeAnalysis,
+      parentTheme,
+      siblingThemes
+    );
+
+    logInfo(
+      `Enhanced AI analysis for "${theme.name}": ${codeAnalysis.functionCount} functions, ${codeAnalysis.changeTypes.length} change types, ${codeAnalysis.expansionHints.length} hints`
+    );
+
+    const decision = await this.getAIDecision(prompt);
+
+    this.decisionCache.set(cacheKey, decision);
+    return decision;
+  }
+
+  /**
+   * Generate a simple hash for theme analysis caching
+   */
+  private async getAnalysisHash(theme: ConsolidatedTheme): Promise<string> {
+    const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
+    // Simple hash - in production you might want a proper hash function
+    return Buffer.from(content).toString('base64').slice(0, 16);
+  }
+
+  /**
+   * Simple check for obviously atomic changes - extremely conservative
+   */
+  private isObviouslyAtomic(theme: ConsolidatedTheme): boolean {
+    // Only stop expansion for truly trivial changes
+    // Almost everything should go through AI analysis for natural decomposition
+    if (theme.affectedFiles.length === 1) {
+      const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+      const description = theme.description.toLowerCase();
+
+      // Only consider atomic if: very few lines AND simple operation
+      return (
+        totalLines < 3 &&
+        !description.includes('refactor') &&
+        !description.includes('update') &&
+        !description.includes('improve') &&
+        !description.includes('enhance') &&
+        !description.includes('modify')
+      );
+    }
+    return false;
+  }
+
+  /**
+   * Get AI decision from Claude
+   */
+  private async getAIDecision(prompt: string): Promise<ExpansionDecision> {
+    try {
+      const response = await this.claudeClient.callClaude(prompt);
+
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        ['shouldExpand', 'reasoning']
+      );
+
+      if (extractionResult.success) {
+        const data = extractionResult.data as {
+          shouldExpand?: boolean;
+          isAtomic?: boolean;
+          reasoning?: string;
+          suggestedSubThemes?: Array<{
+            name: string;
+            description: string;
+            files: string[];
+            rationale: string;
+          }>;
+        };
+
+        return {
+          shouldExpand: data.shouldExpand ?? false,
+          isAtomic: data.isAtomic ?? false,
+          reasoning: data.reasoning ?? 'No reasoning provided',
+          suggestedSubThemes: data.suggestedSubThemes || null,
+        };
+      }
+
+      // Fallback on parsing error
+      logInfo(
+        `Failed to parse AI expansion decision: ${extractionResult.error}`
+      );
+      return {
+        shouldExpand: false,
+        isAtomic: false,
+        reasoning: 'Failed to parse AI response',
+        suggestedSubThemes: null,
+      };
+    } catch (error) {
+      logInfo(`AI expansion decision failed: ${error}`);
+      return {
+        shouldExpand: false,
+        isAtomic: false,
+        reasoning: `AI analysis failed: ${error}`,
+        suggestedSubThemes: null,
+      };
+    }
+  }
+
+  /**
+   * Clear the decision cache
+   */
+  clearCache(): void {
+    this.decisionCache.clear();
+  }
+}
+
+/**
+ * Simplified expansion decision structure
+ */
+export interface ExpansionDecision {
+  shouldExpand: boolean;
+  isAtomic: boolean;
+  reasoning: string;
+  suggestedSubThemes: Array<{
+    name: string;
+    description: string;
+    files: string[];
+    rationale: string;
+  }> | null;
+}

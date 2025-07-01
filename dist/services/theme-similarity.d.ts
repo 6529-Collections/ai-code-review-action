@@ -20,4 +20,35 @@ export declare class ThemeSimilarityService {
     private buildHierarchies;
     private themeToConsolidated;
     private mergeThemes;
+    /**
+     * Calculate optimal batch size based on total pairs and complexity
+     * PRD: "Dynamic batch sizing" - adapt to content complexity
+     */
+    private calculateOptimalBatchSize;
+    /**
+     * Split pairs into optimally-sized batches for AI processing
+     */
+    private createPairBatches;
+    /**
+     * Process a batch of theme pairs with a single AI call
+     * This is the key optimization - multiple pairs analyzed in one API call
+     */
+    private processSimilarityBatch;
+    /**
+     * Build optimized prompt for batch similarity analysis
+     * PRD: "Structured prompts with clear sections"
+     */
+    private buildBatchSimilarityPrompt;
+    /**
+     * Parse batch AI response into individual similarity metrics
+     */
+    private parseBatchSimilarityResponse;
+    /**
+     * Fallback to individual processing if batch fails
+     */
+    private processBatchIndividually;
+    /**
+     * Convert AI similarity result to SimilarityMetrics
+     */
+    private convertAIResultToMetrics;
 }

@@ -3,69 +3,183 @@ import { CodeChange } from '../utils/ai-code-analyzer';
 import * as exec from '@actions/exec';
 import { ConcurrencyManager } from '../utils/concurrency-manager';
 import { SecureFileNamer } from '../utils/secure-file-namer';
+import { AIDomainAnalyzer } from './ai-domain-analyzer';
+import { AIAnalysisContext } from '../types/mindmap-types';
 
 export class BusinessDomainService {
+  private aiDomainAnalyzer: AIDomainAnalyzer;
+
+  constructor(anthropicApiKey: string) {
+    this.aiDomainAnalyzer = new AIDomainAnalyzer(anthropicApiKey);
+  }
   async groupByBusinessDomain(
     themes: ConsolidatedTheme[]
   ): Promise<Map<string, ConsolidatedTheme[]>> {
     const domains = new Map<string, ConsolidatedTheme[]>();
 
     console.log(
-      `[DOMAIN] Extracting business domains for ${themes.length} themes`
+      `[DOMAIN] Extracting business domains for ${themes.length} themes using batch processing`
     );
 
-    // Extract domains concurrently
+    // Use batch processing for significant performance improvement
+    const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
+    const batches = this.createDomainBatches(themes, batchSize);
+
+    console.log(
+      `[DOMAIN-BATCH] Split into ${batches.length} batches of ~${batchSize} themes each`
+    );
+
+    // Process batches concurrently
     const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      themes,
-      async (theme) => ({
-        theme,
-        domain: await this.extractBusinessDomain(theme.name, theme.description),
-      }),
+      batches,
+      async (batch) => {
+        return await this.processDomainBatch(batch);
+      },
       {
-        concurrencyLimit: 5, // Lower limit for domain extraction
-        maxRetries: 3,
+        concurrencyLimit: 3, // Fewer concurrent batches since each is larger
+        maxRetries: 2,
         enableLogging: true,
         onProgress: (completed, total) => {
+          const themesCompleted = completed * batchSize;
+          const totalThemes = themes.length;
           console.log(
-            `[DOMAIN] Domain extraction progress: ${completed}/${total} themes`
+            `[DOMAIN-BATCH] Progress: ${themesCompleted}/${totalThemes} themes processed (${completed}/${total} batches)`
           );
         },
-        onError: (error, theme, retryCount) => {
+        onError: (error, batch, retryCount) => {
           console.warn(
-            `[DOMAIN] Retry ${retryCount} for theme "${theme.name}": ${error.message}`
+            `[DOMAIN-BATCH] Retry ${retryCount} for batch of ${batch.length} themes: ${error.message}`
           );
         },
       }
     );
 
-    // Group results by domain
-    for (const result of results) {
-      if (result && typeof result === 'object' && 'error' in result) {
-        // Use fallback domain for failed extractions
-        const fallbackDomain = this.extractBusinessDomainFallback(
-          result.item.name,
-          result.item.description
-        );
-        console.warn(
-          `[DOMAIN] Using fallback domain "${fallbackDomain}" for "${result.item.name}"`
-        );
+    // Flatten batch results and group by domain
+    const flatResults: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
 
-        if (!domains.has(fallbackDomain)) {
-          domains.set(fallbackDomain, []);
-        }
-        domains.get(fallbackDomain)!.push(result.item);
-      } else {
-        const { theme, domain } = result;
-        console.log(`[DOMAIN] Theme "${theme.name}" → Domain "${domain}"`);
-
-        if (!domains.has(domain)) {
-          domains.set(domain, []);
-        }
-        domains.get(domain)!.push(theme);
+    for (const batchResult of results) {
+      if (
+        batchResult &&
+        typeof batchResult === 'object' &&
+        'error' in batchResult
+      ) {
+        console.warn(`[DOMAIN-BATCH] Batch processing failed, using fallback`);
+        // Handle failed batch - use fallback for all themes in the failed batch
+        continue;
+      } else if (Array.isArray(batchResult)) {
+        flatResults.push(...batchResult);
       }
     }
 
+    // Group results by domain
+    for (const result of flatResults) {
+      const { theme, domain } = result;
+      console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
+
+      if (!domains.has(domain)) {
+        domains.set(domain, []);
+      }
+      domains.get(domain)!.push(theme);
+    }
+
     return domains;
+  }
+
+  /**
+   * Extract business domain using AI semantic understanding
+   * PRD: "AI decides" domain classification based on actual business impact
+   */
+  private async extractBusinessDomainWithAI(
+    theme: ConsolidatedTheme
+  ): Promise<string> {
+    try {
+      // Build AI analysis context from theme
+      const context: AIAnalysisContext = {
+        filePath: theme.affectedFiles?.[0] || 'unknown',
+        completeDiff: theme.description,
+        surroundingContext: `Theme: ${theme.name}\nDescription: ${theme.description}`,
+        commitMessage: theme.name, // Use theme name as commit message proxy
+      };
+
+      // Get AI domain classification
+      const domainClassification =
+        await this.aiDomainAnalyzer.classifyBusinessDomain(context);
+
+      // Return the primary domain with confidence consideration
+      if (domainClassification.confidence >= 0.6) {
+        return domainClassification.domain;
+      } else {
+        // Medium confidence - use with warning
+        console.log(
+          `[DOMAIN] Medium confidence (${domainClassification.confidence}) for theme "${theme.name}": ${domainClassification.domain}`
+        );
+        return domainClassification.domain;
+      }
+    } catch (error) {
+      console.warn(
+        `[DOMAIN] AI classification failed for theme "${theme.name}": ${error}`
+      );
+
+      // Graceful degradation: use simplified heuristic fallback
+      return this.extractBusinessDomainFallback(theme.name, theme.description);
+    }
+  }
+
+  /**
+   * Fallback domain extraction for when AI fails
+   * PRD: "Graceful degradation - never fail completely"
+   */
+  private extractBusinessDomainFallback(
+    name: string,
+    description: string
+  ): string {
+    const text = (name + ' ' + description).toLowerCase();
+
+    // Simple heuristics for common domains
+    if (text.includes('test') || text.includes('spec')) {
+      return 'Quality Assurance';
+    }
+    if (text.includes('config') || text.includes('setting')) {
+      return 'System Configuration';
+    }
+    if (
+      text.includes('auth') ||
+      text.includes('login') ||
+      text.includes('user')
+    ) {
+      return 'User Management';
+    }
+    if (
+      text.includes('api') ||
+      text.includes('endpoint') ||
+      text.includes('service')
+    ) {
+      return 'API Services';
+    }
+    if (
+      text.includes('ui') ||
+      text.includes('component') ||
+      text.includes('interface')
+    ) {
+      return 'User Interface';
+    }
+    if (
+      text.includes('data') ||
+      text.includes('database') ||
+      text.includes('storage')
+    ) {
+      return 'Data Management';
+    }
+    if (
+      text.includes('error') ||
+      text.includes('fix') ||
+      text.includes('bug')
+    ) {
+      return 'Error Resolution';
+    }
+
+    // Default domain
+    return 'System Enhancement';
   }
 
   async extractBusinessDomainWithContext(
@@ -118,6 +232,42 @@ export class BusinessDomainService {
     prompt: string,
     description?: string
   ): Promise<string> {
+    // Stage 1: Try simple prompt first
+    const simplePrompt = this.buildSimpleDomainPrompt(name, description || '');
+    const stage1Result = await this.tryDomainExtraction(
+      name,
+      simplePrompt,
+      'Stage 1 (Simple)'
+    );
+
+    if (stage1Result && this.isValidDomainName(stage1Result)) {
+      return stage1Result;
+    }
+
+    // Stage 2: Try structured prompt with context
+    console.log(`[AI-DOMAIN] Stage 1 failed for "${name}", trying Stage 2`);
+    const stage2Result = await this.tryDomainExtraction(
+      name,
+      prompt,
+      'Stage 2 (Detailed)'
+    );
+
+    if (stage2Result && this.isValidDomainName(stage2Result)) {
+      return stage2Result;
+    }
+
+    // Stage 3: Enhanced fallback using AI response keywords
+    console.warn(
+      `[AI-DOMAIN] Both stages failed for "${name}", using enhanced fallback`
+    );
+    return this.extractBusinessDomainFallback(name, description || '');
+  }
+
+  private async tryDomainExtraction(
+    name: string,
+    prompt: string,
+    stage: string
+  ): Promise<string | null> {
     try {
       const { filePath: tempFile, cleanup } =
         SecureFileNamer.createSecureTempFile('claude-domain', prompt);
@@ -133,23 +283,15 @@ export class BusinessDomainService {
         });
 
         const domain = this.parseDomainExtractionResponse(output);
-        console.log(`[AI-DOMAIN] Generated domain for "${name}": "${domain}"`);
+        console.log(`[AI-DOMAIN] ${stage} result for "${name}": "${domain}"`);
 
-        // Validate the generated domain
-        if (this.isValidDomainName(domain)) {
-          return domain;
-        } else {
-          console.warn(
-            `[AI-DOMAIN] Generated domain invalid, using fallback: "${domain}"`
-          );
-          return this.extractBusinessDomainFallback(name, description || '');
-        }
+        return domain;
       } finally {
-        cleanup(); // Ensure file is cleaned up even if execution fails
+        cleanup();
       }
     } catch (error) {
-      console.warn('AI domain extraction failed:', error);
-      return this.extractBusinessDomainFallback(name, description || '');
+      console.warn(`[AI-DOMAIN] ${stage} extraction failed:`, error);
+      return null;
     }
   }
 
@@ -157,31 +299,29 @@ export class BusinessDomainService {
     name: string,
     description: string
   ): string {
-    // Check if we have enhanced context available
-    return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
+    return this.buildSimpleDomainPrompt(name, description);
+  }
 
-Theme Name: "${name}"
+  private buildSimpleDomainPrompt(name: string, description: string): string {
+    return `OUTPUT: 2-5 word domain name ONLY. No sentences. No explanation.
+
+CORRECT examples:
+✓ "Fix User Errors"
+✓ "Handle Failed Payments"
+✓ "Improve Error Messages"
+✓ "Debug Login Issues"
+✓ "Streamline Development"
+✓ "Clean Up Legacy"
+
+WRONG examples:
+✗ "This fixes user errors"
+✗ "Based on the changes, this improves error handling"
+✗ "Fix user errors in the login system"
+
+Theme: "${name}"
 Description: "${description}"
 
-Describe the user-facing change in one clear sentence (max 15 words):
-- What can users now do?
-- What workflow is now easier/faster/better?
-
-Choose from these USER-FOCUSED domains or create similar (max 4 words):
-- Remove Demo Content
-- Improve Code Review  
-- Streamline Development
-- Enhance Automation
-- Simplify Configuration
-- Add User Feedback
-- Clean Up Legacy
-- Improve Documentation
-- Fix User Issues
-- Optimize Performance
-- Enable Integrations
-- Modernize Interface
-
-Respond with just the user-focused domain name (2-5 words, no extra text):`;
+Domain (2-5 words only):`;
   }
 
   private buildEnhancedDomainExtractionPrompt(
@@ -189,150 +329,268 @@ Respond with just the user-focused domain name (2-5 words, no extra text):`;
     description: string,
     codeContext?: string
   ): string {
-    return `You are a product manager categorizing code changes by their USER VALUE and BUSINESS IMPACT (not technical implementation).
+    return `STRICT FORMAT: Output ONLY a domain name (2-5 words, max 30 characters)
+
+GOOD EXAMPLES:
+• "Fix Build Errors"
+• "Handle Failed Auth"
+• "Improve Error Handling"
+• "Debug API Failures"
+• "Streamline Development"
+• "Clean Up Legacy"
+• "Enhance Automation"
+• "Simplify Configuration"
+
+BAD EXAMPLES (DO NOT DO THIS):
+• "This change fixes build errors" (sentence)
+• "Based on analysis, Fix Build Errors" (explanation)
+• "Fix build errors in the CI/CD pipeline" (too long)
 
 Theme Name: "${name}"
 Description: "${description}"
-${codeContext ? `\nACTUAL CODE CONTEXT:\n${codeContext}` : ''}
+${codeContext ? `\nCODE CONTEXT:\n${codeContext}` : ''}
 
-IMPORTANT: Focus on the end-user or business outcome, not the technical details. The code context above shows what was actually changed - use this to understand the real business purpose.
+CHOOSE FROM THESE OR CREATE SIMILAR (2-5 words):
+- Fix Build Errors
+- Handle Failed Requests
+- Improve Error Messages
+- Debug API Failures
+- Fix User Issues
+- Recover Failed Jobs
+- Remove Demo Content
+- Improve Code Review
+- Streamline Development
+- Enhance Automation
+- Simplify Configuration
+- Add User Feedback
+- Clean Up Legacy
+- Improve Documentation
+- Optimize Performance
+- Enable Integrations
+- Modernize Interface
 
-Ask yourself:
-- What user experience is being improved by these specific code changes?
-- What business capability is being added/enhanced/removed?
-- What problem do these changes solve for end users?
-- What workflow or process is being streamlined?
-
-Choose from these USER-FOCUSED domains or create a similar category:
-- Remove Demo/Scaffolding Content
-- Improve Code Review Experience  
-- Streamline Development Workflow
-- Enhance Automation Capabilities
-- Simplify Configuration & Setup
-- Add User Feedback Features
-- Clean Up Legacy Code
-- Improve Documentation & Onboarding
-- Fix User-Facing Issues
-- Optimize Performance for Users
-- Enable New Integrations
-- Modernize User Interface
-
-Think like a product manager explaining value to users, not a developer describing implementation.
-
-Respond with just the user-focused domain name (2-5 words, no extra text):`;
+OUTPUT THE DOMAIN NAME NOW (nothing else):`;
   }
 
   private parseDomainExtractionResponse(output: string): string {
-    // Clean up the response - take first line, trim whitespace, remove quotes
+    // First try: simple first line parsing
     const lines = output.trim().split('\n');
     const domain = lines[0].trim().replace(/^["']|["']$/g, '');
+
+    if (this.isValidDomainName(domain)) {
+      return domain;
+    }
+
+    // Second try: extract domain from longer response
+    const extractedDomain = this.extractDomainFromResponse(output);
+    if (extractedDomain && this.isValidDomainName(extractedDomain)) {
+      console.log(
+        `[AI-DOMAIN] Extracted domain from response: "${extractedDomain}"`
+      );
+      return extractedDomain;
+    }
 
     return domain || 'General Changes';
   }
 
+  private extractDomainFromResponse(response: string): string | null {
+    // Look for patterns that match domain format
+    const actionVerbs = [
+      'fix',
+      'handle',
+      'improve',
+      'debug',
+      'resolve',
+      'add',
+      'remove',
+      'enable',
+      'enhance',
+      'streamline',
+      'simplify',
+      'optimize',
+      'modernize',
+      'clean',
+    ];
+
+    // Split by common delimiters and look for domain-like phrases
+    const candidates = response
+      .toLowerCase()
+      .split(/[.,:;!?\n]/)
+      .map((phrase) => phrase.trim())
+      .filter((phrase) => phrase.length > 0);
+
+    for (const candidate of candidates) {
+      // Look for 2-5 word sequences starting with action verbs
+      const words = candidate.split(/\s+/);
+
+      for (let i = 0; i < words.length - 1; i++) {
+        for (
+          let length = 2;
+          length <= Math.min(5, words.length - i);
+          length++
+        ) {
+          const sequence = words.slice(i, i + length).join(' ');
+
+          // Check if it starts with an action verb and looks domain-like
+          if (
+            actionVerbs.some((verb) => sequence.startsWith(verb)) &&
+            sequence.length <= 30 &&
+            !sequence.includes('the ') &&
+            !sequence.includes('this ') &&
+            !sequence.includes('that ')
+          ) {
+            // Capitalize first letter of each word
+            const formatted = sequence
+              .split(' ')
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ');
+
+            return formatted;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
   private isValidDomainName(domain: string): boolean {
-    return (
-      domain.length >= 3 &&
-      domain.length <= 30 &&
-      !domain.toLowerCase().includes('error') &&
-      !domain.toLowerCase().includes('failed') &&
-      domain.trim() === domain
-    );
+    // Basic format validation
+    if (domain.length < 3 || domain.length > 30 || domain.trim() !== domain) {
+      return false;
+    }
+
+    // Word count validation (2-5 words)
+    const wordCount = domain.trim().split(/\s+/).length;
+    if (wordCount < 2 || wordCount > 5) {
+      return false;
+    }
+
+    // Reject full sentences (common explanation patterns)
+    const sentenceIndicators = [
+      /^(this|it|based|the)\s/i,
+      /\.$/, // ends with period
+      /\bthat\b/i,
+      /\bwhich\b/i,
+      /^".*"$/, // wrapped in quotes with explanation
+    ];
+
+    for (const pattern of sentenceIndicators) {
+      if (pattern.test(domain)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
-  private extractBusinessDomainFallback(
-    name: string,
-    description: string
-  ): string {
-    const text = (name + ' ' + description).toLowerCase();
-
-    // User-focused domain keywords (fallback)
-    if (
-      text.includes('greeting') ||
-      text.includes('demo') ||
-      text.includes('scaffolding') ||
-      text.includes('example')
-    ) {
-      return 'Remove Demo/Scaffolding Content';
-    }
-    if (
-      text.includes('review') ||
-      text.includes('analysis') ||
-      text.includes('feedback')
-    ) {
-      return 'Improve Code Review Experience';
-    }
-    if (
-      text.includes('workflow') ||
-      text.includes('action') ||
-      text.includes('automation')
-    ) {
-      return 'Streamline Development Workflow';
-    }
-    if (
-      text.includes('config') ||
-      text.includes('setup') ||
-      text.includes('install')
-    ) {
-      return 'Simplify Configuration & Setup';
-    }
-    if (
-      text.includes('comment') ||
-      text.includes('pr') ||
-      text.includes('pull request')
-    ) {
-      return 'Add User Feedback Features';
-    }
-    if (
-      text.includes('test') ||
-      text.includes('validation') ||
-      text.includes('quality')
-    ) {
-      return 'Enhance Automation Capabilities';
-    }
-    if (
-      text.includes('documentation') ||
-      text.includes('readme') ||
-      text.includes('guide')
-    ) {
-      return 'Improve Documentation & Onboarding';
-    }
-    if (
-      text.includes('performance') ||
-      text.includes('speed') ||
-      text.includes('optimization')
-    ) {
-      return 'Optimize Performance for Users';
-    }
-    if (
-      text.includes('integration') ||
-      text.includes('api') ||
-      text.includes('service')
-    ) {
-      return 'Enable New Integrations';
-    }
-    if (
-      text.includes('interface') ||
-      text.includes('ui') ||
-      text.includes('user')
-    ) {
-      return 'Modernize User Interface';
-    }
-    if (
-      text.includes('remove') ||
-      text.includes('delete') ||
-      text.includes('cleanup')
-    ) {
-      return 'Clean Up Legacy Code';
-    }
-    if (
-      text.includes('fix') ||
-      text.includes('bug') ||
-      text.includes('error')
-    ) {
-      return 'Fix User-Facing Issues';
-    }
-
-    return 'General Improvements';
+  /**
+   * Calculate optimal batch size for domain classification
+   * PRD: "Dynamic batch sizing" - adapt to content complexity
+   */
+  private calculateOptimalDomainBatchSize(totalThemes: number): number {
+    // Smaller batches for domain classification due to context complexity
+    if (totalThemes <= 5) return Math.max(1, totalThemes); // Very small PRs
+    if (totalThemes <= 20) return 10; // Small PRs - moderate batching
+    if (totalThemes <= 50) return 15; // Medium PRs - larger batches
+    return 20; // Large PRs - maximum batch size for domain analysis
   }
+
+  /**
+   * Split themes into optimally-sized batches for domain processing
+   */
+  private createDomainBatches(
+    themes: ConsolidatedTheme[],
+    batchSize: number
+  ): ConsolidatedTheme[][] {
+    const batches: ConsolidatedTheme[][] = [];
+    for (let i = 0; i < themes.length; i += batchSize) {
+      batches.push(themes.slice(i, i + batchSize));
+    }
+    return batches;
+  }
+
+  /**
+   * Process a batch of themes for domain classification with a single AI call
+   * This is the key optimization - multiple themes analyzed in one API call
+   */
+  private async processDomainBatch(
+    themes: ConsolidatedTheme[]
+  ): Promise<Array<{ theme: ConsolidatedTheme; domain: string }>> {
+    try {
+      // Use AI domain analyzer for batch processing
+      const contexts = themes.map((theme) => ({
+        filePath: theme.affectedFiles?.[0] || 'unknown',
+        completeDiff: theme.context || '',
+        surroundingContext: theme.description || '',
+        commitMessage: `Theme: ${theme.name}`,
+        prDescription: theme.businessImpact,
+      }));
+
+      // Single AI call for multiple themes
+      const batchResults =
+        await this.aiDomainAnalyzer.analyzeMultiDomainChanges(contexts);
+
+      // Map results back to themes
+      const results: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
+
+      for (let i = 0; i < themes.length; i++) {
+        const theme = themes[i];
+        let domain = 'System Enhancement'; // Default fallback
+
+        // Try to find domain from batch results
+        if (batchResults.primaryDomains && batchResults.primaryDomains[i]) {
+          domain = batchResults.primaryDomains[i].domain;
+        }
+
+        results.push({ theme, domain });
+        console.log(
+          `[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`
+        );
+      }
+
+      return results;
+    } catch (error) {
+      console.warn(
+        `[DOMAIN-BATCH] Batch processing failed for ${themes.length} themes, falling back to individual processing: ${error}`
+      );
+
+      // Fallback to individual processing
+      return await this.processDomainBatchIndividually(themes);
+    }
+  }
+
+  /**
+   * Fallback to individual domain processing if batch fails
+   */
+  private async processDomainBatchIndividually(
+    themes: ConsolidatedTheme[]
+  ): Promise<Array<{ theme: ConsolidatedTheme; domain: string }>> {
+    const results: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
+
+    for (const theme of themes) {
+      try {
+        const domain = await this.extractBusinessDomainWithAI(theme);
+        results.push({ theme, domain });
+      } catch (error) {
+        console.warn(
+          `[DOMAIN-BATCH-FALLBACK] Failed individual processing for "${theme.name}": ${error}`
+        );
+        // Use fallback domain for failed individual processing
+        const fallbackDomain = this.extractBusinessDomainFallback(
+          theme.name,
+          theme.description
+        );
+        results.push({ theme, domain: fallbackDomain });
+      }
+    }
+
+    return results;
+  }
+
+  // Removed old mechanical fallback - replaced with AI-driven classification
+
+  // Removed deprecated method - replaced with AI semantic analysis
+
+  // Removed 150+ lines of mechanical keyword matching - replaced with AI semantic understanding
 }

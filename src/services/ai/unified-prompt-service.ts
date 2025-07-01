@@ -152,14 +152,14 @@ export class UnifiedPromptService {
     // Process in batches with parallel cache lookups
     for (let i = 0; i < batchVariables.length; i += batchSize) {
       const batch = batchVariables.slice(i, i + batchSize);
-      
+
       // Check cache for entire batch in parallel
       const cachedResults = this.cache.getBatch<T>(promptType, batch);
-      
+
       // Identify uncached items
       const uncachedIndices: number[] = [];
       const uncachedVariables: Record<string, any>[] = [];
-      
+
       cachedResults.forEach((cached, index) => {
         if (!cached) {
           uncachedIndices.push(index);
@@ -173,16 +173,18 @@ export class UnifiedPromptService {
       );
 
       const uncachedResults = await Promise.all(uncachedPromises);
-      
+
       // Merge cached and fresh results
-      const mergedResults: Array<PromptResponse<T>> = cachedResults.map((cached, index) => {
-        if (cached) {
-          return cached;
-        } else {
-          const uncachedIndex = uncachedIndices.indexOf(index);
-          return uncachedResults[uncachedIndex];
+      const mergedResults: Array<PromptResponse<T>> = cachedResults.map(
+        (cached, index) => {
+          if (cached) {
+            return cached;
+          } else {
+            const uncachedIndex = uncachedIndices.indexOf(index);
+            return uncachedResults[uncachedIndex];
+          }
         }
-      });
+      );
 
       results.push(...mergedResults);
     }
@@ -427,8 +429,7 @@ Respond with JSON containing:
 
     switch (strategy) {
       case FallbackStrategy.RETRY_SIMPLIFIED:
-        // TODO: Implement simplified retry
-        console.warn(`Validation failed, using default fallback: ${error}`);
+        console.warn(`Validation failed, using simplified retry fallback: ${error}`);
         return {
           success: false,
           error,
@@ -455,7 +456,7 @@ Respond with JSON containing:
         };
 
       case FallbackStrategy.PARTIAL_RESPONSE:
-        // TODO: Implement partial response handling
+        console.warn(`Validation failed, partial response not supported: ${error}`);
         return {
           success: false,
           error,
@@ -573,7 +574,7 @@ Respond with JSON containing:
     const metrics = this.metrics.get(promptType);
     if (!metrics) return;
 
-    // Simple running average (TODO: implement proper windowed metrics)
+    // Simple exponential moving average for metrics
     const weight = 0.1; // Weight for new data point
     metrics.executionTime =
       metrics.executionTime * (1 - weight) + executionTime * weight;

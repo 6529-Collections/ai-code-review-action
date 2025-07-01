@@ -45,7 +45,10 @@ export interface ConsolidatedTheme {
   expansionDepth?: number; // Depth of expansion from original theme
   businessLogicPatterns?: string[]; // Identified business patterns
   userFlowPatterns?: string[]; // Identified user flow patterns
-  complexityScore?: number; // Calculated complexity score for expansion
+
+  // Dynamic depth fields (simplified)
+  isAtomic?: boolean;
+  expansionReason?: string;
 
   // New consolidation context fields
   consolidationSummary?: string; // Why these were merged
@@ -76,8 +79,6 @@ export interface ConsolidationConfig {
   similarityThreshold: number; // 0.8 - threshold for merging
   maxThemesPerParent: number; // 5 - max child themes
   minThemesForParent: number; // 2 - min themes to create parent
-  confidenceWeight: number; // 0.3 - how much confidence affects merging
-  businessDomainWeight: number; // 0.4 - importance of business similarity
 
   // Hierarchical expansion configuration
   maxHierarchyDepth: number; // 4 - maximum depth for theme expansion
