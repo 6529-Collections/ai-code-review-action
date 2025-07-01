@@ -117,33 +117,12 @@ ${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
     const achievements = this.identifyAchievements(currentDepth, codeAnalysis);
     const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
 
-    let section = `EXPANSION GUIDANCE:`;
-
-    if (currentDepth === 0) {
-      section += `
-Level ${currentDepth} Focus: Identify major functional areas and capabilities
-- Look for distinct business features or technical components
-- Consider architectural boundaries and user-facing functionality
-- Each theme should represent a coherent area of change`;
-    } else if (currentDepth <= 2) {
-      section += `
-Level ${currentDepth} Focus: Break down capabilities into specific concerns
-- Identify distinct responsibilities within larger themes
+    let section = `EXPANSION GUIDANCE:
+Focus: Identify distinct functional concerns that could be independently tested or reviewed
 - Look for changes that address different requirements or use cases
-- Consider separating different types of modifications (logic vs config vs UI)`;
-    } else if (currentDepth <= 4) {
-      section += `
-Level ${currentDepth} Focus: Identify specific implementation units
-- Look for changes that could be reviewed or tested independently
 - Consider separating different functions, classes, or logical units
-- Focus on reviewability and understanding`;
-    } else {
-      section += `
-Level ${currentDepth} Focus: Atomic, focused changes
-- Each theme should represent a single, specific modification
-- Look for the smallest meaningful units of change
-- Consider if different aspects could be tested separately`;
-    }
+- Each theme should represent a coherent concern that could have its own unit test
+- Consider if different aspects could be tested or reviewed separately`;
 
     if (achievements.length > 0) {
       section += `
@@ -199,8 +178,31 @@ Why this worked: ${example.reasoning}`;
       codeAnalysis
     );
 
-    let section = `DECISION NEEDED:
-Should this theme be broken down into sub-themes?
+    let section = `EXPANSION ANALYSIS:
+Default action: EXPAND this theme into sub-themes
+
+To STOP expansion, you must prove ALL of these:
+1. Single testable unit - Could have exactly ONE unit test
+2. Indivisible operation - Cannot split without losing meaning
+3. Atomic responsibility - Does exactly one thing
+4. No mixed concerns - No "AND" in the description
+
+If ANY condition fails → MUST EXPAND
+
+ATOMIC VALIDATION CHECKLIST:
+□ Size: 5-15 lines of functional change
+□ Single unit test possible
+□ One assertion per test
+□ No conditional branches (if/else = 2 concerns)
+□ Single function/method modification
+□ One clear purpose (SRP)
+□ Would be one git commit
+□ No "and" in description
+
+Atomic Score = (criteria met / 8)
+- Score < 0.7 → MUST expand
+- Score 0.7-0.9 → Consider expansion
+- Score > 0.9 → May be atomic
 
 CONSIDER THESE QUESTIONS:
 ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
@@ -211,22 +213,11 @@ EXPANSION BENEFITS:
 - Clearer separation of concerns
 - Easier testing and validation
 
-NATURAL STOPPING POINTS:
-- When further breakdown would add noise without clarity
-- When the change represents a single, focused responsibility
-- When sub-themes would be too small to be meaningful`;
-
-    // Add atomic check guidance only at deeper levels
-    if (currentDepth >= 4) {
-      section += `
-
-ATOMIC EVALUATION:
-Consider this atomic if it represents a single logical operation that:
-- Has one clear purpose or responsibility
-- Would be tested as a single unit
-- Cannot be meaningfully separated without losing coherence
-- Represents the natural granularity for review`;
-    }
+When shouldExpand is false, you MUST:
+- Explain which atomic criteria are met
+- Confirm no further decomposition possible
+- Verify single test coverage
+- Provide atomic score`;
 
     section += `
 
@@ -235,6 +226,9 @@ RESPOND WITH JSON:
   "shouldExpand": boolean,
   "isAtomic": boolean,
   "reasoning": "Clear explanation why (max 50 words)",
+  "atomicScore": 0.0-1.0,
+  "atomicCriteriaMet": ["list criteria met if not expanding"],
+  "potentialSubThemes": ["even if not expanding, what COULD be split"],
   "suggestedSubThemes": [
     {
       "name": "What this accomplishes (max 10 words)",

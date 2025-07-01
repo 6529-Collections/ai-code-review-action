@@ -95,20 +95,20 @@ export declare const ResponseSchemas: {
     }, "strip", z.ZodTypeAny, {
         confidence: number;
         reasoning: string;
-        shouldMerge: boolean;
         nameScore: number;
         descriptionScore: number;
         patternScore: number;
         businessScore: number;
+        shouldMerge: boolean;
         semanticScore: number;
     }, {
         confidence: number;
         reasoning: string;
-        shouldMerge: boolean;
         nameScore: number;
         descriptionScore: number;
         patternScore: number;
         businessScore: number;
+        shouldMerge: boolean;
         semanticScore: number;
     }>;
     theme_expansion: z.ZodObject<{
@@ -136,6 +136,7 @@ export declare const ResponseSchemas: {
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         confidence: number;
+        reasoning: string;
         subThemes: {
             description: string;
             name: string;
@@ -144,9 +145,9 @@ export declare const ResponseSchemas: {
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
-        reasoning: string;
     }, {
         confidence: number;
+        reasoning: string;
         subThemes: {
             description: string;
             name: string;
@@ -155,7 +156,6 @@ export declare const ResponseSchemas: {
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
-        reasoning: string;
     }>;
     domain_extraction: z.ZodObject<{
         domains: z.ZodArray<z.ZodObject<{
@@ -283,13 +283,13 @@ export declare const ResponseSchemas: {
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         confidence: number;
-        reasoning: string;
         action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
+        reasoning: string;
         relationship: "none" | "duplicate" | "parent_child";
     }, {
         confidence: number;
-        reasoning: string;
         action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
+        reasoning: string;
         relationship: "none" | "duplicate" | "parent_child";
     }>;
 };

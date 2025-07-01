@@ -333,6 +333,35 @@ export class CodeStructureAnalyzer {
       );
     }
 
+    // Add atomic criteria-based hints
+    const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+    if (totalLines > 15) {
+      hints.push(
+        `Change exceeds atomic size (${totalLines} lines > 15) - consider splitting into smaller, testable units`
+      );
+    }
+
+    if (analysis.functionCount > 1) {
+      hints.push(
+        `Multiple functions modified (${analysis.functionCount}) - consider splitting by function`
+      );
+    }
+
+    if (
+      analysis.complexityIndicators.hasConditionals &&
+      analysis.complexityIndicators.branchingFactor > 1
+    ) {
+      hints.push(
+        `Conditional branches detected (${analysis.complexityIndicators.branchingFactor} branches) - each branch could be a separate concern`
+      );
+    }
+
+    if (theme.description.toLowerCase().includes(' and ')) {
+      hints.push(
+        'Description contains "and" - suggests multiple concerns that should be separated'
+      );
+    }
+
     // Add generic expansion encouragement if no specific hints
     if (
       hints.length === 0 &&
