@@ -29965,20 +29965,23 @@ const theme_formatter_1 = __nccwpck_require__(6583);
 const logger_1 = __nccwpck_require__(7893);
 const performance_tracker_1 = __nccwpck_require__(9766);
 async function run() {
+    const mainContext = logger_1.logger.startOperation('AI Code Review');
     try {
+        logger_1.logger.logProcess('Starting AI Code Review analysis');
         // Reset performance tracker for this run
         performance_tracker_1.performanceTracker.reset();
         performance_tracker_1.performanceTracker.startTiming('Total AI Code Review');
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+        logger_1.logger.logProcess('Step 1/5: Setting up environment');
+        const setupContext = logger_1.logger.startOperation('Environment Setup');
         performance_tracker_1.performanceTracker.startTiming('Setup');
         // Install Claude Code CLI
-        (0, utils_1.logInfo)('Installing Claude Code CLI...');
+        logger_1.logger.logProgress({ current: 1, total: 3, message: 'Installing Claude Code CLI' });
         await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
-        (0, utils_1.logInfo)('Claude Code CLI installed successfully');
         // Initialize Claude CLI configuration to avoid JSON config errors
-        (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
+        logger_1.logger.logProgress({ current: 2, total: 3, message: 'Initializing Claude CLI configuration' });
         const claudeConfig = {
             allowedTools: [],
             hasTrustDialogAccepted: true,
@@ -29990,91 +29993,102 @@ async function run() {
             '-c',
             `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
         ], { silent: true });
-        (0, utils_1.logInfo)('Claude CLI configuration initialized');
+        logger_1.logger.logProgress({ current: 3, total: 3, message: 'Environment setup complete' });
         performance_tracker_1.performanceTracker.endTiming('Setup');
-        (0, utils_1.logInfo)('Starting AI code review analysis...');
+        logger_1.logger.endOperation(setupContext, true);
+        logger_1.logger.logProcess('Step 2/5: Fetching changed files');
+        const gitContext = logger_1.logger.startOperation('Git Operations');
         // Initialize services with AI code analysis
         const gitService = new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
         // Initialize theme service with AI-driven expansion
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
-        (0, utils_1.logInfo)('Using AI-driven theme expansion for natural hierarchy depth');
         performance_tracker_1.performanceTracker.startTiming('Git Operations');
         // Get PR context and changed files
         const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
         performance_tracker_1.performanceTracker.endTiming('Git Operations');
+        logger_1.logger.endOperation(gitContext, true, { filesFound: changedFiles.length });
         // Log dev mode info
         if (prContext && prContext.number === 0) {
-            (0, utils_1.logInfo)(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
-            (0, utils_1.logInfo)(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
-            (0, utils_1.logInfo)(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
+            logger_1.logger.logProcess(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`, {
+                baseSha: prContext.baseSha.substring(0, 8),
+                headSha: prContext.headSha.substring(0, 8)
+            });
         }
-        (0, utils_1.logInfo)(`Found ${changedFiles.length} changed files`);
+        logger_1.logger.logProcess(`Found ${changedFiles.length} changed files`);
         if (changedFiles.length === 0) {
-            (0, utils_1.logInfo)('No files changed, skipping analysis');
+            logger_1.logger.logProcess('No files changed, skipping analysis');
             core.setOutput('themes', JSON.stringify([]));
             core.setOutput('summary', 'No files changed in this PR');
+            logger_1.logger.endOperation(mainContext, true);
             return;
         }
-        // Analyze themes
+        // Analyze themes with comprehensive process logging
+        logger_1.logger.logProcess('Step 3/5: Analyzing code themes');
+        const themeContext = logger_1.logger.startOperation('Theme Analysis');
         performance_tracker_1.performanceTracker.startTiming('Theme Analysis');
-        (0, utils_1.logInfo)('Analyzing code themes...');
         const themeAnalysis = await themeService.analyzeThemesWithEnhancedContext(gitService);
         performance_tracker_1.performanceTracker.endTiming('Theme Analysis');
-        // Debug: Log theme analysis result
-        logger_1.logger.debug('MAIN', `Theme analysis completed: ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
-        logger_1.logger.debug('MAIN', `Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`);
-        logger_1.logger.debug('MAIN', `Has expansion stats: ${!!themeAnalysis.expansionStats}`);
-        if (themeAnalysis.themes) {
-            logger_1.logger.debug('MAIN', `Theme names: ${themeAnalysis.themes.map((t) => t.name).join(', ')}`);
-        }
-        else {
-            logger_1.logger.warn('MAIN', 'Themes is null/undefined!');
-        }
+        logger_1.logger.endOperation(themeContext, true, {
+            themesFound: themeAnalysis.totalThemes,
+            processingTime: themeAnalysis.processingTime
+        });
         // Output results using enhanced formatter
+        logger_1.logger.logProcess('Step 4/5: Generating output');
+        const outputContext = logger_1.logger.startOperation('Output Generation');
         performance_tracker_1.performanceTracker.startTiming('Output Generation');
         try {
-            logger_1.logger.debug('MAIN', 'Starting output formatting...');
             // Use the new ThemeFormatter for better hierarchical display
             const detailedThemes = theme_formatter_1.ThemeFormatter.formatThemesForOutput(themeAnalysis.themes);
-            logger_1.logger.debug('MAIN', `Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
             const safeSummary = theme_formatter_1.ThemeFormatter.createThemeSummary(themeAnalysis.themes);
-            logger_1.logger.debug('MAIN', `Summary created, length: ${safeSummary?.length || 'undefined'}`);
-            logger_1.logger.debug('MAIN', 'Setting outputs...');
             core.setOutput('themes', detailedThemes);
             core.setOutput('summary', safeSummary);
-            logger_1.logger.debug('MAIN', 'Outputs set successfully');
-            (0, utils_1.logInfo)(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
+            logger_1.logger.endOperation(outputContext, true, {
+                themesProcessed: themeAnalysis.totalThemes
+            });
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
-                (0, utils_1.logInfo)(`Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
+                logger_1.logger.logMetrics('Theme Expansion Statistics', {
+                    'Themes Expanded': themeAnalysis.expansionStats.expandedThemes,
+                    'Max Depth Reached': themeAnalysis.expansionStats.maxDepth,
+                    'Total Themes': themeAnalysis.totalThemes
+                });
             }
         }
         catch (error) {
-            logger_1.logger.error('MAIN', `Error in output formatting: ${error}`);
-            if (error instanceof Error && error.stack) {
-                logger_1.logger.debug('MAIN', `Error stack: ${error.stack}`);
-            }
-            logger_1.logger.error('MAIN', `Failed to set outputs: ${error}`);
+            logger_1.logger.logError('Output Generation', error, {
+                themesFound: themeAnalysis.totalThemes,
+                hasThemes: !!themeAnalysis.themes
+            });
+            logger_1.logger.endOperation(outputContext, false);
             core.setOutput('themes', 'No themes found');
             core.setOutput('summary', 'Output generation failed');
         }
         performance_tracker_1.performanceTracker.endTiming('Output Generation');
-        logger_1.logger.info('MAIN', `Analysis complete: Found ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
-        // Log theme names only (not full JSON)
+        // Final summary and cleanup
+        logger_1.logger.logProcess('Step 5/5: Analysis complete');
+        // Log final metrics
+        logger_1.logger.logMetrics('Final Analysis Results', {
+            'Total Themes': themeAnalysis.totalThemes,
+            'Processing Time': `${themeAnalysis.processingTime}ms`,
+            'Files Analyzed': changedFiles.length
+        });
+        // Log theme names for reference
         if (themeAnalysis.themes.length > 0) {
             const themeNames = themeAnalysis.themes.map((t) => t.name).join(', ');
-            logger_1.logger.info('MAIN', `Themes: ${themeNames}`);
-        }
-        // Log expansion statistics if available
-        if (themeAnalysis.expansionStats) {
-            logger_1.logger.info('MAIN', `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
+            logger_1.logger.logProcess(`Theme names: ${themeNames}`);
         }
         // End total timing and generate comprehensive performance report
         performance_tracker_1.performanceTracker.endTiming('Total AI Code Review');
         performance_tracker_1.performanceTracker.generateReport();
+        logger_1.logger.endOperation(mainContext, true, {
+            totalThemes: themeAnalysis.totalThemes,
+            processingTime: themeAnalysis.processingTime
+        });
     }
     catch (error) {
+        logger_1.logger.logError('AI Code Review', error);
+        logger_1.logger.endOperation(mainContext, false);
         (0, utils_1.handleError)(error);
     }
 }
@@ -33327,21 +33341,32 @@ class ThemeExpansionService {
      * Main entry point for expanding themes hierarchically
      */
     async expandThemesHierarchically(consolidatedThemes) {
+        const expansionContext = logger_1.logger.startOperation('Theme Expansion', {
+            inputThemes: consolidatedThemes.length,
+        });
         const startTime = Date.now();
         const initialAICalls = this.claudeClient.getMetrics().totalCalls;
-        logger_1.logger.info('EXPANSION', `Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
-        logger_1.logger.debug('EXPANSION', `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
+        logger_1.logger.logProcess(`Starting hierarchical theme expansion for ${consolidatedThemes.length} themes`, {
+            themes: consolidatedThemes.map((t) => t.name),
+        });
         // Reset effectiveness tracking
         this.resetEffectiveness();
         // Process themes with concurrency limit and retry logic
         const results = await this.processConcurrentlyWithLimit(consolidatedThemes, (theme) => this.expandThemeRecursively(theme, 0), {
             onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging) {
-                    console.log(`[THEME-EXPANSION] Progress: ${completed}/${total} root themes expanded`);
-                }
+                logger_1.logger.logProgress({
+                    current: completed,
+                    total,
+                    message: 'Expanding root themes',
+                    context: 'Theme Expansion',
+                });
             },
             onError: (error, theme, retryCount) => {
-                console.warn(`[THEME-EXPANSION] Retry ${retryCount} for theme "${theme.name}": ${error.message}`);
+                logger_1.logger.logError(`Theme expansion retry ${retryCount}`, error, {
+                    themeName: theme.name,
+                    retryCount,
+                    maxRetries: this.config.maxRetries,
+                });
             },
         });
         // Separate successful and failed results
@@ -33356,10 +33381,12 @@ class ThemeExpansionService {
             }
         }
         if (failedThemes.length > 0) {
-            console.warn(`[THEME-EXPANSION] Failed to expand ${failedThemes.length} themes after retries:`);
-            for (const failed of failedThemes) {
-                console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
-            }
+            logger_1.logger.logError('Theme expansion failures', `${failedThemes.length} themes failed after retries`, {
+                failedThemes: failedThemes.map((f) => ({
+                    name: f.theme.name,
+                    error: f.error.message,
+                })),
+            });
         }
         // Update effectiveness metrics
         this.effectiveness.processingTime = Date.now() - startTime;
@@ -33371,26 +33398,42 @@ class ThemeExpansionService {
                     this.effectiveness.themesEvaluated) *
                     100
                 : 0;
-        logger_1.logger.info('EXPANSION', `Completed expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes (${this.effectiveness.expansionRate.toFixed(1)}% expansion rate)`);
-        logger_1.logger.debug('EXPANSION', `Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`);
-        logger_1.logger.info('EXPANSION', `Max depth reached: ${this.effectiveness.maxDepthReached}, Atomic themes: ${this.effectiveness.atomicThemesIdentified}`);
-        // Log expansion stop reasons for analysis
-        console.log(`[EXPANSION-ANALYSIS] Expansion stop reasons summary:`);
-        console.log(`[EXPANSION-ANALYSIS] Total themes that stopped expanding: ${this.expansionStopReasons.length}`);
-        const reasonCounts = this.expansionStopReasons.reduce((acc, reason) => {
-            acc[reason.reason] = (acc[reason.reason] || 0) + 1;
-            return acc;
-        }, {});
-        Object.entries(reasonCounts).forEach(([reason, count]) => {
-            console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
+        // Log comprehensive expansion results
+        logger_1.logger.logMetrics('Theme Expansion Results', {
+            'Themes Processed': `${expandedThemes.length}/${consolidatedThemes.length}`,
+            'Expansion Rate': `${this.effectiveness.expansionRate.toFixed(1)}%`,
+            'Max Depth Reached': this.effectiveness.maxDepthReached,
+            'Atomic Themes': this.effectiveness.atomicThemesIdentified,
+            'AI Calls Used': this.effectiveness.aiCallsUsed,
+            'Processing Time': `${this.effectiveness.processingTime}ms`,
         });
-        // Log themes that exceeded PRD limits but were marked atomic
-        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
-        if (oversizedAtomic.length > 0) {
-            console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
-            oversizedAtomic.forEach((r) => {
-                console.log(`  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`);
+        logger_1.logger.endOperation(expansionContext, failedThemes.length === 0, {
+            expandedThemes: expandedThemes.length,
+            failedThemes: failedThemes.length,
+            expansionRate: this.effectiveness.expansionRate,
+        });
+        // Log expansion stop reasons for analysis
+        if (this.expansionStopReasons.length > 0) {
+            const reasonCounts = this.expansionStopReasons.reduce((acc, reason) => {
+                acc[reason.reason] = (acc[reason.reason] || 0) + 1;
+                return acc;
+            }, {});
+            logger_1.logger.logMetrics('Expansion Stop Reasons', {
+                'Total Stopped': this.expansionStopReasons.length,
+                ...reasonCounts,
             });
+            // Check for themes that exceed PRD limits but were marked atomic
+            const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
+            if (oversizedAtomic.length > 0) {
+                logger_1.logger.logError('Atomic themes exceed PRD limits', `${oversizedAtomic.length} themes marked atomic but exceed guidelines`, {
+                    oversizedThemes: oversizedAtomic.map((r) => ({
+                        name: r.themeName,
+                        files: r.fileCount,
+                        lines: r.lineCount,
+                        depth: r.depth,
+                    })),
+                });
+            }
         }
         return expandedThemes;
     }
@@ -36656,14 +36699,11 @@ class ClaudeClient {
     }
     async callClaude(prompt, context = 'unknown', operation) {
         const startTime = Date.now();
-        console.log(`[CLAUDE-DEBUG] callClaude started - context: ${context}, operation: ${operation || 'none'}`);
-        console.log(`[CLAUDE-DEBUG] Total calls so far: ${this.metrics.totalCalls}`);
         this.metrics.totalCalls++;
         this.updateContextCounter(this.metrics.callsByContext, context);
         try {
             const result = await this.executeClaudeCall(prompt);
             const duration = Date.now() - startTime;
-            console.log(`[CLAUDE-DEBUG] callClaude succeeded - duration: ${duration}ms, result length: ${result.length}`);
             // Track successful call metrics
             this.metrics.totalTime += duration;
             this.updateContextCounter(this.metrics.timeByContext, context, duration);
@@ -36673,7 +36713,10 @@ class ClaudeClient {
         }
         catch (error) {
             const duration = Date.now() - startTime;
-            console.log(`[CLAUDE-DEBUG] callClaude failed after ${duration}ms - context: ${context}, error:`, error);
+            // Log comprehensive error context only on failure
+            console.error(`[ERROR] Claude API call #${this.metrics.totalCalls} failed after ${duration}ms`);
+            console.error(`Context: ${context}${operation ? ` (${operation})` : ''}`);
+            console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
             // Track error metrics
             this.metrics.errors++;
             this.updateContextCounter(this.metrics.errorsByContext, context);
@@ -36683,55 +36726,56 @@ class ClaudeClient {
     async executeClaudeCall(prompt) {
         let tempFile = null;
         try {
-            console.log('[CLAUDE-DEBUG] Starting Claude API call...');
-            console.log(`[CLAUDE-DEBUG] Prompt length: ${prompt.length} characters`);
-            console.log(`[CLAUDE-DEBUG] Environment ANTHROPIC_API_KEY set: ${!!process.env.ANTHROPIC_API_KEY}`);
             // Create secure temporary file for this request
             const { filePath, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-prompt', prompt);
             tempFile = filePath;
-            console.log(`[CLAUDE-DEBUG] Created temp file: ${filePath}`);
             performance_tracker_1.performanceTracker.trackTempFile(true);
             let output = '';
             let errorOutput = '';
             let exitCode = null;
             const command = `cat "${tempFile}" | claude --print`;
-            console.log(`[CLAUDE-DEBUG] Executing command: ${command}`);
             try {
                 exitCode = await exec.exec('bash', ['-c', command], {
                     silent: true, // Suppress command logging
                     listeners: {
                         stdout: (data) => {
-                            const chunk = data.toString();
-                            console.log(`[CLAUDE-DEBUG] STDOUT chunk: ${chunk.substring(0, 200)}${chunk.length > 200 ? '...' : ''}`);
-                            output += chunk;
+                            output += data.toString();
                         },
                         stderr: (data) => {
-                            const chunk = data.toString();
-                            console.log(`[CLAUDE-DEBUG] STDERR chunk: ${chunk}`);
-                            errorOutput += chunk;
+                            errorOutput += data.toString();
                         },
                     },
                 });
-                console.log(`[CLAUDE-DEBUG] Command completed with exit code: ${exitCode}`);
-                console.log(`[CLAUDE-DEBUG] Output length: ${output.length} characters`);
-                console.log(`[CLAUDE-DEBUG] Error output: ${errorOutput}`);
                 if (exitCode !== 0) {
                     throw new Error(`Claude command failed with exit code ${exitCode}. STDERR: ${errorOutput}`);
                 }
                 return output.trim();
             }
             finally {
-                console.log(`[CLAUDE-DEBUG] Cleaning up temp file: ${tempFile}`);
                 cleanup(); // Use secure cleanup
                 performance_tracker_1.performanceTracker.trackTempFile(false);
             }
         }
         catch (error) {
-            console.log(`[CLAUDE-DEBUG] executeClaudeCall failed with error:`, error);
-            console.log(`[CLAUDE-DEBUG] Error type: ${typeof error}`);
-            console.log(`[CLAUDE-DEBUG] Error message: ${error instanceof Error ? error.message : String(error)}`);
-            console.log(`[CLAUDE-DEBUG] Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`);
-            throw new Error(`Claude API call failed: ${error}`);
+            // Enhanced error diagnostics only on failure
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            console.error(`Detailed failure context:`);
+            console.error(`  Prompt length: ${prompt.length} characters`);
+            console.error(`  ANTHROPIC_API_KEY set: ${!!process.env.ANTHROPIC_API_KEY}`);
+            console.error(`  Temp file: ${tempFile || 'not created'}`);
+            console.error(`  Command: cat "${tempFile}" | claude --print`);
+            // Check if claude command is available
+            try {
+                await exec.exec('which', ['claude'], { silent: true });
+                console.error(`  Claude CLI: Available`);
+            }
+            catch {
+                console.error(`  Claude CLI: NOT FOUND - this may be the issue`);
+            }
+            if (error instanceof Error && error.stack) {
+                console.error(`  Stack trace: ${error.stack}`);
+            }
+            throw new Error(`Claude API call failed: ${errorMsg}`);
         }
     }
     updateContextCounter(map, context, value = 1) {
@@ -37647,7 +37691,7 @@ exports.JsonExtractor = JsonExtractor;
 "use strict";
 
 /**
- * Logging utility with configurable levels
+ * Enhanced logging utility with structured levels and operation context tracking
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.logger = exports.Logger = exports.LogLevel = void 0;
@@ -37682,6 +37726,22 @@ class Logger {
             : '';
         return `${timestamp}[${level}] [${service}] ${message}`;
     }
+    static getCurrentContext() {
+        if (Logger.contextStack.length === 0)
+            return '';
+        const context = Logger.contextStack[Logger.contextStack.length - 1];
+        const contextPath = Logger.buildContextPath(context);
+        return contextPath ? ` (${contextPath})` : '';
+    }
+    static buildContextPath(context) {
+        const parts = [];
+        let current = context;
+        while (current) {
+            parts.unshift(current.operation);
+            current = current.parentContext;
+        }
+        return parts.join(' > ');
+    }
     static error(service, message) {
         if (Logger.level >= LogLevel.ERROR) {
             console.error(Logger.formatMessage('ERROR', service, message));
@@ -37713,16 +37773,112 @@ class Logger {
     static getLevel() {
         return Logger.level;
     }
+    // New structured logging methods
+    static logProcess(message, metadata) {
+        if (Logger.level >= LogLevel.INFO) {
+            const context = Logger.getCurrentContext();
+            const metaStr = metadata ? ` ${JSON.stringify(metadata)}` : '';
+            console.log(`[PROCESS] ${message}${context}${metaStr}`);
+        }
+    }
+    static logProgress(info) {
+        if (Logger.level >= LogLevel.INFO) {
+            const percentage = Math.round((info.current / info.total) * 100);
+            const context = info.context ? ` (${info.context})` : '';
+            console.log(`[PROGRESS] ${info.message} [${info.current}/${info.total} - ${percentage}%]${context}`);
+        }
+    }
+    static logPerformance(metrics) {
+        if (Logger.level >= LogLevel.INFO) {
+            Logger.performanceMetrics.push(metrics);
+            const status = metrics.success ? '✓' : '✗';
+            const metaStr = metrics.metadata
+                ? ` ${JSON.stringify(metrics.metadata)}`
+                : '';
+            console.log(`[PERFORMANCE] ${metrics.operation} ${status} ${metrics.duration}ms${metaStr}`);
+        }
+    }
+    static logError(context, error, additionalInfo) {
+        if (Logger.level >= LogLevel.ERROR) {
+            const currentContext = Logger.getCurrentContext();
+            const errorMsg = error instanceof Error ? error.message : error;
+            const infoStr = additionalInfo
+                ? `\nAdditional info: ${JSON.stringify(additionalInfo, null, 2)}`
+                : '';
+            console.error(`[ERROR] ${context}${currentContext}\nError: ${errorMsg}${infoStr}`);
+            if (error instanceof Error && error.stack) {
+                console.error(`Stack trace: ${error.stack}`);
+            }
+        }
+    }
+    static logMetrics(title, metrics) {
+        if (Logger.level >= LogLevel.INFO) {
+            console.log(`[METRICS] ${title}`);
+            Object.entries(metrics).forEach(([key, value]) => {
+                console.log(`  ${key}: ${value}`);
+            });
+        }
+    }
+    // Context management methods
+    static startOperation(operation, metadata) {
+        const parentContext = Logger.contextStack.length > 0
+            ? Logger.contextStack[Logger.contextStack.length - 1]
+            : undefined;
+        const context = {
+            operation,
+            startTime: Date.now(),
+            parentContext,
+            metadata,
+        };
+        Logger.contextStack.push(context);
+        return context;
+    }
+    static endOperation(context, success = true, metadata) {
+        const duration = Date.now() - context.startTime;
+        // Remove from context stack
+        const index = Logger.contextStack.indexOf(context);
+        if (index >= 0) {
+            Logger.contextStack.splice(index, 1);
+        }
+        // Log performance metrics
+        Logger.logPerformance({
+            operation: context.operation,
+            duration,
+            success,
+            metadata: { ...context.metadata, ...metadata },
+        });
+    }
+    static getPerformanceMetrics() {
+        return [...Logger.performanceMetrics];
+    }
+    static clearMetrics() {
+        Logger.performanceMetrics = [];
+    }
 }
 exports.Logger = Logger;
 Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
-// Export convenience functions
+Logger.contextStack = [];
+Logger.performanceMetrics = [];
+// Export convenience functions with enhanced structured logging
 exports.logger = {
+    // Legacy methods
     error: (service, message) => Logger.error(service, message),
     warn: (service, message) => Logger.warn(service, message),
     info: (service, message) => Logger.info(service, message),
     debug: (service, message) => Logger.debug(service, message),
     trace: (service, message) => Logger.trace(service, message),
+    // New structured logging methods
+    logProcess: (message, metadata) => Logger.logProcess(message, metadata),
+    logProgress: (info) => Logger.logProgress(info),
+    logPerformance: (metrics) => Logger.logPerformance(metrics),
+    logError: (context, error, additionalInfo) => Logger.logError(context, error, additionalInfo),
+    logMetrics: (title, metrics) => Logger.logMetrics(title, metrics),
+    // Context management
+    startOperation: (operation, metadata) => Logger.startOperation(operation, metadata),
+    endOperation: (context, success, metadata) => Logger.endOperation(context, success, metadata),
+    // Metrics management
+    getPerformanceMetrics: () => Logger.getPerformanceMetrics(),
+    clearMetrics: () => Logger.clearMetrics(),
 };
 
 

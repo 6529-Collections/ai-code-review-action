@@ -155,16 +155,18 @@ export class ThemeExpansionService {
   async expandThemesHierarchically(
     consolidatedThemes: ConsolidatedTheme[]
   ): Promise<ConsolidatedTheme[]> {
+    const expansionContext = logger.startOperation('Theme Expansion', {
+      inputThemes: consolidatedThemes.length,
+    });
+
     const startTime = Date.now();
     const initialAICalls = this.claudeClient.getMetrics().totalCalls;
 
-    logger.info(
-      'EXPANSION',
-      `Starting hierarchical expansion of ${consolidatedThemes.length} themes`
-    );
-    logger.debug(
-      'EXPANSION',
-      `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`
+    logger.logProcess(
+      `Starting hierarchical theme expansion for ${consolidatedThemes.length} themes`,
+      {
+        themes: consolidatedThemes.map((t) => t.name),
+      }
     );
 
     // Reset effectiveness tracking
@@ -176,16 +178,19 @@ export class ThemeExpansionService {
       (theme) => this.expandThemeRecursively(theme, 0),
       {
         onProgress: (completed, total) => {
-          if (this.config.enableProgressLogging) {
-            console.log(
-              `[THEME-EXPANSION] Progress: ${completed}/${total} root themes expanded`
-            );
-          }
+          logger.logProgress({
+            current: completed,
+            total,
+            message: 'Expanding root themes',
+            context: 'Theme Expansion',
+          });
         },
         onError: (error, theme, retryCount) => {
-          console.warn(
-            `[THEME-EXPANSION] Retry ${retryCount} for theme "${theme.name}": ${error.message}`
-          );
+          logger.logError(`Theme expansion retry ${retryCount}`, error, {
+            themeName: theme.name,
+            retryCount,
+            maxRetries: this.config.maxRetries,
+          });
         },
       }
     );
@@ -203,12 +208,16 @@ export class ThemeExpansionService {
     }
 
     if (failedThemes.length > 0) {
-      console.warn(
-        `[THEME-EXPANSION] Failed to expand ${failedThemes.length} themes after retries:`
+      logger.logError(
+        'Theme expansion failures',
+        `${failedThemes.length} themes failed after retries`,
+        {
+          failedThemes: failedThemes.map((f) => ({
+            name: f.theme.name,
+            error: f.error.message,
+          })),
+        }
       );
-      for (const failed of failedThemes) {
-        console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
-      }
     }
 
     // Update effectiveness metrics
@@ -222,51 +231,56 @@ export class ThemeExpansionService {
           100
         : 0;
 
-    logger.info(
-      'EXPANSION',
-      `Completed expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes (${this.effectiveness.expansionRate.toFixed(1)}% expansion rate)`
-    );
-    logger.debug(
-      'EXPANSION',
-      `Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`
-    );
-    logger.info(
-      'EXPANSION',
-      `Max depth reached: ${this.effectiveness.maxDepthReached}, Atomic themes: ${this.effectiveness.atomicThemesIdentified}`
-    );
-
-    // Log expansion stop reasons for analysis
-    console.log(`[EXPANSION-ANALYSIS] Expansion stop reasons summary:`);
-    console.log(
-      `[EXPANSION-ANALYSIS] Total themes that stopped expanding: ${this.expansionStopReasons.length}`
-    );
-
-    const reasonCounts = this.expansionStopReasons.reduce(
-      (acc, reason) => {
-        acc[reason.reason] = (acc[reason.reason] || 0) + 1;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-
-    Object.entries(reasonCounts).forEach(([reason, count]) => {
-      console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
+    // Log comprehensive expansion results
+    logger.logMetrics('Theme Expansion Results', {
+      'Themes Processed': `${expandedThemes.length}/${consolidatedThemes.length}`,
+      'Expansion Rate': `${this.effectiveness.expansionRate.toFixed(1)}%`,
+      'Max Depth Reached': this.effectiveness.maxDepthReached,
+      'Atomic Themes': this.effectiveness.atomicThemesIdentified,
+      'AI Calls Used': this.effectiveness.aiCallsUsed,
+      'Processing Time': `${this.effectiveness.processingTime}ms`,
     });
 
-    // Log themes that exceeded PRD limits but were marked atomic
-    const oversizedAtomic = this.expansionStopReasons.filter(
-      (r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1)
-    );
+    logger.endOperation(expansionContext, failedThemes.length === 0, {
+      expandedThemes: expandedThemes.length,
+      failedThemes: failedThemes.length,
+      expansionRate: this.effectiveness.expansionRate,
+    });
 
-    if (oversizedAtomic.length > 0) {
-      console.log(
-        `[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`
+    // Log expansion stop reasons for analysis
+    if (this.expansionStopReasons.length > 0) {
+      const reasonCounts = this.expansionStopReasons.reduce(
+        (acc, reason) => {
+          acc[reason.reason] = (acc[reason.reason] || 0) + 1;
+          return acc;
+        },
+        {} as Record<string, number>
       );
-      oversizedAtomic.forEach((r) => {
-        console.log(
-          `  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`
-        );
+
+      logger.logMetrics('Expansion Stop Reasons', {
+        'Total Stopped': this.expansionStopReasons.length,
+        ...reasonCounts,
       });
+
+      // Check for themes that exceed PRD limits but were marked atomic
+      const oversizedAtomic = this.expansionStopReasons.filter(
+        (r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1)
+      );
+
+      if (oversizedAtomic.length > 0) {
+        logger.logError(
+          'Atomic themes exceed PRD limits',
+          `${oversizedAtomic.length} themes marked atomic but exceed guidelines`,
+          {
+            oversizedThemes: oversizedAtomic.map((r) => ({
+              name: r.themeName,
+              files: r.fileCount,
+              lines: r.lineCount,
+              depth: r.depth,
+            })),
+          }
+        );
+      }
     }
 
     return expandedThemes;

@@ -55,23 +55,12 @@ export class ClaudeClient {
     operation?: string
   ): Promise<string> {
     const startTime = Date.now();
-    console.log(
-      `[CLAUDE-DEBUG] callClaude started - context: ${context}, operation: ${operation || 'none'}`
-    );
-    console.log(
-      `[CLAUDE-DEBUG] Total calls so far: ${this.metrics.totalCalls}`
-    );
-
     this.metrics.totalCalls++;
     this.updateContextCounter(this.metrics.callsByContext, context);
 
     try {
       const result = await this.executeClaudeCall(prompt);
       const duration = Date.now() - startTime;
-
-      console.log(
-        `[CLAUDE-DEBUG] callClaude succeeded - duration: ${duration}ms, result length: ${result.length}`
-      );
 
       // Track successful call metrics
       this.metrics.totalTime += duration;
@@ -83,9 +72,14 @@ export class ClaudeClient {
       return result;
     } catch (error) {
       const duration = Date.now() - startTime;
-      console.log(
-        `[CLAUDE-DEBUG] callClaude failed after ${duration}ms - context: ${context}, error:`,
-        error
+
+      // Log comprehensive error context only on failure
+      console.error(
+        `[ERROR] Claude API call #${this.metrics.totalCalls} failed after ${duration}ms`
+      );
+      console.error(`Context: ${context}${operation ? ` (${operation})` : ''}`);
+      console.error(
+        `Error: ${error instanceof Error ? error.message : String(error)}`
       );
 
       // Track error metrics
@@ -99,19 +93,12 @@ export class ClaudeClient {
     let tempFile: string | null = null;
 
     try {
-      console.log('[CLAUDE-DEBUG] Starting Claude API call...');
-      console.log(`[CLAUDE-DEBUG] Prompt length: ${prompt.length} characters`);
-      console.log(
-        `[CLAUDE-DEBUG] Environment ANTHROPIC_API_KEY set: ${!!process.env.ANTHROPIC_API_KEY}`
-      );
-
       // Create secure temporary file for this request
       const { filePath, cleanup } = SecureFileNamer.createSecureTempFile(
         'claude-prompt',
         prompt
       );
       tempFile = filePath;
-      console.log(`[CLAUDE-DEBUG] Created temp file: ${filePath}`);
       performanceTracker.trackTempFile(true);
 
       let output = '';
@@ -119,34 +106,19 @@ export class ClaudeClient {
       let exitCode: number | null = null;
 
       const command = `cat "${tempFile}" | claude --print`;
-      console.log(`[CLAUDE-DEBUG] Executing command: ${command}`);
 
       try {
         exitCode = await exec.exec('bash', ['-c', command], {
           silent: true, // Suppress command logging
           listeners: {
             stdout: (data: Buffer) => {
-              const chunk = data.toString();
-              console.log(
-                `[CLAUDE-DEBUG] STDOUT chunk: ${chunk.substring(0, 200)}${chunk.length > 200 ? '...' : ''}`
-              );
-              output += chunk;
+              output += data.toString();
             },
             stderr: (data: Buffer) => {
-              const chunk = data.toString();
-              console.log(`[CLAUDE-DEBUG] STDERR chunk: ${chunk}`);
-              errorOutput += chunk;
+              errorOutput += data.toString();
             },
           },
         });
-
-        console.log(
-          `[CLAUDE-DEBUG] Command completed with exit code: ${exitCode}`
-        );
-        console.log(
-          `[CLAUDE-DEBUG] Output length: ${output.length} characters`
-        );
-        console.log(`[CLAUDE-DEBUG] Error output: ${errorOutput}`);
 
         if (exitCode !== 0) {
           throw new Error(
@@ -156,20 +128,33 @@ export class ClaudeClient {
 
         return output.trim();
       } finally {
-        console.log(`[CLAUDE-DEBUG] Cleaning up temp file: ${tempFile}`);
         cleanup(); // Use secure cleanup
         performanceTracker.trackTempFile(false);
       }
     } catch (error) {
-      console.log(`[CLAUDE-DEBUG] executeClaudeCall failed with error:`, error);
-      console.log(`[CLAUDE-DEBUG] Error type: ${typeof error}`);
-      console.log(
-        `[CLAUDE-DEBUG] Error message: ${error instanceof Error ? error.message : String(error)}`
+      // Enhanced error diagnostics only on failure
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`Detailed failure context:`);
+      console.error(`  Prompt length: ${prompt.length} characters`);
+      console.error(
+        `  ANTHROPIC_API_KEY set: ${!!process.env.ANTHROPIC_API_KEY}`
       );
-      console.log(
-        `[CLAUDE-DEBUG] Error stack: ${error instanceof Error ? error.stack : 'No stack trace'}`
-      );
-      throw new Error(`Claude API call failed: ${error}`);
+      console.error(`  Temp file: ${tempFile || 'not created'}`);
+      console.error(`  Command: cat "${tempFile}" | claude --print`);
+
+      // Check if claude command is available
+      try {
+        await exec.exec('which', ['claude'], { silent: true });
+        console.error(`  Claude CLI: Available`);
+      } catch {
+        console.error(`  Claude CLI: NOT FOUND - this may be the issue`);
+      }
+
+      if (error instanceof Error && error.stack) {
+        console.error(`  Stack trace: ${error.stack}`);
+      }
+
+      throw new Error(`Claude API call failed: ${errorMsg}`);
     }
   }
 
