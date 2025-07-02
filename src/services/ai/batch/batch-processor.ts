@@ -613,22 +613,43 @@ export class BatchProcessor {
     });
 
     try {
-      // Create batch prompt
-      const prompt = this.buildUnifiedSimilarityPrompt(pairs);
+      // Create formatted pairs for template
+      const formattedPairs = this.buildUnifiedSimilarityPrompt(pairs);
       
-      // Execute via unified service
+      logger.logProcess(`Executing batch similarity for ${pairs.length} pairs`, {
+        formattedPairsLength: formattedPairs.length,
+        estimatedTokens: this.estimateTokens(formattedPairs),
+      });
+      
+      // Execute via unified service with proper template variables
       const response = await this.unifiedService.execute<any>(
         PromptType.BATCH_SIMILARITY,
-        { prompt, pairs: JSON.stringify(pairs) }
+        { 
+          pairs: formattedPairs,
+          pairCount: pairs.length
+        }
       );
+
+      logger.logProcess('Received response from UnifiedPromptService', {
+        responseSuccess: response.success,
+        responseError: response.error,
+        responseDataExists: !!response.data,
+        responseLength: response.data?.response?.length || 0,
+        responseStart: response.data?.response?.substring(0, 100) || '',
+      });
 
       if (!response.success) {
         throw new Error(`Batch processing failed: ${response.error}`);
       }
 
+      const rawResponse = response.data?.response || '';
+      if (!rawResponse || rawResponse.length === 0) {
+        throw new Error(`Empty response received from UnifiedPromptService. Response data: ${JSON.stringify(response.data)}`);
+      }
+
       // Parse and validate response
       const batchResult = this.parseUnifiedSimilarityResponse(
-        response.data?.response || '',
+        rawResponse,
         pairs.length
       );
 
@@ -683,37 +704,7 @@ Theme 2: "${pair.theme2.name}"
 `;
     });
 
-    return `Analyze the similarity between these theme pairs. Determine if each pair should be merged based on semantic similarity, functional overlap, and business context.
-
-CRITICAL: Respond with ONLY valid JSON in this exact format:
-{
-  "success": true,
-  "results": [
-    {
-      "pairId": "pair-0",
-      "shouldMerge": boolean,
-      "confidence": 0.0-1.0,
-      "reasoning": "brief explanation (max 30 words)",
-      "scores": {
-        "name": 0.0-1.0,
-        "description": 0.0-1.0,
-        "pattern": 0.0-1.0,
-        "business": 0.0-1.0,
-        "semantic": 0.0-1.0
-      }
-    }
-  ],
-  "metadata": {
-    "processedCount": ${pairs.length},
-    "failedCount": 0,
-    "processingTimeMs": 0
-  }
-}
-
-Pairs to analyze:
-${formattedPairs.join('\n')}
-
-Remember: Return ONLY the JSON object, no additional text.`;
+    return formattedPairs.join('\n');
   }
 
   /**

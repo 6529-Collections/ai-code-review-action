@@ -203,13 +203,32 @@ export class UnifiedPromptService {
     // Get base template
     const template = this.getPromptTemplate(promptType);
 
+    // Debug logging for BATCH_SIMILARITY
+    if (promptType === PromptType.BATCH_SIMILARITY) {
+      console.log('[UnifiedPromptService] Building BATCH_SIMILARITY prompt:', {
+        templateLength: template.length,
+        templateStart: template.substring(0, 200),
+        variableKeys: Object.keys(variables),
+        useOptimizedPrompts: this.useOptimizedPrompts,
+      });
+    }
+
     // Use optimized prompt building if enabled
     if (this.useOptimizedPrompts) {
-      return this.promptTemplates.createEfficientPrompt(
+      const prompt = this.promptTemplates.createEfficientPrompt(
         template,
         variables,
         config.maxTokens || 3000
       );
+      
+      if (promptType === PromptType.BATCH_SIMILARITY) {
+        console.log('[UnifiedPromptService] Built optimized prompt:', {
+          promptLength: prompt.length,
+          promptStart: prompt.substring(0, 300),
+        });
+      }
+      
+      return prompt;
     }
 
     // Original prompt building logic

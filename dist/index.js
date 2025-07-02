@@ -31413,15 +31413,33 @@ class BatchProcessor {
             maxBatchSize: options?.maxBatchSize || 8,
         });
         try {
-            // Create batch prompt
-            const prompt = this.buildUnifiedSimilarityPrompt(pairs);
-            // Execute via unified service
-            const response = await this.unifiedService.execute(prompt_types_1.PromptType.BATCH_SIMILARITY, { prompt, pairs: JSON.stringify(pairs) });
+            // Create formatted pairs for template
+            const formattedPairs = this.buildUnifiedSimilarityPrompt(pairs);
+            logger_1.logger.logProcess(`Executing batch similarity for ${pairs.length} pairs`, {
+                formattedPairsLength: formattedPairs.length,
+                estimatedTokens: this.estimateTokens(formattedPairs),
+            });
+            // Execute via unified service with proper template variables
+            const response = await this.unifiedService.execute(prompt_types_1.PromptType.BATCH_SIMILARITY, {
+                pairs: formattedPairs,
+                pairCount: pairs.length
+            });
+            logger_1.logger.logProcess('Received response from UnifiedPromptService', {
+                responseSuccess: response.success,
+                responseError: response.error,
+                responseDataExists: !!response.data,
+                responseLength: response.data?.response?.length || 0,
+                responseStart: response.data?.response?.substring(0, 100) || '',
+            });
             if (!response.success) {
                 throw new Error(`Batch processing failed: ${response.error}`);
             }
+            const rawResponse = response.data?.response || '';
+            if (!rawResponse || rawResponse.length === 0) {
+                throw new Error(`Empty response received from UnifiedPromptService. Response data: ${JSON.stringify(response.data)}`);
+            }
             // Parse and validate response
-            const batchResult = this.parseUnifiedSimilarityResponse(response.data?.response || '', pairs.length);
+            const batchResult = this.parseUnifiedSimilarityResponse(rawResponse, pairs.length);
             const processingTime = Date.now() - startTime;
             logger_1.logger.endOperation(batchContext, true, {
                 processedCount: batchResult.results.length,
@@ -31466,37 +31484,7 @@ Theme 2: "${pair.theme2.name}"
 - Code: ${pair.theme2.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
 `;
         });
-        return `Analyze the similarity between these theme pairs. Determine if each pair should be merged based on semantic similarity, functional overlap, and business context.
-
-CRITICAL: Respond with ONLY valid JSON in this exact format:
-{
-  "success": true,
-  "results": [
-    {
-      "pairId": "pair-0",
-      "shouldMerge": boolean,
-      "confidence": 0.0-1.0,
-      "reasoning": "brief explanation (max 30 words)",
-      "scores": {
-        "name": 0.0-1.0,
-        "description": 0.0-1.0,
-        "pattern": 0.0-1.0,
-        "business": 0.0-1.0,
-        "semantic": 0.0-1.0
-      }
-    }
-  ],
-  "metadata": {
-    "processedCount": ${pairs.length},
-    "failedCount": 0,
-    "processingTimeMs": 0
-  }
-}
-
-Pairs to analyze:
-${formattedPairs.join('\n')}
-
-Remember: Return ONLY the JSON object, no additional text.`;
+        return formattedPairs.join('\n');
     }
     /**
      * Parse unified similarity response
@@ -33347,9 +33335,25 @@ class UnifiedPromptService {
     buildPrompt(promptType, variables, config) {
         // Get base template
         const template = this.getPromptTemplate(promptType);
+        // Debug logging for BATCH_SIMILARITY
+        if (promptType === prompt_types_1.PromptType.BATCH_SIMILARITY) {
+            console.log('[UnifiedPromptService] Building BATCH_SIMILARITY prompt:', {
+                templateLength: template.length,
+                templateStart: template.substring(0, 200),
+                variableKeys: Object.keys(variables),
+                useOptimizedPrompts: this.useOptimizedPrompts,
+            });
+        }
         // Use optimized prompt building if enabled
         if (this.useOptimizedPrompts) {
-            return this.promptTemplates.createEfficientPrompt(template, variables, config.maxTokens || 3000);
+            const prompt = this.promptTemplates.createEfficientPrompt(template, variables, config.maxTokens || 3000);
+            if (promptType === prompt_types_1.PromptType.BATCH_SIMILARITY) {
+                console.log('[UnifiedPromptService] Built optimized prompt:', {
+                    promptLength: prompt.length,
+                    promptStart: prompt.substring(0, 300),
+                });
+            }
+            return prompt;
         }
         // Original prompt building logic
         let prompt = template;
