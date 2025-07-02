@@ -695,12 +695,12 @@ export class BatchProcessor {
 Theme 1: "${pair.theme1.name}"
 - Description: ${pair.theme1.description}
 - Files: ${pair.theme1.affectedFiles.join(', ')}
-- Code: ${pair.theme1.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+- Code: ${pair.theme1.codeSnippets.join('\n')}
 
 Theme 2: "${pair.theme2.name}"
 - Description: ${pair.theme2.description}
 - Files: ${pair.theme2.affectedFiles.join(', ')}
-- Code: ${pair.theme2.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+- Code: ${pair.theme2.codeSnippets.join('\n')}
 `;
     });
 

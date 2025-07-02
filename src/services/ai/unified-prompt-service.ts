@@ -217,14 +217,15 @@ export class UnifiedPromptService {
     if (this.useOptimizedPrompts) {
       const prompt = this.promptTemplates.createEfficientPrompt(
         template,
-        variables,
-        config.maxTokens || 3000
+        variables
+        // NO maxTokens parameter - full context always
       );
       
       if (promptType === PromptType.BATCH_SIMILARITY) {
-        console.log('[UnifiedPromptService] Built optimized prompt:', {
+        console.log('[UnifiedPromptService] Built full prompt:', {
           promptLength: prompt.length,
           promptStart: prompt.substring(0, 300),
+          noTrimming: true,
         });
       }
       
@@ -523,7 +524,7 @@ Respond with JSON containing:
     return {
       type: promptType,
       template: '', // Will be filled by buildPrompt
-      maxTokens: 4000,
+      maxTokens: 100000, // Very high limit - no artificial trimming
       temperature,
       responseSchema: schema,
       cacheTTL,

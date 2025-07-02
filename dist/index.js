@@ -30519,7 +30519,7 @@ class AIExpansionDecisionService {
             }
             // Fallback on parsing error
             (0, utils_1.logInfo)(`Failed to parse AI expansion decision: ${extractionResult.error}`);
-            (0, utils_1.logInfo)(`Raw AI response (first 500 chars): ${response.substring(0, 500)}`);
+            (0, utils_1.logInfo)(`Raw AI response: ${response}`);
             // PRD: AI makes all decisions - if parsing fails, retry with simpler prompt
             return await this.getSimplifiedAIDecision(prompt);
         }
@@ -31476,12 +31476,12 @@ class BatchProcessor {
 Theme 1: "${pair.theme1.name}"
 - Description: ${pair.theme1.description}
 - Files: ${pair.theme1.affectedFiles.join(', ')}
-- Code: ${pair.theme1.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+- Code: ${pair.theme1.codeSnippets.join('\n')}
 
 Theme 2: "${pair.theme2.name}"
 - Description: ${pair.theme2.description}
 - Files: ${pair.theme2.affectedFiles.join(', ')}
-- Code: ${pair.theme2.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+- Code: ${pair.theme2.codeSnippets.join('\n')}
 `;
         });
         return formattedPairs.join('\n');
@@ -32708,33 +32708,23 @@ ${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
         return optimized.join('\n');
     }
     /**
-     * Create a token-efficient prompt
+     * Create a complete prompt with full context
      */
-    createEfficientPrompt(template, variables, maxTokens = 3000) {
-        // Optimize large variables
-        const optimizedVars = { ...variables };
-        // Trim file content if present
-        if (optimizedVars.content && optimizedVars.content.length > 1000) {
-            optimizedVars.content = this.optimizeFileContent(optimizedVars.content, optimizedVars.focusAreas);
-        }
-        // Trim file lists if too long
-        if (Array.isArray(optimizedVars.files) && optimizedVars.files.length > 5) {
-            optimizedVars.files = [
-                ...optimizedVars.files.slice(0, 5),
-                `...(+${optimizedVars.files.length - 5} more)`,
-            ];
-        }
-        // Replace variables
+    createEfficientPrompt(template, variables, maxTokens // Ignored - no trimming
+    ) {
+        // Use all variables as-is - NO optimization/trimming
+        const fullVars = { ...variables };
+        // Replace variables with FULL content
         let prompt = template;
-        for (const [key, value] of Object.entries(optimizedVars)) {
+        for (const [key, value] of Object.entries(fullVars)) {
             const placeholder = `{{${key}}}`;
             const replacement = Array.isArray(value)
                 ? value.join(', ')
                 : String(value);
             prompt = prompt.replace(new RegExp(placeholder, 'g'), replacement);
         }
-        // Trim if still too long
-        return this.trimContext(prompt, maxTokens);
+        // Return COMPLETE prompt - NO trimming
+        return prompt;
     }
 }
 exports.OptimizedPromptTemplates = OptimizedPromptTemplates;
@@ -33346,11 +33336,14 @@ class UnifiedPromptService {
         }
         // Use optimized prompt building if enabled
         if (this.useOptimizedPrompts) {
-            const prompt = this.promptTemplates.createEfficientPrompt(template, variables, config.maxTokens || 3000);
+            const prompt = this.promptTemplates.createEfficientPrompt(template, variables
+            // NO maxTokens parameter - full context always
+            );
             if (promptType === prompt_types_1.PromptType.BATCH_SIMILARITY) {
-                console.log('[UnifiedPromptService] Built optimized prompt:', {
+                console.log('[UnifiedPromptService] Built full prompt:', {
                     promptLength: prompt.length,
                     promptStart: prompt.substring(0, 300),
+                    noTrimming: true,
                 });
             }
             return prompt;
@@ -33594,7 +33587,7 @@ Respond with JSON containing:
         return {
             type: promptType,
             template: '', // Will be filled by buildPrompt
-            maxTokens: 4000,
+            maxTokens: 100000, // Very high limit - no artificial trimming
             temperature,
             responseSchema: schema,
             cacheTTL,
@@ -34714,10 +34707,10 @@ Example response format:
             file.changes.forEach((change, index) => {
                 formatted += `  Change ${index + 1} (${change.type}): Lines ${change.startLine}-${change.endLine}\n`;
                 if (change.content) {
-                    formatted += `  Content: ${change.content.substring(0, 200)}${change.content.length > 200 ? '...' : ''}\n`;
+                    formatted += `  Content: ${change.content}\n`;
                 }
                 if (change.diff) {
-                    formatted += `  Diff: ${change.diff.substring(0, 200)}${change.diff.length > 200 ? '...' : ''}\n`;
+                    formatted += `  Diff: ${change.diff}\n`;
                 }
             });
         });
@@ -39348,10 +39341,10 @@ Respond with ONLY the JSON object, no explanations.`;
         }
         // Function changes
         if (patterns.newFunctions.length > 0) {
-            summary.push(`New functions: ${patterns.newFunctions.slice(0, 3).join(', ')}${patterns.newFunctions.length > 3 ? '...' : ''}`);
+            summary.push(`New functions: ${patterns.newFunctions.join(', ')}`);
         }
         if (patterns.modifiedFunctions.length > 0) {
-            summary.push(`Modified functions: ${patterns.modifiedFunctions.slice(0, 3).join(', ')}${patterns.modifiedFunctions.length > 3 ? '...' : ''}`);
+            summary.push(`Modified functions: ${patterns.modifiedFunctions.join(', ')}`);
         }
         // AI-enhanced insights
         if (patterns.architecturalPatterns.length > 0) {
@@ -39362,7 +39355,7 @@ Respond with ONLY the JSON object, no explanations.`;
         }
         // Import changes
         if (patterns.newImports.length > 0) {
-            summary.push(`New imports: ${patterns.newImports.slice(0, 2).join(', ')}${patterns.newImports.length > 2 ? '...' : ''}`);
+            summary.push(`New imports: ${patterns.newImports.join(', ')}`);
         }
         // Complexity
         summary.push(`Complexity: ${metrics.codeComplexity}`);
@@ -41166,7 +41159,7 @@ Focus on business value and avoid merging themes with distinct business purposes
 
 Description: ${description}
 Business Impact: ${businessImpact}
-Code Context: ${codeSnippets.slice(0, 2).join('\n---\n')}
+Code Context: ${codeSnippets.join('\n---\n')}
 
 Create a theme name that:
 1. Focuses on business value, not technical implementation
@@ -41605,10 +41598,10 @@ class ThemeFormatter {
             ? `${parentNumber}.${number}`
             : `${number}`;
         // Truncate description if too long
-        const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim(), this.MAX_DESCRIPTION_LENGTH);
+        const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim());
         let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
         // Files on the same line or next line depending on length
-        const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
+        const files = theme.affectedFiles.join(', '); // Show ALL files
         const fileList = theme.affectedFiles.length > this.MAX_FILES_SHOWN
             ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
             : files;
@@ -41620,7 +41613,7 @@ class ThemeFormatter {
             theme.detailedDescription.length > 20 &&
             !theme.description
                 .toLowerCase()
-                .includes(theme.detailedDescription.toLowerCase().substring(0, 10))) {
+                .includes(theme.detailedDescription.toLowerCase())) {
             output += ` ${theme.detailedDescription}`;
         }
         // No merge indicators, no emoji, just content
@@ -41760,11 +41753,9 @@ class ThemeFormatter {
         countRecursively(themes);
         return count;
     }
-    static truncateText(text, maxLength) {
-        if (text.length <= maxLength) {
-            return text;
-        }
-        return text.substring(0, maxLength - 3) + '...';
+    static truncateText(text) {
+        // NO truncation - return full text always
+        return text;
     }
     static themeToJsonObject(theme) {
         return {

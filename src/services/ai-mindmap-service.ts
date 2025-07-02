@@ -487,7 +487,7 @@ CRITICAL: Respond with ONLY valid JSON:
     if (words.length <= maxWords) {
       return text;
     }
-    return words.slice(0, maxWords).join(' ');
+    return words.join(' '); // Return ALL words
   }
 
   /**

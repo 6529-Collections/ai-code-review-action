@@ -39,14 +39,13 @@ export class ThemeFormatter {
 
     // Truncate description if too long
     const description = this.truncateText(
-      theme.description.replace(/[\r\n]/g, ' ').trim(),
-      this.MAX_DESCRIPTION_LENGTH
+      theme.description.replace(/[\r\n]/g, ' ').trim()
     );
 
     let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
 
     // Files on the same line or next line depending on length
-    const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
+    const files = theme.affectedFiles.join(', '); // Show ALL files
     const fileList =
       theme.affectedFiles.length > this.MAX_FILES_SHOWN
         ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
@@ -62,7 +61,7 @@ export class ThemeFormatter {
       theme.detailedDescription.length > 20 &&
       !theme.description
         .toLowerCase()
-        .includes(theme.detailedDescription.toLowerCase().substring(0, 10))
+        .includes(theme.detailedDescription.toLowerCase())
     ) {
       output += ` ${theme.detailedDescription}`;
     }
@@ -257,11 +256,9 @@ export class ThemeFormatter {
     return count;
   }
 
-  private static truncateText(text: string, maxLength: number): string {
-    if (text.length <= maxLength) {
-      return text;
-    }
-    return text.substring(0, maxLength - 3) + '...';
+  private static truncateText(text: string): string {
+    // NO truncation - return full text always
+    return text;
   }
 
   private static themeToJsonObject(theme: ConsolidatedTheme): {

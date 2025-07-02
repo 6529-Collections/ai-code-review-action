@@ -31,7 +31,7 @@ export declare class OptimizedPromptTemplates extends PromptTemplates {
      */
     optimizeFileContent(content: string, focusAreas?: string[]): string;
     /**
-     * Create a token-efficient prompt
+     * Create a complete prompt with full context
      */
     createEfficientPrompt(template: string, variables: Record<string, any>, maxTokens?: number): string;
 }

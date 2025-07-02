@@ -549,13 +549,11 @@ Respond with ONLY the JSON object, no explanations.`;
 
     // Function changes
     if (patterns.newFunctions.length > 0) {
-      summary.push(
-        `New functions: ${patterns.newFunctions.slice(0, 3).join(', ')}${patterns.newFunctions.length > 3 ? '...' : ''}`
-      );
+      summary.push(`New functions: ${patterns.newFunctions.join(', ')}`);
     }
     if (patterns.modifiedFunctions.length > 0) {
       summary.push(
-        `Modified functions: ${patterns.modifiedFunctions.slice(0, 3).join(', ')}${patterns.modifiedFunctions.length > 3 ? '...' : ''}`
+        `Modified functions: ${patterns.modifiedFunctions.join(', ')}`
       );
     }
 
@@ -570,9 +568,7 @@ Respond with ONLY the JSON object, no explanations.`;
 
     // Import changes
     if (patterns.newImports.length > 0) {
-      summary.push(
-        `New imports: ${patterns.newImports.slice(0, 2).join(', ')}${patterns.newImports.length > 2 ? '...' : ''}`
-      );
+      summary.push(`New imports: ${patterns.newImports.join(', ')}`);
     }
 
     // Complexity

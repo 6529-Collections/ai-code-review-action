@@ -318,35 +318,19 @@ ${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
   }
 
   /**
-   * Create a token-efficient prompt
+   * Create a complete prompt with full context
    */
   createEfficientPrompt(
     template: string,
     variables: Record<string, any>,
-    maxTokens: number = 3000
+    maxTokens?: number // Ignored - no trimming
   ): string {
-    // Optimize large variables
-    const optimizedVars = { ...variables };
+    // Use all variables as-is - NO optimization/trimming
+    const fullVars = { ...variables };
 
-    // Trim file content if present
-    if (optimizedVars.content && optimizedVars.content.length > 1000) {
-      optimizedVars.content = this.optimizeFileContent(
-        optimizedVars.content,
-        optimizedVars.focusAreas
-      );
-    }
-
-    // Trim file lists if too long
-    if (Array.isArray(optimizedVars.files) && optimizedVars.files.length > 5) {
-      optimizedVars.files = [
-        ...optimizedVars.files.slice(0, 5),
-        `...(+${optimizedVars.files.length - 5} more)`,
-      ];
-    }
-
-    // Replace variables
+    // Replace variables with FULL content
     let prompt = template;
-    for (const [key, value] of Object.entries(optimizedVars)) {
+    for (const [key, value] of Object.entries(fullVars)) {
       const placeholder = `{{${key}}}`;
       const replacement = Array.isArray(value)
         ? value.join(', ')
@@ -354,7 +338,7 @@ ${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
       prompt = prompt.replace(new RegExp(placeholder, 'g'), replacement);
     }
 
-    // Trim if still too long
-    return this.trimContext(prompt, maxTokens);
+    // Return COMPLETE prompt - NO trimming
+    return prompt;
   }
 }

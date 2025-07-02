@@ -176,9 +176,7 @@ export class AIExpansionDecisionService {
       logInfo(
         `Failed to parse AI expansion decision: ${extractionResult.error}`
       );
-      logInfo(
-        `Raw AI response (first 500 chars): ${response.substring(0, 500)}`
-      );
+      logInfo(`Raw AI response: ${response}`);
       // PRD: AI makes all decisions - if parsing fails, retry with simpler prompt
       return await this.getSimplifiedAIDecision(prompt);
     } catch (error) {

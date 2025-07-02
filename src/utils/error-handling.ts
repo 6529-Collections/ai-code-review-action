@@ -161,8 +161,7 @@ export class ErrorHandler {
     operation: string,
     expectedSchema?: string
   ): AIServiceError {
-    const truncatedResponse =
-      response.length > 200 ? response.substring(0, 200) + '...' : response;
+    const truncatedResponse = response; // Show full response for debugging
 
     let diagnostics = `JSON parsing failed for ${operation}.\n`;
     diagnostics += `Response preview: "${truncatedResponse}"\n`;

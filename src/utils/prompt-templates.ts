@@ -264,7 +264,7 @@ Focus on business value and avoid merging themes with distinct business purposes
 
 Description: ${description}
 Business Impact: ${businessImpact}
-Code Context: ${codeSnippets.slice(0, 2).join('\n---\n')}
+Code Context: ${codeSnippets.join('\n---\n')}
 
 Create a theme name that:
 1. Focuses on business value, not technical implementation

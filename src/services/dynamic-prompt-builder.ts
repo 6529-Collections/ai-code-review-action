@@ -267,10 +267,10 @@ Example response format:
       file.changes.forEach((change, index) => {
         formatted += `  Change ${index + 1} (${change.type}): Lines ${change.startLine}-${change.endLine}\n`;
         if (change.content) {
-          formatted += `  Content: ${change.content.substring(0, 200)}${change.content.length > 200 ? '...' : ''}\n`;
+          formatted += `  Content: ${change.content}\n`;
         }
         if (change.diff) {
-          formatted += `  Diff: ${change.diff.substring(0, 200)}${change.diff.length > 200 ? '...' : ''}\n`;
+          formatted += `  Diff: ${change.diff}\n`;
         }
       });
     });
