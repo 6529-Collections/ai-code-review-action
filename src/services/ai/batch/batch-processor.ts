@@ -7,15 +7,12 @@ import {
 } from './batch-strategies';
 import { AdaptiveBatchingController, SystemMetrics } from './adaptive-batching';
 import { SecureFileNamer } from '../../../utils/secure-file-namer';
-import { JsonExtractor } from '../../../utils/json-extractor';
 import { logger } from '../../../utils/logger';
 import { ConsolidatedTheme } from '../../../types/similarity-types';
 import {
   UnifiedBatchResponse,
   SimilarityResult,
   BatchProcessingOptions,
-  isSimilarityResult,
-  isUnifiedBatchResponse,
 } from '../../../types/batch-types';
 
 interface QueueItem<T> {
@@ -634,37 +631,40 @@ export class BatchProcessor {
         responseSuccess: response.success,
         responseError: response.error,
         responseDataExists: !!response.data,
-        responseLength: response.data?.response?.length || 0,
-        responseStart: response.data?.response?.substring(0, 100) || '',
+        responseType: typeof response.data,
+        hasResults: !!(response.data && typeof response.data === 'object' && 'results' in response.data),
       });
 
       if (!response.success) {
         throw new Error(`Batch processing failed: ${response.error}`);
       }
 
-      const rawResponse = response.data?.response || '';
-      if (!rawResponse || rawResponse.length === 0) {
-        throw new Error(`Empty response received from UnifiedPromptService. Response data: ${JSON.stringify(response.data)}`);
+      // UnifiedPromptService returns parsed JSON directly in response.data
+      if (!response.data || typeof response.data !== 'object') {
+        throw new Error(`Invalid response structure from UnifiedPromptService. Response data: ${JSON.stringify(response.data)}`);
       }
 
-      // Parse and validate response
-      const batchResult = this.parseUnifiedSimilarityResponse(
-        rawResponse,
-        pairs.length
-      );
+      // Use the parsed data directly - no need to re-parse
+      const batchResult = response.data as UnifiedBatchResponse<SimilarityResult>;
+
+      // Validate the structure
+      if (!batchResult.results || !Array.isArray(batchResult.results)) {
+        throw new Error(`Invalid batch result structure. Expected results array, got: ${JSON.stringify(batchResult)}`);
+      }
 
       const processingTime = Date.now() - startTime;
       
       logger.endOperation(batchContext, true, {
         processedCount: batchResult.results.length,
-        failedCount: batchResult.metadata.failedCount,
+        failedCount: batchResult.metadata?.failedCount || 0,
         processingTime,
       });
 
       return {
         ...batchResult,
         metadata: {
-          ...batchResult.metadata,
+          processedCount: batchResult.results.length,
+          failedCount: batchResult.metadata?.failedCount || 0,
           processingTimeMs: processingTime,
         },
       };
@@ -707,63 +707,6 @@ Theme 2: "${pair.theme2.name}"
     return formattedPairs.join('\n');
   }
 
-  /**
-   * Parse unified similarity response
-   */
-  private parseUnifiedSimilarityResponse(
-    response: string,
-    expectedCount: number
-  ): UnifiedBatchResponse<SimilarityResult> {
-    try {
-      // Extract JSON using robust JsonExtractor
-      const extractionResult = JsonExtractor.extractAndValidateJson(
-        response,
-        'object',
-        ['success', 'results'] // Required fields
-      );
-
-      if (!extractionResult.success) {
-        throw new Error(`JSON extraction failed: ${extractionResult.error}`);
-      }
-
-      // Validate response structure
-      const data = extractionResult.data as unknown;
-      if (!isUnifiedBatchResponse(data, isSimilarityResult)) {
-        throw new Error('Response structure validation failed');
-      }
-
-      const validatedResponse = data as UnifiedBatchResponse<SimilarityResult>;
-
-      // Verify we got results for all pairs
-      if (validatedResponse.results.length !== expectedCount) {
-        logger.logError('Batch response count mismatch', 
-          `Expected ${expectedCount} results, got ${validatedResponse.results.length}`, {
-          expectedCount,
-          actualCount: validatedResponse.results.length,
-          response: response.substring(0, 500),
-        });
-      }
-
-      return validatedResponse;
-    } catch (error) {
-      logger.logError('Failed to parse batch similarity response', error as Error, {
-        responseLength: response.length,
-        responseStart: response.substring(0, 200),
-        expectedCount,
-      });
-      
-      // Create fallback response
-      return {
-        success: false,
-        results: [],
-        metadata: {
-          processedCount: 0,
-          failedCount: expectedCount,
-          processingTimeMs: 0,
-        },
-      };
-    }
-  }
 
   /**
    * Estimate token count for a prompt (simplified)

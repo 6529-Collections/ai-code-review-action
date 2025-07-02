@@ -117,10 +117,6 @@ export declare class BatchProcessor {
      */
     private buildUnifiedSimilarityPrompt;
     /**
-     * Parse unified similarity response
-     */
-    private parseUnifiedSimilarityResponse;
-    /**
      * Estimate token count for a prompt (simplified)
      */
     private estimateTokens;
