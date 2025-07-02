@@ -89,22 +89,29 @@ export class AIExpansionDecisionService {
    * Simple check for obviously atomic changes - extremely conservative
    */
   private isObviouslyAtomic(theme: ConsolidatedTheme): boolean {
-    // Only stop expansion for truly trivial changes
-    // Almost everything should go through AI analysis for natural decomposition
-    if (theme.affectedFiles.length === 1) {
-      const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-      const description = theme.description.toLowerCase();
-
-      // Only consider atomic if: very few lines AND simple operation
+    // PRD: "5-15 lines of focused change" for atomic themes
+    // Only mark as obviously atomic for truly trivial changes
+    const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+    const description = theme.description.toLowerCase();
+    
+    // Only mark as obviously atomic if truly trivial
+    if (theme.affectedFiles.length === 1 && totalLines <= 5) {
+      // Simple one-liners like typo fixes
       return (
-        totalLines < 3 &&
-        !description.includes('refactor') &&
-        !description.includes('update') &&
-        !description.includes('improve') &&
-        !description.includes('enhance') &&
-        !description.includes('modify')
+        description.includes('typo') ||
+        description.includes('spelling') ||
+        description.includes('rename') ||
+        (totalLines <= 2 && !description.includes('multiple'))
       );
     }
+    
+    // PRD: Multi-file changes are RARELY atomic
+    // Any multi-file change should go through AI evaluation
+    if (theme.affectedFiles.length > 1) {
+      console.log(`[ATOMIC-CHECK] Multi-file theme "${theme.name}" (${theme.affectedFiles.length} files) -> AI evaluation required`);
+      return false;
+    }
+    
     return false;
   }
 

@@ -49,6 +49,22 @@ inputs:
     required: false
     default: '20'
   
+  # PRD Compliance Controls
+  max-atomic-size:
+    description: 'Maximum lines for atomic theme (from PRD)'
+    required: false
+    default: '15'
+  
+  re-evaluate-after-merge:
+    description: 'Re-evaluate merged themes for expansion'
+    required: false
+    default: 'true'
+    
+  strict-atomic-limits:
+    description: 'Enforce PRD atomic size limits strictly'
+    required: false
+    default: 'true'
+  
   # Logging Controls
   verbose-dedup-logging:
     description: 'Enable detailed logging of deduplication decisions'

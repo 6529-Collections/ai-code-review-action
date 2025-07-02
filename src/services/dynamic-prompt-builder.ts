@@ -201,6 +201,17 @@ Stop expansion only when ALL true:
 3. Single responsibility
 4. Natural code boundary
 
+CRITICAL: Multi-file changes are RARELY atomic. Consider:
+- If changing multiple files, each file likely represents a separate concern
+- Configuration + implementation = 2 separate atomic changes
+- Test + implementation = 2 separate atomic changes
+- Documentation + code = 2 separate atomic changes
+
+Multi-file themes should expand unless they are:
+1. Simple renames across files (atomic rename operation)
+2. Coordinated single-line changes (like version bumps)
+3. Pure refactoring with identical logic changes
+
 CONSIDER THESE QUESTIONS:
 ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
 
