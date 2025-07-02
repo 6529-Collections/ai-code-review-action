@@ -126,6 +126,14 @@ export declare class ThemeExpansionService {
      */
     private convertSuggestedToConsolidatedThemes;
     /**
+     * Validate theme before expansion
+     */
+    private validateThemeForExpansion;
+    /**
+     * Extract relevant code snippets based on actual file context
+     */
+    private extractRelevantSnippets;
+    /**
      * Extract code context for a sub-theme from parent theme
      */
     private extractSubThemeCodeContext;

@@ -80,7 +80,7 @@ export class AIExpansionDecisionService {
    * Generate a simple hash for theme analysis caching
    */
   private async getAnalysisHash(theme: ConsolidatedTheme): Promise<string> {
-    const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
+    const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeContext.totalLinesChanged}_${theme.codeContext.files.length}`;
     // Simple hash - in production you might want a proper hash function
     return Buffer.from(content).toString('base64').slice(0, 16);
   }
@@ -90,31 +90,27 @@ export class AIExpansionDecisionService {
    */
   private isObviouslyAtomic(theme: ConsolidatedTheme): boolean {
     // PRD: "5-15 lines of focused change" for atomic themes
-    // Only mark as obviously atomic for truly trivial changes
-    const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+    const totalLines = theme.codeContext.totalLinesChanged;
+
+    // NO FALLBACKS - only truly atomic changes qualify
+    // Must be single file AND within PRD size limits
+    if (theme.affectedFiles.length !== 1) {
+      return false; // Multi-file = not atomic
+    }
+
+    if (totalLines < 5 || totalLines > 15) {
+      return false; // Outside PRD atomic size range
+    }
+
+    // Even within size limits, only mark as obviously atomic for very clear cases
     const description = theme.description.toLowerCase();
-
-    // Only mark as obviously atomic if truly trivial
-    if (theme.affectedFiles.length === 1 && totalLines <= 5) {
-      // Simple one-liners like typo fixes
-      return (
-        description.includes('typo') ||
-        description.includes('spelling') ||
-        description.includes('rename') ||
-        (totalLines <= 2 && !description.includes('multiple'))
-      );
-    }
-
-    // PRD: Multi-file changes are RARELY atomic
-    // Any multi-file change should go through AI evaluation
-    if (theme.affectedFiles.length > 1) {
-      console.log(
-        `[ATOMIC-CHECK] Multi-file theme "${theme.name}" (${theme.affectedFiles.length} files) -> AI evaluation required`
-      );
-      return false;
-    }
-
-    return false;
+    return (
+      description.includes('typo') ||
+      description.includes('spelling') ||
+      description.includes('fix variable name') ||
+      description.includes('update constant') ||
+      (totalLines <= 7 && description.includes('single'))
+    );
   }
 
   /**

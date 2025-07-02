@@ -66,7 +66,11 @@ CURRENT THEME:
 Name: "${theme.name}"
 Description: ${theme.description}
 Current depth: ${currentDepth}
-Files involved: ${theme.affectedFiles.length} files`;
+Files involved: ${theme.affectedFiles.length} files
+Total lines changed: ${theme.codeContext.totalLinesChanged} lines
+
+CODE CONTEXT SUMMARY:
+${theme.codeContext.files.map((f) => `- ${f.path}: ${f.changes.reduce((sum, c) => sum + (c.endLine - c.startLine + 1), 0)} lines`).join('\n')}`;
 
     if (parentTheme) {
       context += `
@@ -119,11 +123,21 @@ ${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
     const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
 
     let section = `EXPANSION GUIDANCE:
+
+PRD REQUIREMENTS FOR ATOMIC THEMES:
+- Atomic size: 5-15 lines of focused change
+- Single file modification only
+- Unit-testable as a single change
+- Does exactly ONE thing
+
+CURRENT THEME SIZE: ${codeAnalysis.functionCount} functions, ${codeAnalysis.classCount} classes across ${codeAnalysis.moduleCount} files
+
 Focus: Identify distinct functional concerns that could be independently tested or reviewed
 - Look for changes that address different requirements or use cases
 - Consider separating different functions, classes, or logical units
 - Each theme should represent a coherent concern that could have its own unit test
-- Consider if different aspects could be tested or reviewed separately`;
+- Consider if different aspects could be tested or reviewed separately
+- IMPORTANT: Stop expansion when reaching 5-15 line single-file changes`;
 
     if (achievements.length > 0) {
       section += `

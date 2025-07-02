@@ -334,7 +334,7 @@ export class CodeStructureAnalyzer {
     }
 
     // PRD-aligned testability and atomicity hints
-    const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+    const totalLines = theme.codeContext.totalLinesChanged;
 
     // PRD: "5-15 lines of focused change"
     if (totalLines > 15) {
@@ -377,10 +377,7 @@ export class CodeStructureAnalyzer {
     }
 
     // Add generic expansion encouragement if no specific hints
-    if (
-      hints.length === 0 &&
-      theme.codeSnippets.join('\n').split('\n').length > 10
-    ) {
+    if (hints.length === 0 && theme.codeContext.totalLinesChanged > 10) {
       hints.push(
         'This change has sufficient complexity to potentially benefit from decomposition into more specific sub-themes'
       );

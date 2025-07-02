@@ -30468,7 +30468,7 @@ class AIExpansionDecisionService {
      * Generate a simple hash for theme analysis caching
      */
     async getAnalysisHash(theme) {
-        const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
+        const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeContext.totalLinesChanged}_${theme.codeContext.files.length}`;
         // Simple hash - in production you might want a proper hash function
         return Buffer.from(content).toString('base64').slice(0, 16);
     }
@@ -30477,24 +30477,22 @@ class AIExpansionDecisionService {
      */
     isObviouslyAtomic(theme) {
         // PRD: "5-15 lines of focused change" for atomic themes
-        // Only mark as obviously atomic for truly trivial changes
-        const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+        const totalLines = theme.codeContext.totalLinesChanged;
+        // NO FALLBACKS - only truly atomic changes qualify
+        // Must be single file AND within PRD size limits
+        if (theme.affectedFiles.length !== 1) {
+            return false; // Multi-file = not atomic
+        }
+        if (totalLines < 5 || totalLines > 15) {
+            return false; // Outside PRD atomic size range
+        }
+        // Even within size limits, only mark as obviously atomic for very clear cases
         const description = theme.description.toLowerCase();
-        // Only mark as obviously atomic if truly trivial
-        if (theme.affectedFiles.length === 1 && totalLines <= 5) {
-            // Simple one-liners like typo fixes
-            return (description.includes('typo') ||
-                description.includes('spelling') ||
-                description.includes('rename') ||
-                (totalLines <= 2 && !description.includes('multiple')));
-        }
-        // PRD: Multi-file changes are RARELY atomic
-        // Any multi-file change should go through AI evaluation
-        if (theme.affectedFiles.length > 1) {
-            console.log(`[ATOMIC-CHECK] Multi-file theme "${theme.name}" (${theme.affectedFiles.length} files) -> AI evaluation required`);
-            return false;
-        }
-        return false;
+        return (description.includes('typo') ||
+            description.includes('spelling') ||
+            description.includes('fix variable name') ||
+            description.includes('update constant') ||
+            (totalLines <= 7 && description.includes('single')));
     }
     /**
      * Get AI decision from Claude
@@ -34418,7 +34416,7 @@ class CodeStructureAnalyzer {
             hints.push(`Multiple modules affected (${analysis.moduleCount}) - each module likely represents a distinct component or service`);
         }
         // PRD-aligned testability and atomicity hints
-        const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+        const totalLines = theme.codeContext.totalLinesChanged;
         // PRD: "5-15 lines of focused change"
         if (totalLines > 15) {
             hints.push(`Exceeds PRD atomic size (${totalLines} > 15 lines) - split into smaller, testable units`);
@@ -34441,8 +34439,7 @@ class CodeStructureAnalyzer {
             hints.push('Description contains "and" - multiple concerns should be separated per PRD');
         }
         // Add generic expansion encouragement if no specific hints
-        if (hints.length === 0 &&
-            theme.codeSnippets.join('\n').split('\n').length > 10) {
+        if (hints.length === 0 && theme.codeContext.totalLinesChanged > 10) {
             hints.push('This change has sufficient complexity to potentially benefit from decomposition into more specific sub-themes');
         }
         return hints;
@@ -34498,7 +34495,11 @@ CURRENT THEME:
 Name: "${theme.name}"
 Description: ${theme.description}
 Current depth: ${currentDepth}
-Files involved: ${theme.affectedFiles.length} files`;
+Files involved: ${theme.affectedFiles.length} files
+Total lines changed: ${theme.codeContext.totalLinesChanged} lines
+
+CODE CONTEXT SUMMARY:
+${theme.codeContext.files.map((f) => `- ${f.path}: ${f.changes.reduce((sum, c) => sum + (c.endLine - c.startLine + 1), 0)} lines`).join('\n')}`;
         if (parentTheme) {
             context += `
 
@@ -34540,11 +34541,21 @@ ${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
         const achievements = this.identifyAchievements(currentDepth, codeAnalysis);
         const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
         let section = `EXPANSION GUIDANCE:
+
+PRD REQUIREMENTS FOR ATOMIC THEMES:
+- Atomic size: 5-15 lines of focused change
+- Single file modification only
+- Unit-testable as a single change
+- Does exactly ONE thing
+
+CURRENT THEME SIZE: ${codeAnalysis.functionCount} functions, ${codeAnalysis.classCount} classes across ${codeAnalysis.moduleCount} files
+
 Focus: Identify distinct functional concerns that could be independently tested or reviewed
 - Look for changes that address different requirements or use cases
 - Consider separating different functions, classes, or logical units
 - Each theme should represent a coherent concern that could have its own unit test
-- Consider if different aspects could be tested or reviewed separately`;
+- Consider if different aspects could be tested or reviewed separately
+- IMPORTANT: Stop expansion when reaching 5-15 line single-file changes`;
         if (achievements.length > 0) {
             section += `
 
@@ -36133,6 +36144,15 @@ class ThemeExpansionService {
      * Recursively expand a theme to maximum depth
      */
     async expandThemeRecursively(theme, currentDepth, parentTheme) {
+        // Validate theme before any expansion attempt
+        try {
+            this.validateThemeForExpansion(theme);
+        }
+        catch (error) {
+            console.error(`[EXPANSION-VALIDATION-ERROR] Theme "${theme.name}" failed validation: ${error instanceof Error ? error.message : String(error)}`);
+            // Return theme as-is if validation fails
+            return theme;
+        }
         // Track depth metrics
         this.effectiveness.maxDepthReached = Math.max(this.effectiveness.maxDepthReached, currentDepth);
         // PRD: No artificial limits - depth emerges from complexity
@@ -36240,10 +36260,12 @@ class ThemeExpansionService {
         // Track theme evaluation
         this.effectiveness.themesEvaluated++;
         // Validate code context accuracy
+        console.log(`[CONTEXT-VALIDATION] Validating theme "${theme.name}" - Files: ${theme.codeContext.files.length}, Lines: ${theme.codeContext.totalLinesChanged}`);
         if (!this.validateThemeCodeContext(theme)) {
             console.warn(`[CONTEXT-VALIDATION] Theme "${theme.name}" has invalid code context, skipping expansion`);
             return null;
         }
+        console.log(`[CONTEXT-VALIDATION] Theme "${theme.name}" passed validation`);
         // Get sibling themes for context
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
         // Let AI decide based on full context
@@ -36259,7 +36281,7 @@ class ThemeExpansionService {
         const expansionMetrics = {
             naturalDepth: currentDepth,
             reason: 'complexity-driven',
-            atomicSize: theme.codeSnippets.join('\n').split('\n').length,
+            atomicSize: theme.codeContext.totalLinesChanged,
             reasoning: expansionDecision.reasoning,
         };
         // If theme is atomic or shouldn't expand, return null
@@ -36267,7 +36289,7 @@ class ThemeExpansionService {
             // Detailed logging for expansion decisions
             console.log(`[EXPANSION-DECISION] Evaluating theme: "${theme.name}" at depth ${currentDepth}`);
             console.log(`[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`);
-            console.log(`[EXPANSION-DECISION] Code lines: ${theme.codeSnippets.join('\n').split('\n').length}`);
+            console.log(`[EXPANSION-DECISION] Code lines: ${theme.codeContext.totalLinesChanged}`);
             console.log(`[EXPANSION-DECISION] AI Decision: shouldExpand=${expansionDecision.shouldExpand}, isAtomic=${expansionDecision.isAtomic}`);
             console.log(`[EXPANSION-DECISION] AI Reasoning: "${expansionDecision.reasoning}"`);
             console.log(`[EXPANSION-DECISION] Business Context: "${expansionDecision.businessContext}"`);
@@ -36291,7 +36313,7 @@ class ThemeExpansionService {
                 reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
                 details: expansionDecision.reasoning,
                 fileCount: theme.affectedFiles.length,
-                lineCount: theme.codeSnippets.join('\n').split('\n').length,
+                lineCount: theme.codeContext.totalLinesChanged,
             });
             logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
             // Log PRD metrics
@@ -36324,7 +36346,7 @@ class ThemeExpansionService {
         for (const theme of themes) {
             // Check if this was a merged theme (has multiple source themes)
             if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-                const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+                const totalLines = theme.codeContext.totalLinesChanged;
                 console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${totalLines} lines, ${theme.affectedFiles.length} files)`);
                 // PRD: If merged theme exceeds atomic size, it should be re-evaluated
                 const exceedsLineLimit = strictAtomicLimits && totalLines > maxAtomicSize;
@@ -36921,48 +36943,172 @@ Return JSON with specific sub-themes:
      * Convert suggested sub-themes to ConsolidatedTheme objects
      */
     convertSuggestedToConsolidatedThemes(suggestedThemes, parentTheme) {
-        return suggestedThemes.map((suggested, index) => {
-            const relevantFiles = suggested.files || suggested.relevantFiles || [];
-            const validFiles = relevantFiles.filter((file) => parentTheme.affectedFiles.includes(file));
-            return {
-                id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', parentTheme.id, index),
-                name: suggested.name,
-                description: suggested.description,
-                level: parentTheme.level + 1,
-                parentId: parentTheme.id,
-                childThemes: [],
-                affectedFiles: validFiles.length > 0 ? validFiles : [parentTheme.affectedFiles[0]], // Fallback to first parent file
-                confidence: 0.8,
-                businessImpact: suggested.businessImpact ||
-                    suggested.rationale ||
-                    suggested.description,
-                codeSnippets: parentTheme.codeSnippets.filter((snippet) => validFiles.some((file) => snippet.includes(file))),
-                context: `${parentTheme.context}\n\nSub-theme: ${suggested.description}`,
-                lastAnalysis: new Date(),
-                sourceThemes: [parentTheme.id],
-                consolidationMethod: 'expansion',
-                // Extract relevant code context for this sub-theme
-                codeContext: this.extractSubThemeCodeContext(parentTheme, validFiles),
-                isAtomic: parentTheme.level >= 3, // Deeper levels likely atomic
-            };
-        });
+        const convertedThemes = [];
+        for (const [index, suggested] of suggestedThemes.entries()) {
+            try {
+                const relevantFiles = suggested.files || suggested.relevantFiles || [];
+                // NO FALLBACKS - validate files exist
+                if (relevantFiles.length === 0) {
+                    throw new Error(`Sub-theme "${suggested.name}" has no files specified. ` +
+                        `AI must provide specific files for each sub-theme.`);
+                }
+                // Validate files actually exist in parent
+                const validFiles = relevantFiles.filter((file) => parentTheme.affectedFiles.includes(file));
+                if (validFiles.length === 0) {
+                    throw new Error(`Sub-theme "${suggested.name}" references files [${relevantFiles.join(', ')}] ` +
+                        `that don't exist in parent theme "${parentTheme.name}". ` +
+                        `Available files: [${parentTheme.affectedFiles.join(', ')}]`);
+                }
+                // Extract code context - this will throw if invalid
+                console.log(`[CONTEXT-FLOW] Extracting context for sub-theme "${suggested.name}" from parent "${parentTheme.name}"`);
+                console.log(`[CONTEXT-FLOW] Valid files for extraction: [${validFiles.join(', ')}]`);
+                const codeContext = this.extractSubThemeCodeContext(parentTheme, validFiles);
+                console.log(`[CONTEXT-FLOW] Extracted context: ${codeContext.files.length} files, ${codeContext.totalLinesChanged} lines`);
+                // Extract code snippets based on actual file references
+                console.log(`[CONTEXT-FLOW] Extracting snippets from ${parentTheme.codeSnippets.length} parent snippets`);
+                const relevantSnippets = this.extractRelevantSnippets(parentTheme.codeSnippets, validFiles, codeContext.files);
+                console.log(`[CONTEXT-FLOW] Extracted ${relevantSnippets.length} relevant snippets for sub-theme`);
+                convertedThemes.push({
+                    id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', parentTheme.id, index),
+                    name: suggested.name,
+                    description: suggested.description,
+                    level: parentTheme.level + 1,
+                    parentId: parentTheme.id,
+                    childThemes: [],
+                    affectedFiles: validFiles,
+                    confidence: 0.8,
+                    businessImpact: suggested.businessImpact ||
+                        suggested.rationale ||
+                        suggested.description,
+                    codeSnippets: relevantSnippets,
+                    context: `${parentTheme.context}\n\nSub-theme: ${suggested.description}`,
+                    lastAnalysis: new Date(),
+                    sourceThemes: [parentTheme.id],
+                    consolidationMethod: 'expansion',
+                    codeContext: codeContext,
+                    isAtomic: false, // Let AI decide, don't assume based on depth
+                });
+            }
+            catch (error) {
+                console.error(`[EXPANSION-ERROR] Failed to create sub-theme "${suggested.name}": ${error instanceof Error ? error.message : String(error)}`);
+                // Skip invalid sub-themes rather than using fallbacks
+                continue;
+            }
+        }
+        if (convertedThemes.length === 0) {
+            throw new Error(`Failed to create any valid sub-themes from AI suggestions for parent theme "${parentTheme.name}". ` +
+                `All ${suggestedThemes.length} suggestions had invalid or missing file references.`);
+        }
+        return convertedThemes;
+    }
+    /**
+     * Validate theme before expansion
+     */
+    validateThemeForExpansion(theme) {
+        // Validate code context exists
+        if (!theme.codeContext) {
+            throw new Error(`Theme "${theme.name}" has no code context. Cannot proceed with expansion.`);
+        }
+        // Validate files exist
+        if (!theme.codeContext.files || theme.codeContext.files.length === 0) {
+            throw new Error(`Theme "${theme.name}" has no files in code context. Check theme creation logic.`);
+        }
+        // Validate line counts are reasonable
+        if (theme.codeContext.totalLinesChanged === 0) {
+            throw new Error(`Theme "${theme.name}" has 0 lines changed. Empty themes cannot be expanded.`);
+        }
+        if (theme.codeContext.totalLinesChanged < 0) {
+            throw new Error(`Theme "${theme.name}" has negative line count (${theme.codeContext.totalLinesChanged}). Data corruption detected.`);
+        }
+        // Validate affected files match code context
+        const contextFilePaths = new Set(theme.codeContext.files.map((f) => f.path));
+        for (const affectedFile of theme.affectedFiles) {
+            if (!contextFilePaths.has(affectedFile)) {
+                throw new Error(`Theme "${theme.name}" has affected file "${affectedFile}" not in code context. ` +
+                    `Context files: [${Array.from(contextFilePaths).join(', ')}]`);
+            }
+        }
+        // Validate code snippets exist
+        if (!theme.codeSnippets || theme.codeSnippets.length === 0) {
+            console.warn(`[VALIDATION-WARNING] Theme "${theme.name}" has no code snippets. This may affect AI analysis quality.`);
+        }
+    }
+    /**
+     * Extract relevant code snippets based on actual file context
+     */
+    extractRelevantSnippets(parentSnippets, validFiles, contextFiles) {
+        const relevantSnippets = [];
+        // For each context file, extract snippets that belong to it
+        for (const contextFile of contextFiles) {
+            // Find snippets that contain this file's path and line ranges
+            for (const snippet of parentSnippets) {
+                // Check if snippet contains file path
+                if (snippet.includes(contextFile.path)) {
+                    // Check if snippet contains any of the changed line ranges
+                    const hasRelevantChanges = contextFile.changes.some((change) => {
+                        // Look for line number patterns in the snippet
+                        for (let line = change.startLine; line <= change.endLine; line++) {
+                            if (snippet.includes(`${line}:`) ||
+                                snippet.includes(`line ${line}`)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    });
+                    if (hasRelevantChanges ||
+                        snippet.includes(`File: ${contextFile.path}`)) {
+                        relevantSnippets.push(snippet);
+                    }
+                }
+            }
+        }
+        // If no snippets found by line matching, use file-based matching as last resort
+        if (relevantSnippets.length === 0) {
+            // Extract snippets that mention any of the valid files
+            for (const file of validFiles) {
+                for (const snippet of parentSnippets) {
+                    if (snippet.includes(file) && !relevantSnippets.includes(snippet)) {
+                        relevantSnippets.push(snippet);
+                    }
+                }
+            }
+        }
+        return relevantSnippets;
     }
     /**
      * Extract code context for a sub-theme from parent theme
      */
     extractSubThemeCodeContext(parentTheme, relevantFiles) {
-        // If no specific files, inherit a subset of parent's context
+        // NO FALLBACKS - fail if no files specified
         if (relevantFiles.length === 0) {
-            return {
-                files: parentTheme.codeContext.files.slice(0, 1), // Take first file as fallback
-                totalLinesChanged: Math.ceil(parentTheme.codeContext.totalLinesChanged / 3), // Estimate 1/3 of parent
-            };
+            throw new Error(`Cannot extract context for sub-theme: No relevant files specified. ` +
+                `AI suggestion doesn't map to actual code changes in parent theme "${parentTheme.name}".`);
         }
         // Filter parent's code context to only include relevant files
         const relevantFileSet = new Set(relevantFiles);
-        const filteredFiles = parentTheme.codeContext.files.filter((file) => relevantFileSet.has(file.path));
+        console.log(`[CONTEXT-FLOW] Parent theme has ${parentTheme.codeContext.files.length} files in context`);
+        console.log(`[CONTEXT-FLOW] Looking for files: [${Array.from(relevantFileSet).join(', ')}]`);
+        const filteredFiles = parentTheme.codeContext.files.filter((file) => {
+            const included = relevantFileSet.has(file.path);
+            if (included) {
+                console.log(`[CONTEXT-FLOW] ✓ Including file: ${file.path} (${file.changes.length} changes)`);
+            }
+            return included;
+        });
+        // Validate that we found actual files
+        if (filteredFiles.length === 0) {
+            throw new Error(`Cannot extract context for sub-theme: None of the suggested files ` +
+                `[${relevantFiles.join(', ')}] exist in parent theme "${parentTheme.name}". ` +
+                `Available files: [${parentTheme.codeContext.files.map((f) => f.path).join(', ')}]`);
+        }
         const totalLines = filteredFiles.reduce((sum, file) => sum +
             file.changes.reduce((fileSum, change) => fileSum + (change.endLine - change.startLine + 1), 0), 0);
+        console.log(`[CONTEXT-FLOW] Total lines calculated from ${filteredFiles.length} files: ${totalLines} lines`);
+        // Validate the extracted context has actual changes
+        if (totalLines === 0) {
+            throw new Error(`Cannot extract context for sub-theme: Files [${relevantFiles.join(', ')}] ` +
+                `have no actual line changes in parent theme "${parentTheme.name}".`);
+        }
         return {
             files: filteredFiles,
             totalLinesChanged: totalLines,
@@ -37005,26 +37151,35 @@ Return JSON with specific sub-themes:
      * Verify if a single theme meets atomic criteria
      */
     async verifyAtomicTheme(theme) {
-        const maxAtomicSize = parseInt(process.env.MAX_ATOMIC_SIZE || '15');
-        const strictAtomicLimits = process.env.STRICT_ATOMIC_LIMITS !== 'false';
-        // Check basic atomic criteria
-        const exceedsLineLimit = theme.codeContext.totalLinesChanged > maxAtomicSize;
-        const exceedsFileLimit = theme.codeContext.files.length > 1;
-        if (strictAtomicLimits) {
-            if (exceedsLineLimit) {
-                return {
-                    isAtomic: false,
-                    reason: `Exceeds PRD atomic size limit: ${theme.codeContext.totalLinesChanged} > ${maxAtomicSize} lines`,
-                    canDecompose: true,
-                };
-            }
-            if (exceedsFileLimit) {
-                return {
-                    isAtomic: false,
-                    reason: `Multi-file change: ${theme.codeContext.files.length} files (atomic = 1 file)`,
-                    canDecompose: true,
-                };
-            }
+        // PRD: "5-15 lines of focused change"
+        const minAtomicSize = 5;
+        const maxAtomicSize = 15;
+        const lineCount = theme.codeContext.totalLinesChanged;
+        // NO FALLBACKS - strict enforcement of PRD requirements
+        if (lineCount < minAtomicSize) {
+            return {
+                isAtomic: false,
+                reason: `Below PRD atomic size minimum: ${lineCount} < ${minAtomicSize} lines. Too trivial, should be part of parent theme.`,
+                canDecompose: false,
+            };
+        }
+        if (lineCount > maxAtomicSize) {
+            return {
+                isAtomic: false,
+                reason: `Exceeds PRD atomic size maximum: ${lineCount} > ${maxAtomicSize} lines. Must be decomposed into smaller units.`,
+                canDecompose: true,
+            };
+        }
+        // PRD: Single file for atomic changes
+        if (theme.codeContext.files.length > 1) {
+            return {
+                isAtomic: false,
+                reason: `Multi-file change: ${theme.codeContext.files.length} files. Atomic themes must modify exactly 1 file.`,
+                canDecompose: true,
+            };
+        }
+        if (theme.codeContext.files.length === 0) {
+            throw new Error(`Theme "${theme.name}" has no files in code context. This indicates a context extraction error.`);
         }
         // Check for single responsibility using AI
         const prompt = `
