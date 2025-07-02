@@ -30753,42 +30753,2432 @@ CRITICAL: Respond with ONLY valid JSON.
             businessScore: 0,
         };
     }
-    /**
-     * Calculate similarity for multiple theme pairs in a single AI call
-     * This is the key performance optimization method
-     */
-    async calculateBatchSimilarity(batchPrompt, expectedResults) {
-        try {
-            const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
-            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
-            // Extract and validate JSON response
-            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
-            if (!jsonResult.success) {
-                throw new Error(`JSON extraction failed: ${jsonResult.error}`);
-            }
-            const batchData = jsonResult.data;
-            // Validate we got the expected number of results
-            if (!batchData.results || !Array.isArray(batchData.results)) {
-                throw new Error('Invalid batch response: missing results array');
-            }
-            if (batchData.results.length !== expectedResults) {
-                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
-            }
-            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
-            return batchData;
-        }
-        catch (error) {
-            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
-            throw error;
-        }
-    }
 }
 exports.AISimilarityService = AISimilarityService;
 
 
 /***/ }),
 
-/***/ 325:
+/***/ 381:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AdaptiveBatchingController = void 0;
+const prompt_types_1 = __nccwpck_require__(8441);
+/**
+ * Adaptive batching controller that adjusts batch sizes based on performance
+ */
+class AdaptiveBatchingController {
+    constructor() {
+        this.configs = new Map();
+        this.performanceWindow = 5 * 60 * 1000; // 5 minutes
+        this.adjustmentCooldown = 60 * 1000; // 1 minute
+        this.initializeConfigs();
+    }
+    /**
+     * Initialize adaptive configs for all batchable prompt types
+     */
+    initializeConfigs() {
+        const batchableTypes = [
+            prompt_types_1.PromptType.SIMILARITY_CHECK,
+            prompt_types_1.PromptType.THEME_EXPANSION,
+            prompt_types_1.PromptType.DOMAIN_EXTRACTION,
+            prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY,
+            prompt_types_1.PromptType.CODE_ANALYSIS,
+        ];
+        for (const type of batchableTypes) {
+            this.configs.set(type, {
+                currentBatchSize: 5, // Start conservative
+                successRate: 1.0,
+                avgLatency: 0,
+                errorRate: 0,
+                throughput: 0,
+                lastAdjustment: new Date(),
+            });
+        }
+    }
+    /**
+     * Get optimal batch size for a prompt type
+     */
+    getOptimalBatchSize(promptType, systemMetrics) {
+        const config = this.configs.get(promptType);
+        if (!config)
+            return 5; // Default
+        // Consider system metrics if available
+        if (systemMetrics) {
+            return this.adjustForSystemLoad(config.currentBatchSize, systemMetrics);
+        }
+        return config.currentBatchSize;
+    }
+    /**
+     * Update performance metrics and adjust batch size if needed
+     */
+    updateMetrics(promptType, batchSize, success, latency) {
+        const config = this.configs.get(promptType);
+        if (!config)
+            return;
+        // Update metrics with exponential moving average
+        const alpha = 0.2; // Smoothing factor
+        config.avgLatency = config.avgLatency * (1 - alpha) + latency * alpha;
+        config.successRate =
+            config.successRate * (1 - alpha) + (success ? 1 : 0) * alpha;
+        config.errorRate =
+            config.errorRate * (1 - alpha) + (success ? 0 : 1) * alpha;
+        // Calculate throughput (items per second)
+        const itemsPerSecond = batchSize / (latency / 1000);
+        config.throughput =
+            config.throughput * (1 - alpha) + itemsPerSecond * alpha;
+        // Check if we should adjust batch size
+        const now = new Date();
+        const timeSinceLastAdjustment = now.getTime() - config.lastAdjustment.getTime();
+        if (timeSinceLastAdjustment > this.adjustmentCooldown) {
+            this.adjustBatchSize(promptType, config);
+        }
+    }
+    /**
+     * Adjust batch size based on performance metrics
+     */
+    adjustBatchSize(promptType, config) {
+        let newSize = config.currentBatchSize;
+        // Performance thresholds
+        const targetSuccessRate = 0.95;
+        const targetLatency = 3000; // 3 seconds
+        const maxLatency = 10000; // 10 seconds
+        // Adjust based on success rate
+        if (config.successRate < targetSuccessRate) {
+            // Reduce batch size if failing too often
+            newSize = Math.max(1, Math.floor(config.currentBatchSize * 0.8));
+        }
+        else if (config.avgLatency > maxLatency) {
+            // Reduce if too slow
+            newSize = Math.max(1, Math.floor(config.currentBatchSize * 0.7));
+        }
+        else if (config.successRate > targetSuccessRate &&
+            config.avgLatency < targetLatency) {
+            // Increase if performing well
+            newSize = Math.ceil(config.currentBatchSize * 1.2);
+        }
+        // Apply constraints based on prompt type
+        const constraints = this.getBatchConstraints(promptType);
+        newSize = Math.max(constraints.min, Math.min(constraints.max, newSize));
+        if (newSize !== config.currentBatchSize) {
+            console.log(`[ADAPTIVE-BATCHING] Adjusting ${promptType} batch size: ${config.currentBatchSize} → ${newSize} ` +
+                `(success: ${(config.successRate * 100).toFixed(1)}%, latency: ${config.avgLatency.toFixed(0)}ms)`);
+            config.currentBatchSize = newSize;
+            config.lastAdjustment = new Date();
+        }
+    }
+    /**
+     * Adjust batch size based on system load
+     */
+    adjustForSystemLoad(baseSize, metrics) {
+        let adjustmentFactor = 1.0;
+        // Reduce during high CPU/memory usage
+        if (metrics.cpuUsage > 80 || metrics.memoryUsage > 85) {
+            adjustmentFactor *= 0.7;
+        }
+        else if (metrics.cpuUsage > 60 || metrics.memoryUsage > 70) {
+            adjustmentFactor *= 0.85;
+        }
+        // Reduce during API slowness
+        if (metrics.apiResponseTime > 5000) {
+            adjustmentFactor *= 0.8;
+        }
+        // Reduce if queue is backing up
+        if (metrics.queueDepth > 100) {
+            adjustmentFactor *= 0.75;
+        }
+        // Time of day adjustments (business hours vs off-hours)
+        if (metrics.timeOfDay >= 9 && metrics.timeOfDay <= 17) {
+            // Business hours - be more conservative
+            adjustmentFactor *= 0.9;
+        }
+        else {
+            // Off hours - can be more aggressive
+            adjustmentFactor *= 1.1;
+        }
+        return Math.max(1, Math.round(baseSize * adjustmentFactor));
+    }
+    /**
+     * Get batch size constraints for a prompt type
+     */
+    getBatchConstraints(promptType) {
+        const constraints = {
+            [prompt_types_1.PromptType.SIMILARITY_CHECK]: { min: 1, max: 20 },
+            [prompt_types_1.PromptType.THEME_EXPANSION]: { min: 1, max: 10 },
+            [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: { min: 5, max: 50 },
+            [prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY]: { min: 1, max: 15 },
+            [prompt_types_1.PromptType.CODE_ANALYSIS]: { min: 1, max: 5 },
+            [prompt_types_1.PromptType.THEME_EXTRACTION]: { min: 1, max: 1 },
+            [prompt_types_1.PromptType.THEME_NAMING]: { min: 1, max: 1 },
+            [prompt_types_1.PromptType.BATCH_SIMILARITY]: { min: 5, max: 30 },
+        };
+        return constraints[promptType] || { min: 1, max: 10 };
+    }
+    /**
+     * Get performance report
+     */
+    getPerformanceReport() {
+        const report = {};
+        for (const [type, config] of this.configs.entries()) {
+            report[type] = {
+                currentBatchSize: config.currentBatchSize,
+                successRate: `${(config.successRate * 100).toFixed(1)}%`,
+                avgLatency: `${config.avgLatency.toFixed(0)}ms`,
+                errorRate: `${(config.errorRate * 100).toFixed(1)}%`,
+                throughput: `${config.throughput.toFixed(1)} items/s`,
+                lastAdjustment: config.lastAdjustment.toISOString(),
+            };
+        }
+        return report;
+    }
+    /**
+     * Reset adaptive configurations
+     */
+    reset() {
+        this.initializeConfigs();
+    }
+    /**
+     * Get current configuration for a prompt type
+     */
+    getConfig(promptType) {
+        return this.configs.get(promptType);
+    }
+    /**
+     * Manually set batch size (for testing/overrides)
+     */
+    setBatchSize(promptType, size) {
+        const config = this.configs.get(promptType);
+        if (config) {
+            config.currentBatchSize = size;
+            config.lastAdjustment = new Date();
+        }
+    }
+}
+exports.AdaptiveBatchingController = AdaptiveBatchingController;
+
+
+/***/ }),
+
+/***/ 5369:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BatchProcessor = void 0;
+const prompt_types_1 = __nccwpck_require__(8441);
+const unified_prompt_service_1 = __nccwpck_require__(8246);
+const batch_strategies_1 = __nccwpck_require__(1972);
+const adaptive_batching_1 = __nccwpck_require__(381);
+const secure_file_namer_1 = __nccwpck_require__(1661);
+const json_extractor_1 = __nccwpck_require__(2642);
+const logger_1 = __nccwpck_require__(7893);
+const batch_types_1 = __nccwpck_require__(6889);
+/**
+ * Advanced batch processor with priority queuing and adaptive sizing
+ */
+class BatchProcessor {
+    constructor(anthropicApiKey) {
+        // Queues for each prompt type
+        this.queues = new Map();
+        this.processing = new Map();
+        this.batchHistory = [];
+        // Circuit breaker
+        this.circuitBreaker = new Map();
+        this.unifiedService = unified_prompt_service_1.UnifiedPromptService.getInstance(anthropicApiKey);
+        this.adaptiveController = new adaptive_batching_1.AdaptiveBatchingController();
+        this.initializeQueues();
+        this.startProcessingLoop();
+    }
+    static getInstance(anthropicApiKey) {
+        if (!BatchProcessor.instance) {
+            BatchProcessor.instance = new BatchProcessor(anthropicApiKey);
+        }
+        return BatchProcessor.instance;
+    }
+    /**
+     * Add item to batch queue
+     */
+    async add(promptType, variables, priority = 0) {
+        // Check circuit breaker
+        const breaker = this.circuitBreaker.get(promptType);
+        if (breaker?.isOpen) {
+            const timeSinceFailure = Date.now() - breaker.lastFailure;
+            if (timeSinceFailure < 30000) {
+                // 30 second cooldown
+                throw new Error(`Circuit breaker open for ${promptType}`);
+            }
+            else {
+                // Reset circuit breaker
+                breaker.isOpen = false;
+                breaker.failures = 0;
+            }
+        }
+        // Check if this prompt type supports batching
+        if (!batch_strategies_1.BatchStrategyFactory.canBatch(promptType)) {
+            // Process immediately if not batchable
+            return this.unifiedService.execute(promptType, variables);
+        }
+        return new Promise((resolve, reject) => {
+            const item = {
+                id: secure_file_namer_1.SecureFileNamer.generateBatchId('queue', promptType),
+                promptType,
+                variables,
+                resolve,
+                reject,
+                timestamp: Date.now(),
+                priority,
+            };
+            this.enqueue(item);
+        });
+    }
+    /**
+     * Add multiple items as a group
+     */
+    async addBatch(promptType, items) {
+        const promises = items.map((item) => this.add(promptType, item.variables, item.priority || 0));
+        return Promise.all(promises);
+    }
+    /**
+     * Enqueue item with proper ordering
+     */
+    enqueue(item) {
+        let queue = this.queues.get(item.promptType);
+        if (!queue) {
+            queue = [];
+            this.queues.set(item.promptType, queue);
+        }
+        // Insert based on priority (higher priority first)
+        const insertIndex = queue.findIndex((q) => q.priority < item.priority);
+        if (insertIndex === -1) {
+            queue.push(item);
+        }
+        else {
+            queue.splice(insertIndex, 0, item);
+        }
+        // Trigger processing
+        this.processQueue(item.promptType);
+    }
+    /**
+     * Initialize queues and circuit breakers
+     */
+    initializeQueues() {
+        for (const type of batch_strategies_1.BatchStrategyFactory.getAllBatchableTypes()) {
+            this.queues.set(type, []);
+            this.processing.set(type, false);
+            this.circuitBreaker.set(type, {
+                failures: 0,
+                lastFailure: 0,
+                isOpen: false,
+            });
+        }
+    }
+    /**
+     * Start background processing loop
+     */
+    startProcessingLoop() {
+        setInterval(() => {
+            for (const [promptType] of this.queues) {
+                this.processQueue(promptType);
+            }
+        }, 100); // Check every 100ms
+    }
+    /**
+     * Process queue for a specific prompt type
+     */
+    async processQueue(promptType) {
+        // Skip if already processing
+        if (this.processing.get(promptType))
+            return;
+        const queue = this.queues.get(promptType);
+        if (!queue || queue.length === 0)
+            return;
+        const strategy = batch_strategies_1.BatchStrategyFactory.getStrategy(promptType);
+        if (!strategy)
+            return;
+        // Check if we should flush the batch
+        const oldestItem = queue[0];
+        const age = Date.now() - oldestItem.timestamp;
+        if (!strategy.shouldFlush(queue.length, age)) {
+            return; // Wait for more items or timeout
+        }
+        // Get optimal batch size
+        const systemMetrics = this.getSystemMetrics();
+        const batchSize = this.adaptiveController.getOptimalBatchSize(promptType, systemMetrics);
+        // Extract batch
+        const batch = this.extractBatch(promptType, Math.min(batchSize, queue.length));
+        if (batch.length === 0)
+            return;
+        // Mark as processing
+        this.processing.set(promptType, true);
+        try {
+            await this.processBatch(promptType, batch);
+        }
+        finally {
+            this.processing.set(promptType, false);
+        }
+    }
+    /**
+     * Extract items for batch processing
+     */
+    extractBatch(promptType, size) {
+        const queue = this.queues.get(promptType);
+        if (!queue)
+            return [];
+        const strategy = batch_strategies_1.BatchStrategyFactory.getStrategy(promptType);
+        if (!strategy)
+            return [];
+        // Apply formation strategy if available
+        const formationStrategy = batch_strategies_1.BatchFormationStrategies.getStrategy(promptType);
+        if (formationStrategy?.groupBy) {
+            return this.extractBatchWithGrouping(queue, size, formationStrategy);
+        }
+        // Simple extraction
+        return queue.splice(0, size);
+    }
+    /**
+     * Extract batch with grouping strategy
+     */
+    extractBatchWithGrouping(queue, size, strategy) {
+        const groups = new Map();
+        // Group items
+        for (const item of queue) {
+            const key = strategy.groupBy(item.variables);
+            const group = groups.get(key) || [];
+            group.push(item);
+            groups.set(key, group);
+        }
+        // Find best group to process
+        let bestGroup = [];
+        for (const group of groups.values()) {
+            if (group.length >= size || group.length > bestGroup.length) {
+                bestGroup = group;
+            }
+        }
+        // Remove selected items from queue
+        const batch = bestGroup.slice(0, size);
+        for (const item of batch) {
+            const index = queue.indexOf(item);
+            if (index > -1) {
+                queue.splice(index, 1);
+            }
+        }
+        return batch;
+    }
+    /**
+     * Process a batch of items
+     */
+    async processBatch(promptType, items) {
+        const batchId = secure_file_namer_1.SecureFileNamer.generateBatchId('batch', promptType);
+        const batch = {
+            id: batchId,
+            promptType,
+            items,
+            createdAt: Date.now(),
+            status: 'processing',
+        };
+        this.batchHistory.push(batch);
+        try {
+            const startTime = Date.now();
+            // Process based on prompt type
+            const results = await this.executeBatch(promptType, items);
+            const latency = Date.now() - startTime;
+            const success = results.every((r) => r.success);
+            // Update adaptive controller
+            this.adaptiveController.updateMetrics(promptType, items.length, success, latency);
+            // Resolve promises
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                const result = results[i];
+                if (result.success) {
+                    item.resolve(result);
+                }
+                else {
+                    item.reject(new Error(result.error || 'Batch processing failed'));
+                }
+            }
+            batch.status = 'completed';
+            // Reset circuit breaker on success
+            const breaker = this.circuitBreaker.get(promptType);
+            if (breaker) {
+                breaker.failures = 0;
+            }
+        }
+        catch (error) {
+            batch.status = 'failed';
+            // Update circuit breaker
+            const breaker = this.circuitBreaker.get(promptType);
+            if (breaker) {
+                breaker.failures++;
+                breaker.lastFailure = Date.now();
+                if (breaker.failures >= 3) {
+                    breaker.isOpen = true;
+                    console.error(`[BATCH] Circuit breaker opened for ${promptType}`);
+                }
+            }
+            // Reject all promises
+            for (const item of items) {
+                item.reject(error);
+            }
+        }
+    }
+    /**
+     * Execute batch based on prompt type
+     */
+    async executeBatch(promptType, items) {
+        switch (promptType) {
+            case prompt_types_1.PromptType.BATCH_SIMILARITY:
+                return this.executeSimilarityBatch(items);
+            case prompt_types_1.PromptType.THEME_EXPANSION:
+                return this.executeExpansionBatch(items);
+            case prompt_types_1.PromptType.DOMAIN_EXTRACTION:
+                return this.executeDomainBatch(items);
+            default:
+                // Fallback to sequential processing
+                return Promise.all(items.map((item) => this.unifiedService.execute(promptType, item.variables)));
+        }
+    }
+    /**
+     * Execute similarity checks in batch
+     */
+    async executeSimilarityBatch(items) {
+        // Format pairs for batch processing
+        const pairs = items.map((item, index) => ({
+            id: index.toString(),
+            theme1: item.variables.theme1,
+            theme2: item.variables.theme2,
+        }));
+        const batchResponse = await this.unifiedService.execute(prompt_types_1.PromptType.BATCH_SIMILARITY, { pairs: JSON.stringify(pairs) });
+        if (!batchResponse.success || !batchResponse.data?.results) {
+            throw new Error('Batch similarity check failed');
+        }
+        // Map results back to individual responses
+        return items.map((item, index) => {
+            const result = batchResponse.data.results.find((r) => r.pairId === index.toString());
+            if (!result) {
+                return {
+                    success: false,
+                    error: 'Result not found in batch response',
+                };
+            }
+            return {
+                success: true,
+                data: {
+                    shouldMerge: result.shouldMerge,
+                    confidence: result.confidence,
+                    reasoning: 'Batch processed',
+                    ...result.scores,
+                },
+                cached: false,
+            };
+        });
+    }
+    /**
+     * Execute theme expansions in batch
+     */
+    async executeExpansionBatch(items) {
+        // For theme expansion, we'll process in smaller groups
+        const results = [];
+        const groupSize = 3;
+        for (let i = 0; i < items.length; i += groupSize) {
+            const group = items.slice(i, i + groupSize);
+            const groupResults = await Promise.all(group.map((item) => this.unifiedService.execute(prompt_types_1.PromptType.THEME_EXPANSION, item.variables)));
+            results.push(...groupResults);
+        }
+        return results;
+    }
+    /**
+     * Execute domain extractions in batch
+     */
+    async executeDomainBatch(items) {
+        // Combine all themes for batch domain extraction
+        const allThemes = [];
+        const itemThemeMap = new Map();
+        let themeIndex = 0;
+        items.forEach((item, itemIndex) => {
+            const themes = item.variables.themes || [];
+            const indices = [];
+            themes.forEach((theme) => {
+                allThemes.push(theme);
+                indices.push(themeIndex++);
+            });
+            itemThemeMap.set(itemIndex, indices);
+        });
+        // Execute batch domain extraction
+        const batchResponse = await this.unifiedService.execute(prompt_types_1.PromptType.DOMAIN_EXTRACTION, {
+            themes: JSON.stringify(allThemes),
+            availableDomains: items[0].variables.availableDomains,
+        });
+        if (!batchResponse.success || !batchResponse.data?.domains) {
+            throw new Error('Batch domain extraction failed');
+        }
+        // Map results back to individual items
+        return items.map((item, index) => {
+            const themeIndices = itemThemeMap.get(index) || [];
+            const relevantDomains = batchResponse.data.domains.filter((domain) => domain.themes.some((t) => themeIndices.includes(allThemes.findIndex((at) => at.name === t))));
+            return {
+                success: true,
+                data: { domains: relevantDomains },
+                cached: false,
+            };
+        });
+    }
+    /**
+     * Get current system metrics
+     */
+    getSystemMetrics() {
+        // Simplified metrics - in production, get real system stats
+        const now = new Date();
+        return {
+            cpuUsage: 50, // Mock value
+            memoryUsage: 60, // Mock value
+            apiResponseTime: 1000, // Mock value
+            queueDepth: this.getTotalQueueDepth(),
+            timeOfDay: now.getHours(),
+        };
+    }
+    /**
+     * Get total queue depth across all types
+     */
+    getTotalQueueDepth() {
+        let total = 0;
+        for (const queue of this.queues.values()) {
+            total += queue.length;
+        }
+        return total;
+    }
+    /**
+     * Get queue statistics
+     */
+    getQueueStats() {
+        const stats = {
+            totalQueued: this.getTotalQueueDepth(),
+            queues: {},
+            processing: {},
+            circuitBreakers: {},
+            adaptiveConfig: this.adaptiveController.getPerformanceReport(),
+        };
+        for (const [type, queue] of this.queues.entries()) {
+            stats.queues[type] = {
+                depth: queue.length,
+                oldestItem: queue[0]?.timestamp
+                    ? new Date(queue[0].timestamp).toISOString()
+                    : null,
+            };
+            stats.processing[type] = this.processing.get(type) || false;
+            const breaker = this.circuitBreaker.get(type);
+            if (breaker) {
+                stats.circuitBreakers[type] = {
+                    isOpen: breaker.isOpen,
+                    failures: breaker.failures,
+                    lastFailure: breaker.lastFailure
+                        ? new Date(breaker.lastFailure).toISOString()
+                        : null,
+                };
+            }
+        }
+        return stats;
+    }
+    /**
+     * Flush all queues (for shutdown)
+     */
+    async flush() {
+        const promises = [];
+        for (const [promptType, queue] of this.queues.entries()) {
+            if (queue.length > 0) {
+                // Process remaining items
+                const batch = [...queue];
+                queue.length = 0;
+                promises.push(this.processBatch(promptType, batch));
+            }
+        }
+        await Promise.all(promises);
+    }
+    /**
+     * Get batch history
+     */
+    getBatchHistory(limit = 10) {
+        return this.batchHistory.slice(-limit);
+    }
+    /**
+     * Process similarity batch using unified format
+     */
+    async processSimilarityBatch(pairs, options) {
+        const startTime = Date.now();
+        const batchContext = logger_1.logger.startOperation('Batch Similarity Processing', {
+            pairCount: pairs.length,
+            maxBatchSize: options?.maxBatchSize || 8,
+        });
+        try {
+            // Create batch prompt
+            const prompt = this.buildUnifiedSimilarityPrompt(pairs);
+            // Execute via unified service
+            const response = await this.unifiedService.execute(prompt_types_1.PromptType.BATCH_SIMILARITY, { prompt, pairs: JSON.stringify(pairs) });
+            if (!response.success) {
+                throw new Error(`Batch processing failed: ${response.error}`);
+            }
+            // Parse and validate response
+            const batchResult = this.parseUnifiedSimilarityResponse(response.data?.response || '', pairs.length);
+            const processingTime = Date.now() - startTime;
+            logger_1.logger.endOperation(batchContext, true, {
+                processedCount: batchResult.results.length,
+                failedCount: batchResult.metadata.failedCount,
+                processingTime,
+            });
+            return {
+                ...batchResult,
+                metadata: {
+                    ...batchResult.metadata,
+                    processingTimeMs: processingTime,
+                },
+            };
+        }
+        catch (error) {
+            const processingTime = Date.now() - startTime;
+            logger_1.logger.logError('Batch similarity processing failed', error, {
+                pairCount: pairs.length,
+                processingTime,
+                batchSize: options?.maxBatchSize,
+            });
+            logger_1.logger.endOperation(batchContext, false);
+            throw error;
+        }
+    }
+    /**
+     * Build unified similarity prompt
+     */
+    buildUnifiedSimilarityPrompt(pairs) {
+        const formattedPairs = pairs.map((pair, index) => {
+            const pairId = `pair-${index}`;
+            return `
+**${pairId}:**
+Theme 1: "${pair.theme1.name}"
+- Description: ${pair.theme1.description}
+- Files: ${pair.theme1.affectedFiles.join(', ')}
+- Code: ${pair.theme1.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+
+Theme 2: "${pair.theme2.name}"
+- Description: ${pair.theme2.description}
+- Files: ${pair.theme2.affectedFiles.join(', ')}
+- Code: ${pair.theme2.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+`;
+        });
+        return `Analyze the similarity between these theme pairs. Determine if each pair should be merged based on semantic similarity, functional overlap, and business context.
+
+CRITICAL: Respond with ONLY valid JSON in this exact format:
+{
+  "success": true,
+  "results": [
+    {
+      "pairId": "pair-0",
+      "shouldMerge": boolean,
+      "confidence": 0.0-1.0,
+      "reasoning": "brief explanation (max 30 words)",
+      "scores": {
+        "name": 0.0-1.0,
+        "description": 0.0-1.0,
+        "pattern": 0.0-1.0,
+        "business": 0.0-1.0,
+        "semantic": 0.0-1.0
+      }
+    }
+  ],
+  "metadata": {
+    "processedCount": ${pairs.length},
+    "failedCount": 0,
+    "processingTimeMs": 0
+  }
+}
+
+Pairs to analyze:
+${formattedPairs.join('\n')}
+
+Remember: Return ONLY the JSON object, no additional text.`;
+    }
+    /**
+     * Parse unified similarity response
+     */
+    parseUnifiedSimilarityResponse(response, expectedCount) {
+        try {
+            // Extract JSON using robust JsonExtractor
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['success', 'results'] // Required fields
+            );
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            // Validate response structure
+            const data = extractionResult.data;
+            if (!(0, batch_types_1.isUnifiedBatchResponse)(data, batch_types_1.isSimilarityResult)) {
+                throw new Error('Response structure validation failed');
+            }
+            const validatedResponse = data;
+            // Verify we got results for all pairs
+            if (validatedResponse.results.length !== expectedCount) {
+                logger_1.logger.logError('Batch response count mismatch', `Expected ${expectedCount} results, got ${validatedResponse.results.length}`, {
+                    expectedCount,
+                    actualCount: validatedResponse.results.length,
+                    response: response.substring(0, 500),
+                });
+            }
+            return validatedResponse;
+        }
+        catch (error) {
+            logger_1.logger.logError('Failed to parse batch similarity response', error, {
+                responseLength: response.length,
+                responseStart: response.substring(0, 200),
+                expectedCount,
+            });
+            // Create fallback response
+            return {
+                success: false,
+                results: [],
+                metadata: {
+                    processedCount: 0,
+                    failedCount: expectedCount,
+                    processingTimeMs: 0,
+                },
+            };
+        }
+    }
+    /**
+     * Estimate token count for a prompt (simplified)
+     */
+    estimateTokens(text) {
+        // Rough estimate: 4 characters per token
+        return Math.ceil(text.length / 4);
+    }
+}
+exports.BatchProcessor = BatchProcessor;
+
+
+/***/ }),
+
+/***/ 1972:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BatchFormationStrategies = exports.BatchStrategyFactory = void 0;
+const prompt_types_1 = __nccwpck_require__(8441);
+class BatchStrategyFactory {
+    static getStrategy(promptType) {
+        return this.strategies.get(promptType) || null;
+    }
+    static canBatch(promptType) {
+        const strategy = this.strategies.get(promptType);
+        return strategy !== null && strategy !== undefined;
+    }
+    static getAllBatchableTypes() {
+        return Array.from(this.strategies.keys());
+    }
+    /**
+     * Dynamically adjust batch size based on performance
+     */
+    static adjustBatchSize(promptType, currentSize, successRate, avgLatency) {
+        const strategy = this.strategies.get(promptType);
+        if (!strategy)
+            return currentSize;
+        // Increase batch size if performance is good
+        if (successRate > 0.95 && avgLatency < 2000) {
+            return Math.min(currentSize + 1, strategy.maxBatchSize);
+        }
+        // Decrease batch size if performance is poor
+        if (successRate < 0.8 || avgLatency > 5000) {
+            return Math.max(currentSize - 1, strategy.minBatchSize);
+        }
+        return currentSize;
+    }
+}
+exports.BatchStrategyFactory = BatchStrategyFactory;
+BatchStrategyFactory.strategies = new Map([
+    [
+        prompt_types_1.PromptType.SIMILARITY_CHECK,
+        {
+            promptType: prompt_types_1.PromptType.SIMILARITY_CHECK,
+            optimalBatchSize: 10,
+            maxBatchSize: 15,
+            minBatchSize: 3,
+            batchTimeout: 500,
+            priorityWeight: 0.8,
+            canBatch: () => true,
+            shouldFlush: (size, age) => size >= 10 || age > 500,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.THEME_EXPANSION,
+        {
+            promptType: prompt_types_1.PromptType.THEME_EXPANSION,
+            optimalBatchSize: 5,
+            maxBatchSize: 8,
+            minBatchSize: 2,
+            batchTimeout: 1000,
+            priorityWeight: 0.6,
+            canBatch: (theme) => theme.affectedFiles?.length < 50,
+            shouldFlush: (size, age) => size >= 5 || age > 1000,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.DOMAIN_EXTRACTION,
+        {
+            promptType: prompt_types_1.PromptType.DOMAIN_EXTRACTION,
+            optimalBatchSize: 20,
+            maxBatchSize: 30,
+            minBatchSize: 5,
+            batchTimeout: 2000,
+            priorityWeight: 0.4,
+            canBatch: () => true,
+            shouldFlush: (size, age) => size >= 15 || age > 2000,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY,
+        {
+            promptType: prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY,
+            optimalBatchSize: 8,
+            maxBatchSize: 12,
+            minBatchSize: 3,
+            batchTimeout: 800,
+            priorityWeight: 0.7,
+            canBatch: () => true,
+            shouldFlush: (size, age) => size >= 8 || age > 800,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.CODE_ANALYSIS,
+        {
+            promptType: prompt_types_1.PromptType.CODE_ANALYSIS,
+            optimalBatchSize: 3,
+            maxBatchSize: 5,
+            minBatchSize: 1,
+            batchTimeout: 300,
+            priorityWeight: 0.9,
+            canBatch: (file) => file.diffContent?.length < 5000,
+            shouldFlush: (size, age) => size >= 3 || age > 300,
+        },
+    ],
+]);
+class BatchFormationStrategies {
+    static getStrategy(promptType) {
+        const strategies = {
+            [prompt_types_1.PromptType.SIMILARITY_CHECK]: this.SIMILARITY_GROUPING,
+            [prompt_types_1.PromptType.CODE_ANALYSIS]: this.FILE_SIZE_GROUPING,
+            [prompt_types_1.PromptType.THEME_EXPANSION]: this.THEME_COMPLEXITY_GROUPING,
+            [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: {},
+            [prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY]: {},
+            [prompt_types_1.PromptType.THEME_EXTRACTION]: {},
+            [prompt_types_1.PromptType.THEME_NAMING]: {},
+            [prompt_types_1.PromptType.BATCH_SIMILARITY]: {},
+        };
+        return strategies[promptType] || null;
+    }
+}
+exports.BatchFormationStrategies = BatchFormationStrategies;
+BatchFormationStrategies.SIMILARITY_GROUPING = {
+    groupBy: (pair) => {
+        // Group similar theme pairs by their domains
+        const domains = [pair.theme1.domain, pair.theme2.domain].sort();
+        return domains.join('-');
+    },
+    sortBy: (pair) => pair.priority || 0,
+};
+BatchFormationStrategies.FILE_SIZE_GROUPING = {
+    groupBy: (file) => {
+        // Group by file size categories
+        const size = file.diffContent?.length || 0;
+        if (size < 1000)
+            return 'small';
+        if (size < 5000)
+            return 'medium';
+        return 'large';
+    },
+    sortBy: (file) => file.diffContent?.length || 0,
+};
+BatchFormationStrategies.THEME_COMPLEXITY_GROUPING = {
+    groupBy: (theme) => {
+        // Group by complexity
+        const fileCount = theme.affectedFiles?.length || 0;
+        if (fileCount < 5)
+            return 'simple';
+        if (fileCount < 20)
+            return 'moderate';
+        return 'complex';
+    },
+    sortBy: (theme) => theme.affectedFiles?.length || 0,
+};
+
+
+/***/ }),
+
+/***/ 6283:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AIResponseCache = void 0;
+const prompt_types_1 = __nccwpck_require__(8441);
+const cache_strategies_1 = __nccwpck_require__(4860);
+const cache_metrics_1 = __nccwpck_require__(6112);
+/**
+ * LRU (Least Recently Used) cache implementation for AI responses
+ */
+class AIResponseCache {
+    constructor() {
+        this.caches = new Map();
+        this.metricsCollector = new cache_metrics_1.CacheMetricsCollector();
+        this.totalMemoryUsage = 0;
+        this.maxMemoryUsage = 100 * 1024 * 1024; // 100MB default
+        this.initializeCaches();
+        this.startCleanupInterval();
+    }
+    static getInstance() {
+        if (!AIResponseCache.instance) {
+            AIResponseCache.instance = new AIResponseCache();
+        }
+        return AIResponseCache.instance;
+    }
+    /**
+     * Get cached response if available
+     */
+    get(promptType, inputs) {
+        if (!cache_strategies_1.CacheStrategyFactory.shouldCache(promptType)) {
+            return null;
+        }
+        const strategy = cache_strategies_1.CacheStrategyFactory.getStrategy(promptType);
+        const key = strategy.keyGenerator.generate(promptType, inputs);
+        const cache = this.caches.get(promptType);
+        if (!cache) {
+            this.metricsCollector.recordMiss(promptType);
+            return null;
+        }
+        const entry = cache.get(key);
+        if (!entry) {
+            this.metricsCollector.recordMiss(promptType);
+            return null;
+        }
+        // Check if expired
+        if (Date.now() > entry.expiresAt) {
+            cache.delete(key);
+            this.updateMemoryUsage(-entry.size);
+            this.metricsCollector.recordMiss(promptType);
+            return null;
+        }
+        // Update access info
+        entry.accessCount++;
+        entry.lastAccessed = Date.now();
+        // Record hit with age
+        const age = Date.now() - entry.timestamp;
+        this.metricsCollector.recordHit(promptType, age);
+        // Return cached response with cache flag
+        return {
+            ...entry.value,
+            cached: true,
+        };
+    }
+    /**
+     * Store response in cache
+     */
+    set(promptType, inputs, response) {
+        if (!cache_strategies_1.CacheStrategyFactory.shouldCache(promptType)) {
+            return;
+        }
+        const strategy = cache_strategies_1.CacheStrategyFactory.getStrategy(promptType);
+        // Check if response should be cached based on strategy
+        if (!strategy.shouldCache(response)) {
+            return;
+        }
+        const key = strategy.keyGenerator.generate(promptType, inputs);
+        let cache = this.caches.get(promptType);
+        if (!cache) {
+            cache = new Map();
+            this.caches.set(promptType, cache);
+        }
+        // Calculate entry size
+        const size = this.estimateSize(response);
+        // Check memory limit
+        if (this.totalMemoryUsage + size > this.maxMemoryUsage) {
+            this.evictEntries(size);
+        }
+        // Check cache size limit
+        if (cache.size >= strategy.maxSize) {
+            this.evictLRU(promptType);
+        }
+        // Calculate TTL using adaptive strategy if available
+        const adaptiveTTL = strategy.adaptiveTTL
+            ? strategy.adaptiveTTL(response)
+            : strategy.ttl;
+        const entry = {
+            key,
+            value: response,
+            timestamp: Date.now(),
+            expiresAt: Date.now() + adaptiveTTL,
+            size,
+            accessCount: 0,
+            lastAccessed: Date.now(),
+        };
+        cache.set(key, entry);
+        this.updateMemoryUsage(size);
+    }
+    /**
+     * Get multiple responses from cache in parallel
+     */
+    getBatch(promptType, inputsArray) {
+        if (!cache_strategies_1.CacheStrategyFactory.shouldCache(promptType)) {
+            return new Array(inputsArray.length).fill(null);
+        }
+        const strategy = cache_strategies_1.CacheStrategyFactory.getStrategy(promptType);
+        const cache = this.caches.get(promptType);
+        if (!cache) {
+            return new Array(inputsArray.length).fill(null);
+        }
+        // Parallel cache lookups
+        const results = inputsArray.map((inputs) => {
+            const key = strategy.keyGenerator.generate(promptType, inputs);
+            const entry = cache.get(key);
+            if (!entry) {
+                return null;
+            }
+            // Check TTL
+            if (Date.now() > entry.expiresAt) {
+                cache.delete(key);
+                return null;
+            }
+            // Update last accessed for LRU
+            entry.lastAccessed = Date.now();
+            entry.accessCount++;
+            // Update metrics
+            const ageMs = Date.now() - entry.timestamp;
+            this.metricsCollector.recordHit(promptType, ageMs);
+            return entry.value;
+        });
+        return results;
+    }
+    /**
+     * Store multiple responses in cache efficiently
+     */
+    setBatch(promptType, inputsArray, responses) {
+        if (!cache_strategies_1.CacheStrategyFactory.shouldCache(promptType) ||
+            inputsArray.length !== responses.length) {
+            return;
+        }
+        const strategy = cache_strategies_1.CacheStrategyFactory.getStrategy(promptType);
+        let cache = this.caches.get(promptType);
+        if (!cache) {
+            cache = new Map();
+            this.caches.set(promptType, cache);
+        }
+        // Batch cache updates
+        for (let i = 0; i < inputsArray.length; i++) {
+            const response = responses[i];
+            if (!response || !strategy.shouldCache(response)) {
+                continue;
+            }
+            const key = strategy.keyGenerator.generate(promptType, inputsArray[i]);
+            const size = this.estimateSize(response);
+            // Check memory limits before adding
+            if (this.totalMemoryUsage + size > this.maxMemoryUsage) {
+                this.evictEntries(size);
+            }
+            // Calculate adaptive TTL for batch entry
+            const adaptiveTTL = strategy.adaptiveTTL
+                ? strategy.adaptiveTTL(response)
+                : strategy.ttl;
+            const entry = {
+                key,
+                value: response,
+                timestamp: Date.now(),
+                expiresAt: Date.now() + adaptiveTTL,
+                size,
+                accessCount: 0,
+                lastAccessed: Date.now(),
+            };
+            cache.set(key, entry);
+            this.totalMemoryUsage += size;
+        }
+    }
+    /**
+     * Clear cache for specific prompt type or all
+     */
+    clear(promptType) {
+        if (promptType) {
+            const cache = this.caches.get(promptType);
+            if (cache) {
+                const size = this.getCacheSize(cache);
+                cache.clear();
+                this.updateMemoryUsage(-size);
+            }
+        }
+        else {
+            this.caches.clear();
+            this.totalMemoryUsage = 0;
+            this.initializeCaches();
+        }
+    }
+    /**
+     * Get cache metrics
+     */
+    getMetrics() {
+        return this.metricsCollector.getMetrics();
+    }
+    /**
+     * Get cache efficiency report
+     */
+    getEfficiencyReport() {
+        return this.metricsCollector.getEfficiencyReport();
+    }
+    /**
+     * Warm cache with predicted entries
+     */
+    async warmCache(promptType, predictedInputs, executor) {
+        const strategy = cache_strategies_1.CacheStrategyFactory.getStrategy(promptType);
+        for (const inputs of predictedInputs) {
+            const key = strategy.keyGenerator.generate(promptType, inputs);
+            const cache = this.caches.get(promptType);
+            if (!cache || !cache.has(key)) {
+                try {
+                    const response = await executor(inputs);
+                    this.set(promptType, inputs, response);
+                }
+                catch (error) {
+                    console.warn(`Cache warming failed for ${promptType}:`, error);
+                }
+            }
+        }
+    }
+    /**
+     * Initialize cache maps
+     */
+    initializeCaches() {
+        for (const promptType of Object.values(prompt_types_1.PromptType)) {
+            if (cache_strategies_1.CacheStrategyFactory.shouldCache(promptType)) {
+                this.caches.set(promptType, new Map());
+            }
+        }
+    }
+    /**
+     * Start periodic cleanup of expired entries
+     */
+    startCleanupInterval() {
+        setInterval(() => {
+            this.cleanupExpiredEntries();
+        }, 60 * 1000); // Run every minute
+    }
+    /**
+     * Remove expired entries
+     */
+    cleanupExpiredEntries() {
+        const now = Date.now();
+        for (const [promptType, cache] of this.caches.entries()) {
+            const expiredKeys = [];
+            for (const [key, entry] of cache.entries()) {
+                if (now > entry.expiresAt) {
+                    expiredKeys.push(key);
+                }
+            }
+            for (const key of expiredKeys) {
+                const entry = cache.get(key);
+                if (entry) {
+                    cache.delete(key);
+                    this.updateMemoryUsage(-entry.size);
+                    this.metricsCollector.recordEviction(promptType);
+                }
+            }
+        }
+    }
+    /**
+     * Evict least recently used entry from a specific cache
+     */
+    evictLRU(promptType) {
+        const cache = this.caches.get(promptType);
+        if (!cache || cache.size === 0)
+            return;
+        let lruKey = null;
+        let lruTime = Infinity;
+        for (const [key, entry] of cache.entries()) {
+            if (entry.lastAccessed < lruTime) {
+                lruTime = entry.lastAccessed;
+                lruKey = key;
+            }
+        }
+        if (lruKey) {
+            const entry = cache.get(lruKey);
+            if (entry) {
+                cache.delete(lruKey);
+                this.updateMemoryUsage(-entry.size);
+                this.metricsCollector.recordEviction(promptType);
+            }
+        }
+    }
+    /**
+     * Evict entries to free up space
+     */
+    evictEntries(requiredSpace) {
+        const entries = [];
+        // Collect all entries
+        for (const [promptType, cache] of this.caches.entries()) {
+            for (const [key, entry] of cache.entries()) {
+                entries.push({ promptType, key, entry });
+            }
+        }
+        // Sort by last accessed (LRU)
+        entries.sort((a, b) => a.entry.lastAccessed - b.entry.lastAccessed);
+        // Evict until we have enough space
+        let freedSpace = 0;
+        for (const { promptType, key, entry } of entries) {
+            if (freedSpace >= requiredSpace)
+                break;
+            const cache = this.caches.get(promptType);
+            if (cache) {
+                cache.delete(key);
+                freedSpace += entry.size;
+                this.updateMemoryUsage(-entry.size);
+                this.metricsCollector.recordEviction(promptType);
+            }
+        }
+    }
+    /**
+     * Estimate size of a response in bytes
+     */
+    estimateSize(response) {
+        const json = JSON.stringify(response);
+        return json.length * 2; // Rough estimate (2 bytes per character)
+    }
+    /**
+     * Get total size of a cache
+     */
+    getCacheSize(cache) {
+        let size = 0;
+        for (const entry of cache.values()) {
+            size += entry.size;
+        }
+        return size;
+    }
+    /**
+     * Update memory usage tracking
+     */
+    updateMemoryUsage(delta) {
+        this.totalMemoryUsage += delta;
+        // Update metrics for each prompt type
+        for (const [promptType, cache] of this.caches.entries()) {
+            const size = this.getCacheSize(cache);
+            this.metricsCollector.updateMemoryUsage(promptType, size);
+        }
+    }
+    /**
+     * Get current memory usage
+     */
+    getMemoryUsage() {
+        return {
+            used: this.totalMemoryUsage,
+            max: this.maxMemoryUsage,
+            percentage: (this.totalMemoryUsage / this.maxMemoryUsage) * 100,
+        };
+    }
+    /**
+     * Set maximum memory usage
+     */
+    setMaxMemoryUsage(bytes) {
+        this.maxMemoryUsage = bytes;
+        // Evict if currently over limit
+        if (this.totalMemoryUsage > this.maxMemoryUsage) {
+            this.evictEntries(this.totalMemoryUsage - this.maxMemoryUsage);
+        }
+    }
+}
+exports.AIResponseCache = AIResponseCache;
+
+
+/***/ }),
+
+/***/ 6112:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CacheMetricsCollector = void 0;
+const prompt_types_1 = __nccwpck_require__(8441);
+/**
+ * Cache metrics collector
+ */
+class CacheMetricsCollector {
+    constructor() {
+        this.metrics = new Map();
+        this.hitAges = new Map();
+        this.initializeMetrics();
+    }
+    initializeMetrics() {
+        for (const promptType of Object.values(prompt_types_1.PromptType)) {
+            this.metrics.set(promptType, {
+                hits: 0,
+                misses: 0,
+                evictions: 0,
+                totalRequests: 0,
+                hitRate: 0,
+                averageHitAge: 0,
+                memoryUsage: 0,
+            });
+            this.hitAges.set(promptType, []);
+        }
+    }
+    recordHit(promptType, ageMs) {
+        const metrics = this.metrics.get(promptType);
+        if (!metrics)
+            return;
+        metrics.hits++;
+        metrics.totalRequests++;
+        metrics.hitRate = metrics.hits / metrics.totalRequests;
+        // Track hit ages for average calculation
+        const ages = this.hitAges.get(promptType) || [];
+        ages.push(ageMs);
+        // Keep only last 100 ages to avoid memory issues
+        if (ages.length > 100) {
+            ages.shift();
+        }
+        // Calculate average age
+        metrics.averageHitAge =
+            ages.reduce((sum, age) => sum + age, 0) / ages.length;
+    }
+    recordMiss(promptType) {
+        const metrics = this.metrics.get(promptType);
+        if (!metrics)
+            return;
+        metrics.misses++;
+        metrics.totalRequests++;
+        metrics.hitRate = metrics.hits / metrics.totalRequests;
+    }
+    recordEviction(promptType) {
+        const metrics = this.metrics.get(promptType);
+        if (!metrics)
+            return;
+        metrics.evictions++;
+    }
+    updateMemoryUsage(promptType, bytes) {
+        const metrics = this.metrics.get(promptType);
+        if (!metrics)
+            return;
+        metrics.memoryUsage = bytes;
+    }
+    getMetrics(promptType) {
+        if (promptType) {
+            return this.metrics.get(promptType) || this.createEmptyMetrics();
+        }
+        const allMetrics = {};
+        for (const [type, metrics] of this.metrics.entries()) {
+            allMetrics[type] = { ...metrics };
+        }
+        return allMetrics;
+    }
+    getOverallMetrics() {
+        const overall = {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            totalRequests: 0,
+            hitRate: 0,
+            averageHitAge: 0,
+            memoryUsage: 0,
+        };
+        for (const metrics of this.metrics.values()) {
+            overall.hits += metrics.hits;
+            overall.misses += metrics.misses;
+            overall.evictions += metrics.evictions;
+            overall.totalRequests += metrics.totalRequests;
+            overall.memoryUsage += metrics.memoryUsage;
+        }
+        overall.hitRate =
+            overall.totalRequests > 0 ? overall.hits / overall.totalRequests : 0;
+        // Calculate weighted average hit age
+        let totalHitAge = 0;
+        let totalHits = 0;
+        for (const [promptType, metrics] of this.metrics.entries()) {
+            if (metrics.hits > 0) {
+                totalHitAge += metrics.averageHitAge * metrics.hits;
+                totalHits += metrics.hits;
+            }
+        }
+        overall.averageHitAge = totalHits > 0 ? totalHitAge / totalHits : 0;
+        return overall;
+    }
+    reset() {
+        this.initializeMetrics();
+    }
+    createEmptyMetrics() {
+        return {
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+            totalRequests: 0,
+            hitRate: 0,
+            averageHitAge: 0,
+            memoryUsage: 0,
+        };
+    }
+    /**
+     * Get cache efficiency report
+     */
+    getEfficiencyReport() {
+        const overall = this.getOverallMetrics();
+        const topPerformers = [];
+        const worstPerformers = [];
+        for (const [type, metrics] of this.metrics.entries()) {
+            if (metrics.totalRequests > 10) {
+                // Only consider types with sufficient requests
+                const entry = { type, hitRate: metrics.hitRate };
+                if (metrics.hitRate > 0.7) {
+                    topPerformers.push(entry);
+                }
+                else if (metrics.hitRate < 0.3) {
+                    worstPerformers.push(entry);
+                }
+            }
+        }
+        topPerformers.sort((a, b) => b.hitRate - a.hitRate);
+        worstPerformers.sort((a, b) => a.hitRate - b.hitRate);
+        let report = `Cache Efficiency Report\n`;
+        report += `=======================\n`;
+        report += `Overall Hit Rate: ${(overall.hitRate * 100).toFixed(1)}%\n`;
+        report += `Total Requests: ${overall.totalRequests}\n`;
+        report += `Memory Usage: ${(overall.memoryUsage / 1024 / 1024).toFixed(2)} MB\n`;
+        report += `Average Hit Age: ${(overall.averageHitAge / 1000).toFixed(1)} seconds\n\n`;
+        if (topPerformers.length > 0) {
+            report += `Top Performers:\n`;
+            topPerformers.slice(0, 3).forEach((p) => {
+                report += `  - ${p.type}: ${(p.hitRate * 100).toFixed(1)}%\n`;
+            });
+            report += '\n';
+        }
+        if (worstPerformers.length > 0) {
+            report += `Needs Improvement:\n`;
+            worstPerformers.slice(0, 3).forEach((p) => {
+                report += `  - ${p.type}: ${(p.hitRate * 100).toFixed(1)}%\n`;
+            });
+        }
+        return report;
+    }
+}
+exports.CacheMetricsCollector = CacheMetricsCollector;
+
+
+/***/ }),
+
+/***/ 4860:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CacheStrategyFactory = exports.CodeAnalysisCacheKeyGenerator = exports.SimilarityCacheKeyGenerator = exports.DefaultCacheKeyGenerator = void 0;
+const prompt_types_1 = __nccwpck_require__(8441);
+const crypto_1 = __importDefault(__nccwpck_require__(6982));
+/**
+ * Default cache key generator using SHA256 hash
+ */
+class DefaultCacheKeyGenerator {
+    generate(promptType, inputs) {
+        // Sort object keys for consistent hashing
+        const sortedInputs = this.sortObject(inputs);
+        const inputString = JSON.stringify({
+            type: promptType,
+            inputs: sortedInputs,
+        });
+        return crypto_1.default
+            .createHash('sha256')
+            .update(inputString)
+            .digest('hex')
+            .substring(0, 16); // Use first 16 chars for readability
+    }
+    sortObject(obj) {
+        if (obj === null || typeof obj !== 'object') {
+            return obj;
+        }
+        if (Array.isArray(obj)) {
+            return obj.map((item) => this.sortObject(item));
+        }
+        const sortedKeys = Object.keys(obj).sort();
+        const sortedObj = {};
+        for (const key of sortedKeys) {
+            sortedObj[key] = this.sortObject(obj[key]);
+        }
+        return sortedObj;
+    }
+}
+exports.DefaultCacheKeyGenerator = DefaultCacheKeyGenerator;
+/**
+ * Specialized cache key generators for specific prompt types
+ */
+class SimilarityCacheKeyGenerator {
+    generate(promptType, inputs) {
+        // For similarity checks, order doesn't matter (A-B same as B-A)
+        const theme1 = inputs.theme1Name || '';
+        const theme2 = inputs.theme2Name || '';
+        const themes = [theme1, theme2].sort();
+        return crypto_1.default
+            .createHash('sha256')
+            .update(`${promptType}:${themes[0]}:${themes[1]}`)
+            .digest('hex')
+            .substring(0, 16);
+    }
+}
+exports.SimilarityCacheKeyGenerator = SimilarityCacheKeyGenerator;
+class CodeAnalysisCacheKeyGenerator {
+    generate(promptType, inputs) {
+        // For code analysis, use file path and content hash
+        const filename = inputs.filename || '';
+        const diffContent = inputs.diffContent || '';
+        const contentHash = crypto_1.default
+            .createHash('sha256')
+            .update(diffContent)
+            .digest('hex')
+            .substring(0, 8);
+        return `${promptType}:${filename}:${contentHash}`;
+    }
+}
+exports.CodeAnalysisCacheKeyGenerator = CodeAnalysisCacheKeyGenerator;
+/**
+ * Factory for creating cache strategies
+ */
+class CacheStrategyFactory {
+    static getStrategy(promptType) {
+        const strategy = this.strategies.get(promptType);
+        if (!strategy) {
+            // Default strategy for unspecified types
+            return {
+                ttl: 30 * 60 * 1000, // 30 minutes
+                maxSize: 100,
+                keyGenerator: new DefaultCacheKeyGenerator(),
+                shouldCache: (response) => response.success === true,
+            };
+        }
+        return strategy;
+    }
+    static shouldCache(promptType) {
+        // Theme naming should never be cached
+        if (promptType === prompt_types_1.PromptType.THEME_NAMING) {
+            return false;
+        }
+        return true;
+    }
+}
+exports.CacheStrategyFactory = CacheStrategyFactory;
+CacheStrategyFactory.strategies = new Map([
+    [
+        prompt_types_1.PromptType.CODE_ANALYSIS,
+        {
+            ttl: 24 * 60 * 60 * 1000, // 24 hours
+            maxSize: 1000,
+            keyGenerator: new CodeAnalysisCacheKeyGenerator(),
+            shouldCache: (response) => response.success === true,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.SIMILARITY_CHECK,
+        {
+            ttl: 60 * 60 * 1000, // 1 hour (base TTL)
+            maxSize: 500,
+            keyGenerator: new SimilarityCacheKeyGenerator(),
+            shouldCache: (response) => response.success === true && response.confidence > 0.7,
+            adaptiveTTL: (response) => {
+                // High confidence = longer cache, low confidence = shorter cache
+                const confidence = response.data?.confidence || response.confidence || 0.5;
+                const baseTTL = 60 * 60 * 1000; // 1 hour
+                if (confidence > 0.9)
+                    return baseTTL * 4; // 4 hours for very high confidence
+                if (confidence > 0.8)
+                    return baseTTL * 2; // 2 hours for high confidence
+                if (confidence > 0.6)
+                    return baseTTL; // 1 hour for medium confidence
+                return baseTTL * 0.5; // 30 minutes for low confidence
+            },
+        },
+    ],
+    [
+        prompt_types_1.PromptType.THEME_EXTRACTION,
+        {
+            ttl: 60 * 60 * 1000, // 1 hour (base TTL)
+            maxSize: 500,
+            keyGenerator: new DefaultCacheKeyGenerator(),
+            shouldCache: (response) => response.success === true,
+            adaptiveTTL: (response) => {
+                const confidence = response.data?.confidence || response.confidence || 0.5;
+                const baseTTL = 60 * 60 * 1000; // 1 hour
+                // Theme extraction benefits from longer caching for high confidence themes
+                if (confidence > 0.85)
+                    return baseTTL * 6; // 6 hours for very confident themes
+                if (confidence > 0.7)
+                    return baseTTL * 2; // 2 hours for confident themes
+                if (confidence > 0.5)
+                    return baseTTL; // 1 hour for medium confidence
+                return baseTTL * 0.25; // 15 minutes for low confidence
+            },
+        },
+    ],
+    [
+        prompt_types_1.PromptType.THEME_EXPANSION,
+        {
+            ttl: 30 * 60 * 1000, // 30 minutes
+            maxSize: 200,
+            keyGenerator: new DefaultCacheKeyGenerator(),
+            shouldCache: (response) => response.success === true,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.DOMAIN_EXTRACTION,
+        {
+            ttl: 30 * 60 * 1000, // 30 minutes
+            maxSize: 100,
+            keyGenerator: new DefaultCacheKeyGenerator(),
+            shouldCache: (response) => response.success === true,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.BATCH_SIMILARITY,
+        {
+            ttl: 60 * 60 * 1000, // 1 hour
+            maxSize: 200,
+            keyGenerator: new DefaultCacheKeyGenerator(),
+            shouldCache: (response) => response.success === true,
+        },
+    ],
+    [
+        prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY,
+        {
+            ttl: 60 * 60 * 1000, // 1 hour
+            maxSize: 200,
+            keyGenerator: new DefaultCacheKeyGenerator(),
+            shouldCache: (response) => response.success === true,
+        },
+    ],
+]);
+
+
+/***/ }),
+
+/***/ 1395:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OptimizedPromptTemplates = void 0;
+const prompt_templates_1 = __nccwpck_require__(1581);
+const prompt_types_1 = __nccwpck_require__(8441);
+/**
+ * Optimized prompt templates with reduced token usage and improved consistency
+ */
+class OptimizedPromptTemplates extends prompt_templates_1.PromptTemplates {
+    /**
+     * Get optimized prompt template by type
+     */
+    getOptimizedTemplate(promptType) {
+        const templates = {
+            [prompt_types_1.PromptType.CODE_ANALYSIS]: this.getCodeAnalysisPrompt(),
+            [prompt_types_1.PromptType.THEME_EXTRACTION]: this.getThemeExtractionPrompt(),
+            [prompt_types_1.PromptType.SIMILARITY_CHECK]: this.getSimilarityCheckPrompt(),
+            [prompt_types_1.PromptType.THEME_EXPANSION]: this.getThemeExpansionPrompt(),
+            [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: this.getDomainExtractionPrompt(),
+            [prompt_types_1.PromptType.THEME_NAMING]: this.getThemeNamingPrompt(),
+            [prompt_types_1.PromptType.BATCH_SIMILARITY]: this.getBatchSimilarityPrompt(),
+            [prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY]: this.getCrossLevelSimilarityPrompt(),
+        };
+        return templates[promptType] || '';
+    }
+    getCodeAnalysisPrompt() {
+        return `Analyze code structure:
+{{filename}} ({{changeType}})
+Diff:
+{{diffContent}}
+
+Extract:
+- functionsChanged: names added/modified/removed
+- classesChanged: classes/interfaces/types/enums
+- importsChanged: module names only
+- fileType, isTestFile, isConfigFile
+- architecturalPatterns, businessDomain (1 word)
+- codeComplexity: low/medium/high
+- semanticDescription: what changed
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+    }
+    getThemeExtractionPrompt() {
+        return `{{context}}
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.FILE_CONTEXT}
+
+Identify:
+- Exact changes (before→after)
+- Business purpose
+- User impact
+
+JSON fields (max words):
+- themeName (10)
+- description (20)
+- detailedDescription (15/null)
+- businessImpact (15)
+- technicalSummary (12)
+- keyChanges: 3 items (10 each)
+- ${OptimizedPromptTemplates.SHARED_CONTEXT.CONFIDENCE_SCALE}
+- codePattern (3)
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+    }
+    getSimilarityCheckPrompt() {
+        return `Compare themes:
+
+T1: {{theme1Name}}
+{{theme1Description}}
+Files: {{theme1Files}}
+
+T2: {{theme2Name}}
+{{theme2Description}}
+Files: {{theme2Files}}
+
+Should merge? Consider feature overlap, shared changes, clarity.
+
+JSON:
+- shouldMerge: boolean
+- ${OptimizedPromptTemplates.SHARED_CONTEXT.CONFIDENCE_SCALE}
+- reasoning: brief
+- scores (0-1): name, description, pattern, business, semantic
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+    }
+    getThemeExpansionPrompt() {
+        return `Theme: {{themeName}}
+{{themeDescription}}
+Files: {{affectedFiles}}
+
+Find distinct sub-concerns.
+
+JSON:
+- shouldExpand: boolean
+- ${OptimizedPromptTemplates.SHARED_CONTEXT.CONFIDENCE_SCALE}
+- subThemes: [{name, description, businessValue, affectedComponents[], relatedFiles[]}]
+- reasoning
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+    }
+    getDomainExtractionPrompt() {
+        return `Group by domain:
+{{themes}}
+
+Domains: {{availableDomains}}
+
+JSON:
+- domains: [{domain, themes[], confidence, userValue}]
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+    }
+    getThemeNamingPrompt() {
+        return `Name this theme (user-focused, 2-5 words):
+Current: {{currentName}}
+{{description}}
+Changes: {{keyChanges}}
+
+JSON:
+- themeName
+- alternativeNames: 2-3
+- reasoning
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+    }
+    getBatchSimilarityPrompt() {
+        return `Analyze similarity between theme pairs. Determine if each pair should be merged based on semantic similarity, functional overlap, and business context.
+
+{{pairs}}
+
+CRITICAL: Respond with ONLY valid JSON in this exact format:
+{
+  "success": true,
+  "results": [
+    {
+      "pairId": "pair-0",
+      "shouldMerge": boolean,
+      "confidence": 0.0-1.0,
+      "reasoning": "brief explanation (max 30 words)",
+      "scores": {
+        "name": 0.0-1.0,
+        "description": 0.0-1.0,
+        "pattern": 0.0-1.0,
+        "business": 0.0-1.0,
+        "semantic": 0.0-1.0
+      }
+    }
+  ],
+  "metadata": {
+    "processedCount": {{pairCount}},
+    "failedCount": 0,
+    "processingTimeMs": 0
+  }
+}
+
+Return ONLY the JSON object, no additional text.`;
+    }
+    getCrossLevelSimilarityPrompt() {
+        return `Parent: {{parentTheme}}
+Child: {{childTheme}}
+
+JSON:
+- relationship: parent_child|duplicate|none
+- ${OptimizedPromptTemplates.SHARED_CONTEXT.CONFIDENCE_SCALE}
+- action: keep_both|merge_into_parent|merge_into_child|make_sibling
+- reasoning
+
+${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+    }
+    /**
+     * Dynamic context trimming to stay within token limits
+     */
+    trimContext(context, maxTokens, preserveKeys = []) {
+        // Rough estimate: 1 token ≈ 4 characters
+        const maxChars = maxTokens * 4;
+        if (context.length <= maxChars) {
+            return context;
+        }
+        // Preserve important keys
+        const preserved = [];
+        const remaining = [];
+        const lines = context.split('\n');
+        for (const line of lines) {
+            const shouldPreserve = preserveKeys.some((key) => line.toLowerCase().includes(key.toLowerCase()));
+            if (shouldPreserve) {
+                preserved.push(line);
+            }
+            else {
+                remaining.push(line);
+            }
+        }
+        // Build trimmed context
+        let trimmed = preserved.join('\n');
+        const remainingSpace = maxChars - trimmed.length - 50; // Buffer
+        if (remainingSpace > 0) {
+            const additionalContext = remaining.join('\n');
+            if (additionalContext.length > remainingSpace) {
+                trimmed +=
+                    '\n' +
+                        additionalContext.substring(0, remainingSpace) +
+                        '\n...(trimmed)';
+            }
+            else {
+                trimmed += '\n' + additionalContext;
+            }
+        }
+        return trimmed;
+    }
+    /**
+     * Select most relevant examples based on context
+     */
+    selectExamples(promptType, context, maxExamples = 2) {
+        // TODO: Implement intelligent example selection based on context
+        // For now, return empty array to save tokens
+        return [];
+    }
+    /**
+     * Optimize file content for prompts
+     */
+    optimizeFileContent(content, focusAreas) {
+        const lines = content.split('\n');
+        const optimized = [];
+        let inRelevantSection = false;
+        let contextLines = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            // Check if line contains focus areas
+            const isRelevant = focusAreas?.some((area) => line.toLowerCase().includes(area.toLowerCase())) || false;
+            if (isRelevant) {
+                inRelevantSection = true;
+                contextLines = 3; // Include 3 lines of context after relevant line
+                // Add previous line for context if not already added
+                if (i > 0 && optimized[optimized.length - 1] !== lines[i - 1]) {
+                    optimized.push(lines[i - 1]);
+                }
+            }
+            if (inRelevantSection || contextLines > 0) {
+                optimized.push(line);
+                if (!isRelevant) {
+                    contextLines--;
+                }
+            }
+            // Always include diff markers
+            if (line.startsWith('+') ||
+                line.startsWith('-') ||
+                line.startsWith('@@')) {
+                if (optimized[optimized.length - 1] !== line) {
+                    optimized.push(line);
+                }
+                inRelevantSection = true;
+                contextLines = 2;
+            }
+        }
+        return optimized.join('\n');
+    }
+    /**
+     * Create a token-efficient prompt
+     */
+    createEfficientPrompt(template, variables, maxTokens = 3000) {
+        // Optimize large variables
+        const optimizedVars = { ...variables };
+        // Trim file content if present
+        if (optimizedVars.content && optimizedVars.content.length > 1000) {
+            optimizedVars.content = this.optimizeFileContent(optimizedVars.content, optimizedVars.focusAreas);
+        }
+        // Trim file lists if too long
+        if (Array.isArray(optimizedVars.files) && optimizedVars.files.length > 5) {
+            optimizedVars.files = [
+                ...optimizedVars.files.slice(0, 5),
+                `...(+${optimizedVars.files.length - 5} more)`,
+            ];
+        }
+        // Replace variables
+        let prompt = template;
+        for (const [key, value] of Object.entries(optimizedVars)) {
+            const placeholder = `{{${key}}}`;
+            const replacement = Array.isArray(value)
+                ? value.join(', ')
+                : String(value);
+            prompt = prompt.replace(new RegExp(placeholder, 'g'), replacement);
+        }
+        // Trim if still too long
+        return this.trimContext(prompt, maxTokens);
+    }
+}
+exports.OptimizedPromptTemplates = OptimizedPromptTemplates;
+// Shared context snippets to avoid repetition
+OptimizedPromptTemplates.SHARED_CONTEXT = {
+    JSON_INSTRUCTION: 'Respond with ONLY valid JSON starting with {',
+    CONCISENESS: 'Be specific but concise',
+    CONFIDENCE_SCALE: 'confidence: 0.0-1.0',
+    FILE_CONTEXT: 'File: {{filename}}\nChanges:\n{{content}}',
+};
+// Shared examples that can be referenced
+OptimizedPromptTemplates.SHARED_EXAMPLES = {
+    GOOD_THEME_NAMES: [
+        'Remove demo functionality',
+        'Improve code review automation',
+        'Add pull request feedback',
+    ],
+    BAD_THEME_NAMES: [
+        'Delete greeting parameter',
+        'Add AI services',
+        'Implement commenting system',
+    ],
+    EXACT_CHANGES: [
+        "Changed branches from ['main'] to ['**']",
+        'Added detailedDescription field to interface',
+        'Removed _buildEnhancedAnalysisPrompt method',
+    ],
+};
+
+
+/***/ }),
+
+/***/ 8296:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TemperatureConfig = exports.CacheTTLConfig = exports.ResponseSchemas = void 0;
+const zod_1 = __nccwpck_require__(2046);
+const prompt_types_1 = __nccwpck_require__(8441);
+// Response schemas for each prompt type
+exports.ResponseSchemas = {
+    [prompt_types_1.PromptType.CODE_ANALYSIS]: zod_1.z.object({
+        functionsChanged: zod_1.z.array(zod_1.z.string()),
+        classesChanged: zod_1.z.array(zod_1.z.string()),
+        importsChanged: zod_1.z.array(zod_1.z.string()),
+        fileType: zod_1.z.string(),
+        isTestFile: zod_1.z.boolean(),
+        isConfigFile: zod_1.z.boolean(),
+        architecturalPatterns: zod_1.z.array(zod_1.z.string()),
+        businessDomain: zod_1.z.string(),
+        codeComplexity: zod_1.z.enum(['low', 'medium', 'high']),
+        semanticDescription: zod_1.z.string(),
+    }),
+    [prompt_types_1.PromptType.THEME_EXTRACTION]: zod_1.z.object({
+        themeName: zod_1.z.string(),
+        description: zod_1.z.string(),
+        businessImpact: zod_1.z.string(),
+        confidence: zod_1.z.number(),
+        codePattern: zod_1.z.string(),
+        detailedDescription: zod_1.z.string().nullable().optional(),
+        technicalSummary: zod_1.z.string().optional(),
+        keyChanges: zod_1.z.array(zod_1.z.string()).optional(),
+        userScenario: zod_1.z.string().nullable().optional(),
+        suggestedParent: zod_1.z.string().nullable().optional(),
+    }),
+    [prompt_types_1.PromptType.SIMILARITY_CHECK]: zod_1.z.object({
+        shouldMerge: zod_1.z.boolean(),
+        confidence: zod_1.z.number(),
+        reasoning: zod_1.z.string(),
+        nameScore: zod_1.z.number(),
+        descriptionScore: zod_1.z.number(),
+        patternScore: zod_1.z.number(),
+        businessScore: zod_1.z.number(),
+        semanticScore: zod_1.z.number(),
+    }),
+    [prompt_types_1.PromptType.THEME_EXPANSION]: zod_1.z.object({
+        shouldExpand: zod_1.z.boolean(),
+        confidence: zod_1.z.number(),
+        subThemes: zod_1.z.array(zod_1.z.object({
+            name: zod_1.z.string(),
+            description: zod_1.z.string(),
+            businessValue: zod_1.z.string(),
+            affectedComponents: zod_1.z.array(zod_1.z.string()),
+            relatedFiles: zod_1.z.array(zod_1.z.string()),
+        })),
+        reasoning: zod_1.z.string(),
+    }),
+    [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: zod_1.z.object({
+        domains: zod_1.z.array(zod_1.z.object({
+            domain: zod_1.z.string(),
+            themes: zod_1.z.array(zod_1.z.string()),
+            confidence: zod_1.z.number(),
+            userValue: zod_1.z.string(),
+        })),
+    }),
+    [prompt_types_1.PromptType.THEME_NAMING]: zod_1.z.object({
+        themeName: zod_1.z.string(),
+        alternativeNames: zod_1.z.array(zod_1.z.string()).optional(),
+        reasoning: zod_1.z.string(),
+    }),
+    [prompt_types_1.PromptType.BATCH_SIMILARITY]: zod_1.z.object({
+        results: zod_1.z.array(zod_1.z.object({
+            pairId: zod_1.z.string(),
+            shouldMerge: zod_1.z.boolean(),
+            confidence: zod_1.z.number(),
+            scores: zod_1.z.object({
+                name: zod_1.z.number(),
+                description: zod_1.z.number(),
+                pattern: zod_1.z.number(),
+                business: zod_1.z.number(),
+                semantic: zod_1.z.number(),
+            }),
+        })),
+    }),
+    [prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY]: zod_1.z.object({
+        relationship: zod_1.z.enum(['parent_child', 'duplicate', 'none']),
+        confidence: zod_1.z.number(),
+        action: zod_1.z.enum([
+            'keep_both',
+            'merge_into_parent',
+            'merge_into_child',
+            'make_sibling',
+        ]),
+        reasoning: zod_1.z.string(),
+    }),
+};
+// Cache TTL configurations by prompt type (in milliseconds)
+exports.CacheTTLConfig = {
+    [prompt_types_1.PromptType.CODE_ANALYSIS]: 24 * 60 * 60 * 1000, // 24 hours
+    [prompt_types_1.PromptType.THEME_EXTRACTION]: 60 * 60 * 1000, // 1 hour
+    [prompt_types_1.PromptType.SIMILARITY_CHECK]: 60 * 60 * 1000, // 1 hour
+    [prompt_types_1.PromptType.THEME_EXPANSION]: 30 * 60 * 1000, // 30 minutes
+    [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: 30 * 60 * 1000, // 30 minutes
+    [prompt_types_1.PromptType.THEME_NAMING]: 0, // No cache
+    [prompt_types_1.PromptType.BATCH_SIMILARITY]: 60 * 60 * 1000, // 1 hour
+    [prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY]: 60 * 60 * 1000, // 1 hour
+};
+// Temperature settings by prompt type
+exports.TemperatureConfig = {
+    [prompt_types_1.PromptType.CODE_ANALYSIS]: 0.2, // Low creativity for factual analysis
+    [prompt_types_1.PromptType.THEME_EXTRACTION]: 0.3, // Some creativity for theme identification
+    [prompt_types_1.PromptType.SIMILARITY_CHECK]: 0.1, // Very low for consistent decisions
+    [prompt_types_1.PromptType.THEME_EXPANSION]: 0.4, // Moderate creativity for finding sub-themes
+    [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: 0.2, // Low for consistent categorization
+    [prompt_types_1.PromptType.THEME_NAMING]: 0.5, // Higher creativity for good names
+    [prompt_types_1.PromptType.BATCH_SIMILARITY]: 0.1, // Very low for consistency
+    [prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY]: 0.1, // Very low for consistent decisions
+};
+
+
+/***/ }),
+
+/***/ 8441:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Centralized prompt type definitions and response schemas
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FallbackStrategy = exports.PromptType = void 0;
+var PromptType;
+(function (PromptType) {
+    PromptType["CODE_ANALYSIS"] = "code_analysis";
+    PromptType["THEME_EXTRACTION"] = "theme_extraction";
+    PromptType["SIMILARITY_CHECK"] = "similarity_check";
+    PromptType["THEME_EXPANSION"] = "theme_expansion";
+    PromptType["DOMAIN_EXTRACTION"] = "domain_extraction";
+    PromptType["THEME_NAMING"] = "theme_naming";
+    PromptType["BATCH_SIMILARITY"] = "batch_similarity";
+    PromptType["CROSS_LEVEL_SIMILARITY"] = "cross_level_similarity";
+})(PromptType || (exports.PromptType = PromptType = {}));
+var FallbackStrategy;
+(function (FallbackStrategy) {
+    FallbackStrategy["RETRY_SIMPLIFIED"] = "retry_simplified";
+    FallbackStrategy["USE_DEFAULT"] = "use_default";
+    FallbackStrategy["THROW_ERROR"] = "throw_error";
+    FallbackStrategy["PARTIAL_RESPONSE"] = "partial_response";
+})(FallbackStrategy || (exports.FallbackStrategy = FallbackStrategy = {}));
+
+
+/***/ }),
+
+/***/ 5315:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ResponseValidator = void 0;
+const zod_1 = __nccwpck_require__(2046);
+const json_extractor_1 = __nccwpck_require__(2642);
+const prompt_types_1 = __nccwpck_require__(8441);
+const prompt_config_1 = __nccwpck_require__(8296);
+/**
+ * Centralized response validation for AI prompts
+ */
+class ResponseValidator {
+    /**
+     * Validate AI response against expected schema
+     */
+    static validate(rawResponse, promptType) {
+        // Early exit optimization: Quick check for obvious negative responses
+        const quickCheck = ResponseValidator.quickNegativeCheck(rawResponse, promptType);
+        if (quickCheck) {
+            return quickCheck;
+        }
+        // First extract JSON from the response
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(rawResponse, 'object');
+        if (!extractionResult.success) {
+            return {
+                success: false,
+                error: `Failed to extract JSON: ${extractionResult.error}`,
+            };
+        }
+        // Get the schema for this prompt type
+        const schema = prompt_config_1.ResponseSchemas[promptType];
+        if (!schema) {
+            return {
+                success: false,
+                error: `No schema defined for prompt type: ${promptType}`,
+            };
+        }
+        // Validate against schema
+        try {
+            const validatedData = schema.parse(extractionResult.data);
+            return {
+                success: true,
+                data: validatedData,
+            };
+        }
+        catch (error) {
+            if (error instanceof zod_1.z.ZodError) {
+                const issues = error.issues
+                    .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+                    .join(', ');
+                return {
+                    success: false,
+                    error: `Schema validation failed: ${issues}`,
+                };
+            }
+            return {
+                success: false,
+                error: `Validation error: ${error}`,
+            };
+        }
+    }
+    /**
+     * Attempt partial validation for fallback scenarios
+     */
+    static validatePartial(rawResponse, promptType, requiredFields) {
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(rawResponse, 'object', requiredFields);
+        if (!extractionResult.success) {
+            return {
+                success: false,
+                error: `Failed to extract required fields: ${extractionResult.error}`,
+            };
+        }
+        // For partial validation, we'll be more lenient
+        try {
+            const schema = prompt_config_1.ResponseSchemas[promptType];
+            if (schema && schema instanceof zod_1.z.ZodObject) {
+                // Make all fields optional for partial validation
+                const partialSchema = schema.partial();
+                const validatedData = partialSchema.parse(extractionResult.data);
+                // Check if required fields are present
+                const missingFields = requiredFields.filter((field) => !(field in validatedData));
+                if (missingFields.length > 0) {
+                    return {
+                        success: false,
+                        error: `Missing required fields: ${missingFields.join(', ')}`,
+                    };
+                }
+                return {
+                    success: true,
+                    data: validatedData,
+                };
+            }
+        }
+        catch (error) {
+            // Fall through to return the extracted data as-is
+        }
+        // If schema validation fails, return the raw extracted data
+        // This allows for graceful degradation
+        return {
+            success: true,
+            data: extractionResult.data,
+        };
+    }
+    /**
+     * Create a fallback response based on prompt type
+     */
+    static createFallbackResponse(promptType, context) {
+        switch (promptType) {
+            case prompt_types_1.PromptType.CODE_ANALYSIS:
+                return {
+                    functionsChanged: [],
+                    classesChanged: [],
+                    importsChanged: [],
+                    fileType: context?.fileType || 'unknown',
+                    isTestFile: false,
+                    isConfigFile: false,
+                    architecturalPatterns: [],
+                    businessDomain: 'unknown',
+                    codeComplexity: 'medium',
+                    semanticDescription: 'Analysis failed',
+                };
+            case prompt_types_1.PromptType.THEME_EXTRACTION:
+                return {
+                    themeName: context?.filename
+                        ? `Changes in ${context.filename}`
+                        : 'Unknown Theme',
+                    description: 'Analysis unavailable',
+                    businessImpact: 'Unknown impact',
+                    confidence: 0.3,
+                    codePattern: 'Unknown',
+                    detailedDescription: null,
+                    suggestedParent: null,
+                };
+            case prompt_types_1.PromptType.SIMILARITY_CHECK:
+                return {
+                    shouldMerge: false,
+                    confidence: 0.5,
+                    reasoning: 'Analysis failed - defaulting to no merge',
+                    nameScore: 0,
+                    descriptionScore: 0,
+                    patternScore: 0,
+                    businessScore: 0,
+                    semanticScore: 0,
+                };
+            case prompt_types_1.PromptType.THEME_EXPANSION:
+                return {
+                    shouldExpand: false,
+                    confidence: 0.5,
+                    subThemes: [],
+                    reasoning: 'Analysis failed - no expansion',
+                };
+            case prompt_types_1.PromptType.DOMAIN_EXTRACTION:
+                return {
+                    domains: [],
+                };
+            case prompt_types_1.PromptType.THEME_NAMING:
+                return {
+                    themeName: context?.defaultName || 'Unnamed Theme',
+                    alternativeNames: [],
+                    reasoning: 'Naming analysis failed',
+                };
+            case prompt_types_1.PromptType.BATCH_SIMILARITY:
+                return {
+                    results: [],
+                };
+            case prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY:
+                return {
+                    relationship: 'none',
+                    confidence: 0.5,
+                    action: 'keep_both',
+                    reasoning: 'Analysis failed - keeping both themes',
+                };
+            default:
+                throw new Error(`No fallback response defined for prompt type: ${promptType}`);
+        }
+    }
+    /**
+     * Quick check for obvious negative responses to avoid full parsing
+     */
+    static quickNegativeCheck(rawResponse, promptType) {
+        // Only apply quick checks for similarity/merge-related prompts
+        if (![
+            prompt_types_1.PromptType.SIMILARITY_CHECK,
+            prompt_types_1.PromptType.BATCH_SIMILARITY,
+            prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY,
+        ].includes(promptType)) {
+            return null; // No quick check for other types
+        }
+        // Quick regex checks for obvious patterns
+        const shouldMergeFalse = /"shouldMerge":\s*false/i.test(rawResponse);
+        const lowConfidence = /"confidence":\s*0\.([0-2])\d*/i.test(rawResponse);
+        const relationshipNone = /"relationship":\s*"none"/i.test(rawResponse);
+        // If it's clearly a negative response with low confidence
+        if ((shouldMergeFalse && lowConfidence) || relationshipNone) {
+            try {
+                // Try to extract just the essential fields quickly
+                const confidenceMatch = rawResponse.match(/"confidence":\s*(0\.\d+)/);
+                const confidence = confidenceMatch
+                    ? parseFloat(confidenceMatch[1])
+                    : 0.1;
+                if (confidence < 0.3) {
+                    // Return fast negative response
+                    switch (promptType) {
+                        case prompt_types_1.PromptType.SIMILARITY_CHECK:
+                            return {
+                                success: true,
+                                data: {
+                                    shouldMerge: false,
+                                    confidence,
+                                    reasoning: 'Quick analysis - clear non-match',
+                                    nameScore: 0,
+                                    descriptionScore: 0,
+                                    patternScore: 0,
+                                    businessScore: 0,
+                                    semanticScore: 0,
+                                },
+                            };
+                        case prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY:
+                            return {
+                                success: true,
+                                data: {
+                                    relationship: 'none',
+                                    confidence,
+                                    action: 'keep_both',
+                                    reasoning: 'Quick analysis - no relationship',
+                                },
+                            };
+                    }
+                }
+            }
+            catch {
+                // If quick parsing fails, fall through to full validation
+            }
+        }
+        return null; // No quick check applied, proceed with full validation
+    }
+}
+exports.ResponseValidator = ResponseValidator;
+
+
+/***/ }),
+
+/***/ 8246:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -30827,164 +33217,511 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BatchProcessor = void 0;
-const json_extractor_1 = __nccwpck_require__(2642);
-const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
-class BatchProcessor {
-    constructor() {
-        this.batchSize = 8; // Process 8 theme pairs per AI batch call
-        this.batchFailures = 0; // Track consecutive batch failures
+exports.UnifiedPromptService = void 0;
+const claude_client_1 = __nccwpck_require__(3831);
+const optimized_prompt_templates_1 = __nccwpck_require__(1395);
+const prompt_types_1 = __nccwpck_require__(8441);
+const prompt_config_1 = __nccwpck_require__(8296);
+const response_validator_1 = __nccwpck_require__(5315);
+const ai_response_cache_1 = __nccwpck_require__(6283);
+/**
+ * Unified service for all AI prompt interactions
+ * Centralizes prompt execution, caching, error handling, and monitoring
+ */
+class UnifiedPromptService {
+    constructor(anthropicApiKey) {
+        this.metrics = new Map();
+        this.useOptimizedPrompts = true;
+        this.apiKey = anthropicApiKey;
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
+        this.promptTemplates = new optimized_prompt_templates_1.OptimizedPromptTemplates();
+        this.cache = ai_response_cache_1.AIResponseCache.getInstance();
+        this.initializeMetrics();
     }
-    async processBatchSimilarity(pairs) {
-        const prompt = this.buildBatchSimilarityPrompt(pairs);
+    static getInstance(anthropicApiKey) {
+        if (!UnifiedPromptService.instance) {
+            UnifiedPromptService.instance = new UnifiedPromptService(anthropicApiKey);
+        }
+        return UnifiedPromptService.instance;
+    }
+    /**
+     * Execute a prompt with automatic validation, caching, and error handling
+     */
+    async execute(promptType, variables, config) {
+        const startTime = Date.now();
+        const promptConfig = this.getPromptConfig(promptType, config);
+        // Check cache first
+        const cachedResponse = this.cache.get(promptType, variables);
+        if (cachedResponse) {
+            // Update metrics for cache hit
+            this.updateMetrics(promptType, true, Date.now() - startTime, true);
+            return cachedResponse;
+        }
         try {
-            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
-            let output = '';
-            try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                    silent: true,
-                    listeners: {
-                        stdout: (data) => {
-                            output += data.toString();
-                        },
-                    },
-                });
-                const results = this.parseBatchSimilarityResponse(output, pairs);
-                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
-                return results;
+            // Build the prompt
+            const prompt = this.buildPrompt(promptType, variables, promptConfig);
+            // Execute the prompt
+            const rawResponse = await this.executeWithRetry(prompt, promptConfig.maxRetries || 3);
+            // Validate the response
+            const validationResult = response_validator_1.ResponseValidator.validate(rawResponse, promptType);
+            if (!validationResult.success) {
+                // Handle validation failure based on fallback strategy
+                return this.handleValidationFailure(promptType, validationResult.error || 'Validation failed', promptConfig.fallbackStrategy, variables);
             }
-            finally {
-                cleanup(); // Ensure file is cleaned up even if execution fails
-            }
+            // Create response object
+            const response = {
+                success: true,
+                data: validationResult.data,
+                confidence: this.extractConfidence(validationResult.data),
+                tokensUsed: this.estimateTokens(prompt + rawResponse),
+                cached: false,
+            };
+            // Cache the successful response
+            this.cache.set(promptType, variables, response);
+            // Update metrics
+            this.updateMetrics(promptType, true, Date.now() - startTime, false);
+            return response;
         }
         catch (error) {
-            console.error('Batch AI similarity failed:', error);
-            throw error;
+            // Update metrics
+            this.updateMetrics(promptType, false, Date.now() - startTime, false);
+            // Handle execution error based on fallback strategy
+            return this.handleExecutionError(promptType, error, promptConfig.fallbackStrategy, variables);
         }
     }
-    getAdaptiveBatchSize() {
-        return Math.max(2, this.batchSize - Math.floor(this.batchFailures / 2));
-    }
-    incrementFailures() {
-        this.batchFailures++;
-    }
-    decrementFailures() {
-        this.batchFailures = Math.max(0, this.batchFailures - 1);
-    }
-    getFailureCount() {
-        return this.batchFailures;
-    }
-    chunkArray(array, chunkSize) {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
+    /**
+     * Execute multiple prompts in a batch
+     * This now delegates to the advanced batch processor for supported types
+     */
+    async executeBatch(promptType, batchVariables, config) {
+        // Import dynamically to avoid circular dependency
+        const { BatchProcessor } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(5369)));
+        const { BatchStrategyFactory } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(1972)));
+        // Check if this prompt type supports advanced batching
+        if (BatchStrategyFactory.canBatch(promptType)) {
+            const batchProcessor = BatchProcessor.getInstance(this.apiKey);
+            // Use advanced batch processor
+            const items = batchVariables.map((variables, index) => ({
+                variables,
+                priority: 0, // Default priority
+            }));
+            return batchProcessor.addBatch(promptType, items);
         }
-        return chunks;
-    }
-    buildBatchSimilarityPrompt(pairs) {
-        const pairDescriptions = pairs
-            .map((pair, index) => `Pair ${index + 1}: ID="${pair.id}"
-- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
-- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
-- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
-- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`)
-            .join('\n\n');
-        return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
-
-THEME PAIRS:
-${pairDescriptions}
-
-RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
-[
-${pairs
-            .map((pair, index) => `  {
-    "pairId": "${pair.id}",
-    "nameScore": 0.5,
-    "descriptionScore": 0.5,
-    "patternScore": 0.5,
-    "businessScore": 0.5,
-    "semanticScore": 0.5,
-    "shouldMerge": false,
-    "confidence": 0.5,
-    "reasoning": "analysis for pair ${index + 1}"
-  }${index < pairs.length - 1 ? ',' : ''}`)
-            .join('\n')}
-]
-
-Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
-    }
-    parseBatchSimilarityResponse(output, pairs) {
-        console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
-        console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
-        if (extractionResult.success) {
-            const parsed = extractionResult.data;
-            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
-            // Handle case where AI returns fewer results than expected
-            const results = [];
-            for (let i = 0; i < pairs.length; i++) {
-                const item = parsed[i];
-                const pair = pairs[i];
-                if (item && typeof item === 'object') {
-                    results.push({
-                        pairId: item.pairId || pair.id,
-                        similarity: {
-                            nameScore: this.clampScore(item.nameScore),
-                            descriptionScore: this.clampScore(item.descriptionScore),
-                            patternScore: this.clampScore(item.patternScore),
-                            businessScore: this.clampScore(item.businessScore),
-                            semanticScore: this.clampScore(item.semanticScore),
-                            shouldMerge: Boolean(item.shouldMerge),
-                            confidence: this.clampScore(item.confidence),
-                            reasoning: String(item.reasoning || 'No reasoning provided'),
-                        },
-                    });
+        // Fallback to simple batching for unsupported types with parallel cache optimization
+        const batchSize = this.getOptimalBatchSize(promptType);
+        const results = [];
+        // Process in batches with parallel cache lookups
+        for (let i = 0; i < batchVariables.length; i += batchSize) {
+            const batch = batchVariables.slice(i, i + batchSize);
+            // Check cache for entire batch in parallel
+            const cachedResults = this.cache.getBatch(promptType, batch);
+            // Identify uncached items
+            const uncachedIndices = [];
+            const uncachedVariables = [];
+            cachedResults.forEach((cached, index) => {
+                if (!cached) {
+                    uncachedIndices.push(index);
+                    uncachedVariables.push(batch[index]);
+                }
+            });
+            // Execute only uncached items
+            const uncachedPromises = uncachedVariables.map((variables) => this.execute(promptType, variables, config));
+            const uncachedResults = await Promise.all(uncachedPromises);
+            // Merge cached and fresh results
+            const mergedResults = cachedResults.map((cached, index) => {
+                if (cached) {
+                    return cached;
                 }
                 else {
-                    // Missing or invalid item - create fallback
-                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
-                    results.push({
-                        pairId: pair.id,
-                        similarity: this.createFallbackSimilarity(),
-                        error: `Missing AI response for pair ${i + 1}`,
-                    });
+                    const uncachedIndex = uncachedIndices.indexOf(index);
+                    return uncachedResults[uncachedIndex];
+                }
+            });
+            results.push(...mergedResults);
+        }
+        return results;
+    }
+    /**
+     * Build prompt based on type and variables
+     */
+    buildPrompt(promptType, variables, config) {
+        // Get base template
+        const template = this.getPromptTemplate(promptType);
+        // Use optimized prompt building if enabled
+        if (this.useOptimizedPrompts) {
+            return this.promptTemplates.createEfficientPrompt(template, variables, config.maxTokens || 3000);
+        }
+        // Original prompt building logic
+        let prompt = template;
+        for (const [key, value] of Object.entries(variables)) {
+            const placeholder = `{{${key}}}`;
+            prompt = prompt.replace(new RegExp(placeholder, 'g'), String(value));
+        }
+        // Add examples if provided
+        if (config.examples && config.examples.length > 0) {
+            prompt += '\n\nExamples:\n';
+            config.examples.forEach((example, index) => {
+                prompt += `\nExample ${index + 1}:\nInput: ${example.input}\nOutput: ${example.output}\n`;
+                if (example.explanation) {
+                    prompt += `Explanation: ${example.explanation}\n`;
+                }
+            });
+        }
+        // Add response format instruction
+        prompt +=
+            '\n\nIMPORTANT: Respond with ONLY valid JSON starting with { or [';
+        return prompt;
+    }
+    /**
+     * Get prompt template based on type
+     */
+    getPromptTemplate(promptType) {
+        // Use optimized templates if enabled
+        if (this.useOptimizedPrompts) {
+            return this.promptTemplates.getOptimizedTemplate(promptType);
+        }
+        // Fallback to original templates
+        const templates = {
+            [prompt_types_1.PromptType.CODE_ANALYSIS]: `Analyze this code change and extract structural information:
+
+File: {{filename}}
+Change Type: {{changeType}}
+Language: {{language}}
+
+Code Diff:
+{{diffContent}}
+
+Extract the following information as JSON. Be accurate and specific:
+- functionsChanged: All function/method names that were added/modified/removed
+- classesChanged: Classes, interfaces, types, enums that were added/modified/removed
+- importsChanged: Import/dependency changes (module names only)
+- fileType: File extension
+- isTestFile: Is this a test file?
+- isConfigFile: Is this a configuration file?
+- architecturalPatterns: Design patterns you can identify
+- businessDomain: Business domain/feature area (one word)
+- codeComplexity: low/medium/high based on complexity of changes
+- semanticDescription: Brief description of what changed`,
+            [prompt_types_1.PromptType.THEME_EXTRACTION]: `{{context}}
+
+Analyze this code change. Be specific but concise.
+
+File: {{filename}}
+Code changes:
+{{content}}
+
+Focus on WHAT changed with exact details:
+- Exact values changed (before → after)
+- Business purpose of the changes
+- User impact
+
+Respond with JSON containing:
+- themeName: what this accomplishes (max 10 words)
+- description: one specific sentence with exact names/values (max 20 words)
+- detailedDescription: additional context if needed (max 15 words, or null)
+- businessImpact: user benefit in one sentence (max 15 words)
+- technicalSummary: exact technical change (max 12 words)
+- keyChanges: max 3 changes, each max 10 words
+- userScenario: null
+- suggestedParent: null
+- confidence: 0.0-1.0
+- codePattern: change type (max 3 words)`,
+            [prompt_types_1.PromptType.SIMILARITY_CHECK]: `Analyze if these two themes should be merged:
+
+Theme 1: {{theme1Name}}
+Description: {{theme1Description}}
+Files: {{theme1Files}}
+Context: {{theme1Context}}
+
+Theme 2: {{theme2Name}}
+Description: {{theme2Description}}
+Files: {{theme2Files}}
+Context: {{theme2Context}}
+
+Consider:
+- Are they addressing the same feature/capability?
+- Do they share significant code changes?
+- Would merging provide clearer understanding?
+
+Respond with JSON containing:
+- shouldMerge: boolean
+- confidence: 0.0-1.0
+- reasoning: explanation
+- nameScore: 0.0-1.0
+- descriptionScore: 0.0-1.0
+- patternScore: 0.0-1.0
+- businessScore: 0.0-1.0
+- semanticScore: 0.0-1.0`,
+            [prompt_types_1.PromptType.THEME_EXPANSION]: `Analyze this theme for potential sub-themes:
+
+Theme: {{themeName}}
+Description: {{themeDescription}}
+Files: {{affectedFiles}}
+Code Context: {{codeContext}}
+
+Identify distinct sub-concerns that could be separate themes.
+
+Respond with JSON containing:
+- shouldExpand: boolean
+- confidence: 0.0-1.0
+- subThemes: array of {name, description, businessValue, affectedComponents, relatedFiles}
+- reasoning: explanation`,
+            [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: `Group these themes by business domain:
+
+Themes:
+{{themes}}
+
+Available domains: {{availableDomains}}
+
+Respond with JSON containing:
+- domains: array of {domain, themes (array of theme names), confidence, userValue}`,
+            [prompt_types_1.PromptType.THEME_NAMING]: `Generate a concise, user-focused name for this theme:
+
+Current name: {{currentName}}
+Description: {{description}}
+Key changes: {{keyChanges}}
+Affected files: {{affectedFiles}}
+
+Create a name that:
+- Focuses on user value, not implementation
+- Is 2-5 words long
+- Uses business terminology
+
+Respond with JSON containing:
+- themeName: the best name
+- alternativeNames: 2-3 alternatives
+- reasoning: why this name was chosen`,
+            [prompt_types_1.PromptType.BATCH_SIMILARITY]: `Analyze multiple theme pairs for similarity:
+
+{{pairs}}
+
+For each pair, determine if they should be merged.
+
+Respond with JSON containing:
+- results: array of {pairId, shouldMerge, confidence, scores: {name, description, pattern, business, semantic}}`,
+            [prompt_types_1.PromptType.CROSS_LEVEL_SIMILARITY]: `Analyze the relationship between these themes at different hierarchy levels:
+
+Parent Theme: {{parentTheme}}
+Child Theme: {{childTheme}}
+
+Determine their relationship and recommended action.
+
+Respond with JSON containing:
+- relationship: 'parent_child' | 'duplicate' | 'none'
+- confidence: 0.0-1.0
+- action: 'keep_both' | 'merge_into_parent' | 'merge_into_child' | 'make_sibling'
+- reasoning: explanation`,
+        };
+        return templates[promptType] || '';
+    }
+    /**
+     * Execute prompt with retry logic
+     */
+    async executeWithRetry(prompt, maxRetries) {
+        let lastError;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const response = await this.claudeClient.callClaude(prompt);
+                return response;
+            }
+            catch (error) {
+                lastError = error;
+                if (attempt < maxRetries) {
+                    // Exponential backoff
+                    const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+                    await new Promise((resolve) => setTimeout(resolve, delay));
                 }
             }
-            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
-            return results;
         }
-        // JSON extraction failed
-        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
+        throw lastError;
+    }
+    /**
+     * Handle validation failure based on fallback strategy
+     */
+    handleValidationFailure(promptType, error, fallbackStrategy, variables) {
+        const strategy = fallbackStrategy || prompt_types_1.FallbackStrategy.USE_DEFAULT;
+        switch (strategy) {
+            case prompt_types_1.FallbackStrategy.RETRY_SIMPLIFIED:
+                console.warn(`Validation failed, using simplified retry fallback: ${error}`);
+                return {
+                    success: false,
+                    error,
+                    data: response_validator_1.ResponseValidator.createFallbackResponse(promptType, variables),
+                };
+            case prompt_types_1.FallbackStrategy.USE_DEFAULT:
+                return {
+                    success: true,
+                    data: response_validator_1.ResponseValidator.createFallbackResponse(promptType, variables),
+                    confidence: 0.3,
+                };
+            case prompt_types_1.FallbackStrategy.THROW_ERROR:
+                return {
+                    success: false,
+                    error,
+                };
+            case prompt_types_1.FallbackStrategy.PARTIAL_RESPONSE:
+                console.warn(`Validation failed, partial response not supported: ${error}`);
+                return {
+                    success: false,
+                    error,
+                };
+            default:
+                return {
+                    success: false,
+                    error,
+                };
         }
-        console.warn('[BATCH-DEBUG] Using fallback for all pairs');
-        // Fallback: create error results for all pairs
-        return pairs.map((pair) => ({
-            pairId: pair.id,
-            similarity: this.createFallbackSimilarity(),
-            error: `Failed to parse batch AI response: ${extractionResult.error}`,
-        }));
     }
-    clampScore(value) {
-        const num = Number(value);
-        return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
+    /**
+     * Handle execution error based on fallback strategy
+     */
+    handleExecutionError(promptType, error, fallbackStrategy, variables) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`Prompt execution failed: ${errorMessage}`);
+        return this.handleValidationFailure(promptType, errorMessage, fallbackStrategy, variables);
     }
-    createFallbackSimilarity() {
+    /**
+     * Get prompt configuration
+     */
+    getPromptConfig(promptType, overrides) {
+        const schema = prompt_config_1.ResponseSchemas[promptType];
+        const cacheTTL = prompt_config_1.CacheTTLConfig[promptType] || 0;
+        const temperature = prompt_config_1.TemperatureConfig[promptType] || 0.3;
         return {
-            nameScore: 0.3,
-            descriptionScore: 0.3,
-            patternScore: 0.3,
-            businessScore: 0.3,
-            semanticScore: 0.3,
-            shouldMerge: false,
-            confidence: 0.2,
-            reasoning: 'Fallback similarity due to parsing error',
+            type: promptType,
+            template: '', // Will be filled by buildPrompt
+            maxTokens: 4000,
+            temperature,
+            responseSchema: schema,
+            cacheTTL,
+            maxRetries: 3,
+            fallbackStrategy: prompt_types_1.FallbackStrategy.USE_DEFAULT,
+            ...overrides,
         };
     }
+    /**
+     * Extract confidence from response data
+     */
+    extractConfidence(data) {
+        if (data && typeof data.confidence === 'number') {
+            return data.confidence;
+        }
+        return 0.5;
+    }
+    /**
+     * Estimate token count (rough approximation)
+     */
+    estimateTokens(text) {
+        // Rough estimate: 1 token ≈ 4 characters
+        return Math.ceil(text.length / 4);
+    }
+    /**
+     * Get optimal batch size for prompt type
+     */
+    getOptimalBatchSize(promptType) {
+        const batchSizes = {
+            [prompt_types_1.PromptType.SIMILARITY_CHECK]: 10,
+            [prompt_types_1.PromptType.THEME_EXPANSION]: 5,
+            [prompt_types_1.PromptType.DOMAIN_EXTRACTION]: 20,
+            [prompt_types_1.PromptType.BATCH_SIMILARITY]: 15,
+        };
+        return batchSizes[promptType] || 5;
+    }
+    /**
+     * Initialize metrics tracking
+     */
+    initializeMetrics() {
+        for (const promptType of Object.values(prompt_types_1.PromptType)) {
+            this.metrics.set(promptType, {
+                promptType: promptType,
+                executionTime: 0,
+                tokenCount: 0,
+                successRate: 0,
+                averageConfidence: 0,
+                cacheHitRate: 0,
+            });
+        }
+    }
+    /**
+     * Update metrics for a prompt execution
+     */
+    updateMetrics(promptType, success, executionTime, cacheHit = false) {
+        const metrics = this.metrics.get(promptType);
+        if (!metrics)
+            return;
+        // Simple exponential moving average for metrics
+        const weight = 0.1; // Weight for new data point
+        metrics.executionTime =
+            metrics.executionTime * (1 - weight) + executionTime * weight;
+        metrics.successRate =
+            metrics.successRate * (1 - weight) + (success ? 1 : 0) * weight;
+        metrics.cacheHitRate =
+            metrics.cacheHitRate * (1 - weight) + (cacheHit ? 1 : 0) * weight;
+    }
+    /**
+     * Get current metrics
+     */
+    getMetrics() {
+        return new Map(this.metrics);
+    }
+    /**
+     * Get cache metrics and efficiency report
+     */
+    getCacheReport() {
+        return {
+            metrics: this.cache.getMetrics(),
+            efficiency: this.cache.getEfficiencyReport(),
+            memory: this.cache.getMemoryUsage(),
+        };
+    }
+    /**
+     * Clear cache for specific prompt type or all
+     */
+    clearCache(promptType) {
+        this.cache.clear(promptType);
+    }
+    /**
+     * Warm cache with predicted inputs
+     */
+    async warmCache(promptType, predictedInputs) {
+        await this.cache.warmCache(promptType, predictedInputs, async (inputs) => this.execute(promptType, inputs));
+    }
+    /**
+     * Set maximum cache memory usage
+     */
+    setCacheMemoryLimit(megabytes) {
+        this.cache.setMaxMemoryUsage(megabytes * 1024 * 1024);
+    }
+    /**
+     * Toggle optimized prompts
+     */
+    setUseOptimizedPrompts(enabled) {
+        this.useOptimizedPrompts = enabled;
+    }
+    /**
+     * Get optimization status
+     */
+    isUsingOptimizedPrompts() {
+        return this.useOptimizedPrompts;
+    }
+    /**
+     * Get batch processor statistics
+     */
+    async getBatchStats() {
+        const { BatchProcessor } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(5369)));
+        const batchProcessor = BatchProcessor.getInstance(this.apiKey);
+        return batchProcessor.getQueueStats();
+    }
+    /**
+     * Flush all batch queues
+     */
+    async flushBatches() {
+        const { BatchProcessor } = await Promise.resolve().then(() => __importStar(__nccwpck_require__(5369)));
+        const batchProcessor = BatchProcessor.getInstance(this.apiKey);
+        await batchProcessor.flush();
+    }
 }
-exports.BatchProcessor = BatchProcessor;
+exports.UnifiedPromptService = UnifiedPromptService;
 
 
 /***/ }),
@@ -35491,7 +38228,7 @@ exports.ThemeSimilarityService = void 0;
 const similarity_cache_1 = __nccwpck_require__(7329);
 const similarity_calculator_1 = __nccwpck_require__(7831);
 const ai_similarity_1 = __nccwpck_require__(270);
-const batch_processor_1 = __nccwpck_require__(325);
+const batch_processor_1 = __nccwpck_require__(5369);
 const business_domain_1 = __nccwpck_require__(8133);
 const theme_naming_1 = __nccwpck_require__(9018);
 const concurrency_manager_1 = __nccwpck_require__(8692);
@@ -35519,10 +38256,14 @@ class ThemeSimilarityService {
         this.similarityCache = new similarity_cache_1.SimilarityCache();
         this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
         this.aiSimilarityService = new ai_similarity_1.AISimilarityService(anthropicApiKey);
-        this.batchProcessor = new batch_processor_1.BatchProcessor();
+        this.batchProcessor = batch_processor_1.BatchProcessor.getInstance(anthropicApiKey);
         this.businessDomainService = new business_domain_1.BusinessDomainService(anthropicApiKey);
         this.themeNamingService = new theme_naming_1.ThemeNamingService();
-        logger_1.logger.info('SIMILARITY', `Config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
+        logger_1.logger.logProcess('Initialized ThemeSimilarityService', {
+            threshold: this.config.similarityThreshold,
+            minForParent: this.config.minThemesForParent,
+            maxDepth: this.config.maxHierarchyDepth,
+        });
     }
     async calculateSimilarity(theme1, theme2) {
         const cacheKey = this.similarityCache.getCacheKey(theme1, theme2);
@@ -36013,101 +38754,73 @@ class ThemeSimilarityService {
         return batches;
     }
     /**
-     * Process a batch of theme pairs with a single AI call
+     * Process a batch of theme pairs using unified batch processor
      * This is the key optimization - multiple pairs analyzed in one API call
      */
     async processSimilarityBatch(pairs) {
         const batchResults = new Map();
-        // Build batch prompt for multiple pair analysis
-        const batchPrompt = this.buildBatchSimilarityPrompt(pairs);
+        const batchContext = logger_1.logger.startOperation('Similarity Batch Processing', {
+            pairCount: pairs.length,
+        });
         try {
-            // Single AI call for entire batch
-            const response = await this.aiSimilarityService.calculateBatchSimilarity(batchPrompt, pairs.length);
-            // Parse batch response into individual similarity metrics
-            this.parseBatchSimilarityResponse(response, pairs, batchResults);
-            console.log(`[SIMILARITY-BATCH] Successfully processed batch of ${pairs.length} pairs`);
+            // Convert ThemePairs to format expected by BatchProcessor
+            const batchPairs = pairs.map((pair) => ({
+                theme1: pair.theme1,
+                theme2: pair.theme2,
+            }));
+            // Use unified batch processor
+            const batchResponse = await this.batchProcessor.processSimilarityBatch(batchPairs, { maxBatchSize: 8 });
+            if (batchResponse.success && batchResponse.results.length > 0) {
+                // Convert unified results back to SimilarityMetrics format
+                this.convertUnifiedResultsToSimilarityMetrics(batchResponse.results, pairs, batchResults);
+                logger_1.logger.logProgress({
+                    current: batchResponse.results.length,
+                    total: pairs.length,
+                    message: 'Batch similarity processing completed',
+                    context: 'Batch Processing',
+                });
+            }
+            else {
+                throw new Error(`Batch processing returned no results or failed`);
+            }
+            logger_1.logger.endOperation(batchContext, true, {
+                processedPairs: batchResponse.results.length,
+                successRate: batchResponse.results.length / pairs.length,
+            });
         }
         catch (error) {
-            console.warn(`[SIMILARITY-BATCH] Batch processing failed for ${pairs.length} pairs, falling back to individual processing: ${error}`);
+            logger_1.logger.logError('Batch similarity processing failed', error, {
+                pairCount: pairs.length,
+                fallbackToIndividual: true,
+            });
+            logger_1.logger.endOperation(batchContext, false);
             // Fallback to individual processing if batch fails
+            logger_1.logger.logProcess(`Falling back to individual processing for ${pairs.length} pairs`);
             await this.processBatchIndividually(pairs, batchResults);
         }
         return batchResults;
     }
     /**
-     * Build optimized prompt for batch similarity analysis
-     * PRD: "Structured prompts with clear sections"
+     * Convert unified batch results to SimilarityMetrics format
      */
-    buildBatchSimilarityPrompt(pairs) {
-        const pairDescriptions = pairs
-            .map((pair, index) => {
-            return `Pair ${index + 1}:
-Theme A: "${pair.theme1.name}" - ${pair.theme1.description}
-Theme B: "${pair.theme2.name}" - ${pair.theme2.description}
-Files A: ${pair.theme1.affectedFiles?.join(', ') || 'none'}
-Files B: ${pair.theme2.affectedFiles?.join(', ') || 'none'}`;
-        })
-            .join('\n\n');
-        return `You are analyzing theme similarity for code review mindmap organization.
-
-Analyze similarity between these ${pairs.length} theme pairs:
-
-${pairDescriptions}
-
-For each pair, consider:
-- Business logic overlap (most important)
-- Affected file overlap
-- Functional relationship
-- User impact similarity
-
-Respond with ONLY valid JSON:
-{
-  "results": [
-    {
-      "pairIndex": 1,
-      "shouldMerge": boolean,
-      "combinedScore": 0.0-1.0,
-      "nameScore": 0.0-1.0,
-      "descriptionScore": 0.0-1.0,
-      "businessScore": 0.0-1.0,
-      "reasoning": "max 20 words"
-    }
-  ]
-}
-
-Threshold: >0.7 for merge recommendation.
-Be conservative - only merge when themes serve the same business purpose.`;
-    }
-    /**
-     * Parse batch AI response into individual similarity metrics
-     */
-    parseBatchSimilarityResponse(response, pairs, results) {
-        try {
-            const batchData = typeof response === 'string' ? JSON.parse(response) : response;
-            if (!batchData.results || !Array.isArray(batchData.results)) {
-                throw new Error('Invalid batch response format');
+    convertUnifiedResultsToSimilarityMetrics(results, originalPairs, batchResults) {
+        results.forEach((result, index) => {
+            if (index < originalPairs.length) {
+                const pair = originalPairs[index];
+                const cacheKey = this.similarityCache.getCacheKey(pair.theme1, pair.theme2);
+                const similarityMetrics = {
+                    nameScore: result.scores.name,
+                    descriptionScore: result.scores.description,
+                    patternScore: result.scores.pattern,
+                    businessScore: result.scores.business,
+                    fileOverlap: result.scores.semantic,
+                    combinedScore: result.confidence,
+                };
+                batchResults.set(cacheKey, similarityMetrics);
+                // Cache the result for future use
+                this.similarityCache.cacheSimilarity(cacheKey, similarityMetrics);
             }
-            for (const result of batchData.results) {
-                const pairIndex = result.pairIndex - 1; // Convert to 0-based
-                if (pairIndex >= 0 && pairIndex < pairs.length) {
-                    const pair = pairs[pairIndex];
-                    const similarity = {
-                        combinedScore: Math.max(0, Math.min(1, result.combinedScore || 0)),
-                        nameScore: Math.max(0, Math.min(1, result.nameScore || 0)),
-                        descriptionScore: Math.max(0, Math.min(1, result.descriptionScore || 0)),
-                        businessScore: Math.max(0, Math.min(1, result.businessScore || 0)),
-                        fileOverlap: Math.max(0, Math.min(1, result.fileOverlap || 0)),
-                        patternScore: Math.max(0, Math.min(1, result.patternScore || 0)),
-                    };
-                    results.set(pair.id, similarity);
-                }
-            }
-            console.log(`[SIMILARITY-BATCH] Parsed ${results.size}/${pairs.length} similarity results from batch`);
-        }
-        catch (error) {
-            console.warn(`[SIMILARITY-BATCH] Failed to parse batch response: ${error}`);
-            throw error;
-        }
+        });
     }
     /**
      * Fallback to individual processing if batch fails
@@ -36148,6 +38861,59 @@ Be conservative - only merge when themes serve the same business purpose.`;
     }
 }
 exports.ThemeSimilarityService = ThemeSimilarityService;
+
+
+/***/ }),
+
+/***/ 6889:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Unified types for batch processing operations
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isObject = isObject;
+exports.isScoresObject = isScoresObject;
+exports.isSimilarityResult = isSimilarityResult;
+exports.isUnifiedBatchResponse = isUnifiedBatchResponse;
+// Type guards
+function isObject(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function isScoresObject(value) {
+    if (!isObject(value))
+        return false;
+    const scores = ['name', 'description', 'pattern', 'business', 'semantic'];
+    return scores.every((key) => typeof value[key] === 'number');
+}
+function isSimilarityResult(item) {
+    if (!isObject(item))
+        return false;
+    const obj = item;
+    return (typeof obj.pairId === 'string' &&
+        typeof obj.shouldMerge === 'boolean' &&
+        typeof obj.confidence === 'number' &&
+        obj.confidence >= 0 &&
+        obj.confidence <= 1 &&
+        typeof obj.reasoning === 'string' &&
+        isScoresObject(obj.scores));
+}
+function isUnifiedBatchResponse(value, itemValidator) {
+    if (!isObject(value))
+        return false;
+    const obj = value;
+    return (typeof obj.success === 'boolean' &&
+        Array.isArray(obj.results) &&
+        obj.results.every(itemValidator) &&
+        isObject(obj.metadata) &&
+        typeof obj.metadata.processedCount ===
+            'number' &&
+        typeof obj.metadata.failedCount === 'number' &&
+        typeof obj.metadata.processingTimeMs ===
+            'number');
+}
 
 
 /***/ }),
@@ -38164,6 +40930,264 @@ class PerformanceTracker {
 exports.PerformanceTracker = PerformanceTracker;
 // Export singleton instance
 exports.performanceTracker = PerformanceTracker.getInstance();
+
+
+/***/ }),
+
+/***/ 1581:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Standardized prompt templates for consistent Claude AI responses
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PromptTemplates = void 0;
+class PromptTemplates {
+    /**
+     * Create a standardized JSON-only prompt
+     */
+    static createJsonPrompt(config) {
+        const { instruction, jsonSchema, examples = [], constraints = [] } = config;
+        let prompt = `${instruction}\n\n`;
+        // Add strict JSON formatting requirements
+        prompt += `CRITICAL RESPONSE FORMAT:\n`;
+        prompt += `- Return ONLY valid JSON matching this exact schema: ${jsonSchema}\n`;
+        prompt += `- No explanatory text, no markdown formatting, no code blocks\n`;
+        prompt += `- Response must start with { or [ character\n`;
+        prompt += `- Response must end with } or ] character\n`;
+        prompt += `- No text before or after the JSON\n\n`;
+        // Add examples if provided
+        if (examples.length > 0) {
+            prompt += `VALID RESPONSE EXAMPLES:\n`;
+            examples.forEach((example, index) => {
+                prompt += `Example ${index + 1}: ${example}\n`;
+            });
+            prompt += `\n`;
+        }
+        // Add constraints if provided
+        if (constraints.length > 0) {
+            prompt += `CONSTRAINTS:\n`;
+            constraints.forEach((constraint) => {
+                prompt += `- ${constraint}\n`;
+            });
+            prompt += `\n`;
+        }
+        prompt += `TASK: ${instruction}`;
+        return prompt;
+    }
+    /**
+     * Template for business pattern identification
+     */
+    static createBusinessPatternPrompt(themeName, themeDescription, businessImpact, affectedFiles) {
+        return this.createJsonPrompt({
+            instruction: `Analyze this code theme for distinct business logic patterns and user flows:
+
+Theme: ${themeName}
+Description: ${themeDescription}
+Business Impact: ${businessImpact}
+Affected Files: ${affectedFiles.join(', ')}
+
+Identify distinct business patterns within this theme. Look for:
+1. Different user interaction flows
+2. Separate business logic concerns
+3. Distinct functional areas
+4. Different data processing patterns
+5. Separate integration points
+
+Focus on business value, not technical implementation details.`,
+            jsonSchema: '["pattern1", "pattern2", "pattern3"]',
+            examples: [
+                '["User Authentication Flow", "Data Validation Logic", "API Integration"]',
+                '["Payment Processing", "Order Management", "Customer Notifications"]',
+                '["Configuration Management", "Error Handling", "Monitoring Integration"]',
+            ],
+            constraints: [
+                'Maximum 6 patterns',
+                'Focus on business/user value',
+                'Use descriptive pattern names',
+                'Avoid technical implementation details',
+            ],
+        });
+    }
+    /**
+     * Template for sub-theme analysis
+     */
+    static createSubThemeAnalysisPrompt(themeName, themeDescription, businessImpact, level, affectedFiles, parentContext) {
+        const contextSection = parentContext
+            ? `\nPARENT THEME CONTEXT:\n${parentContext}\n`
+            : '';
+        return this.createJsonPrompt({
+            instruction: `Analyze this code theme for potential sub-theme expansion:
+
+THEME TO ANALYZE:
+Name: ${themeName}
+Description: ${themeDescription}
+Business Impact: ${businessImpact}
+Current Level: ${level}
+Files: ${affectedFiles.join(', ')}${contextSection}
+
+Determine if this theme contains distinct sub-patterns that warrant separate sub-themes.
+Focus on:
+1. Business logic separation (different business rules/processes)
+2. User flow distinction (different user interaction patterns)
+3. Functional area separation (different system responsibilities)
+4. Data processing patterns (different data handling approaches)
+
+EXPANSION CRITERIA:
+- Sub-themes must have distinct business value
+- Each sub-theme should represent a coherent business concept
+- Avoid technical implementation splitting
+- Maintain file scope relevance
+- Ensure no duplication with parent or sibling themes
+
+Only create sub-themes if there are genuinely distinct business concerns.`,
+            jsonSchema: `{
+  "shouldExpand": boolean,
+  "confidence": number,
+  "reasoning": "explanation",
+  "businessLogicPatterns": ["pattern1", "pattern2"],
+  "userFlowPatterns": ["flow1", "flow2"],
+  "subThemes": [
+    {
+      "name": "Sub-theme name",
+      "description": "Business-focused description",
+      "businessImpact": "User/business value",
+      "relevantFiles": ["file1.ts", "file2.ts"],
+      "confidence": number
+    }
+  ]
+}`,
+            examples: [
+                `{
+  "shouldExpand": true,
+  "confidence": 0.85,
+  "reasoning": "Theme contains distinct authentication and authorization patterns",
+  "businessLogicPatterns": ["User Authentication", "Permission Management"],
+  "userFlowPatterns": ["Login Flow", "Access Control"],
+  "subThemes": [
+    {
+      "name": "User Authentication System",
+      "description": "Handles user login and session management",
+      "businessImpact": "Secure user access to the application",
+      "relevantFiles": ["auth.ts", "session.ts"],
+      "confidence": 0.9
+    }
+  ]
+}`,
+            ],
+            constraints: [
+                'Maximum 4 sub-themes per expansion',
+                'Each sub-theme must have confidence >= 0.6',
+                'Sub-themes must be distinct from each other',
+                'Maintain business focus over technical details',
+            ],
+        });
+    }
+    /**
+     * Template for cross-level similarity analysis
+     */
+    static createCrossLevelSimilarityPrompt(theme1Name, theme1Description, theme1Level, theme1Files, theme2Name, theme2Description, theme2Level, theme2Files, levelDifference) {
+        return this.createJsonPrompt({
+            instruction: `Analyze these two themes from different hierarchy levels for similarity and relationship:
+
+THEME 1:
+Level: ${theme1Level}
+Name: ${theme1Name}
+Description: ${theme1Description}
+Files: ${theme1Files.join(', ')}
+
+THEME 2:
+Level: ${theme2Level}
+Name: ${theme2Name}
+Description: ${theme2Description}
+Files: ${theme2Files.join(', ')}
+
+Level Difference: ${levelDifference}
+
+Determine the relationship between these themes across hierarchy levels:
+
+1. SIMILARITY SCORE (0-1): How similar are these themes in business purpose?
+2. RELATIONSHIP TYPE: 
+   - "duplicate": Essentially the same theme (should be merged)
+   - "overlap": Significant overlap in scope (should be consolidated)
+   - "related": Related but distinct (keep separate)
+   - "distinct": Completely different themes
+
+3. MERGE ACTION:
+   - "merge_up": Merge into higher-level theme
+   - "merge_down": Merge into lower-level theme
+   - "merge_sibling": Merge at same level under common parent
+   - "keep_separate": Keep as separate themes
+
+Focus on business value and avoid merging themes with distinct business purposes.`,
+            jsonSchema: `{
+  "similarityScore": number,
+  "relationshipType": "duplicate|overlap|related|distinct",
+  "action": "merge_up|merge_down|merge_sibling|keep_separate",
+  "confidence": number,
+  "reasoning": "detailed explanation"
+}`,
+            examples: [
+                `{
+  "similarityScore": 0.85,
+  "relationshipType": "duplicate",
+  "action": "merge_up",
+  "confidence": 0.9,
+  "reasoning": "Both themes handle user authentication with nearly identical scope and files"
+}`,
+                `{
+  "similarityScore": 0.3,
+  "relationshipType": "distinct",
+  "action": "keep_separate",
+  "confidence": 0.95,
+  "reasoning": "Themes address completely different business concerns - authentication vs data processing"
+}`,
+            ],
+            constraints: [
+                'Similarity score must be between 0 and 1',
+                'Confidence must be between 0 and 1',
+                'Reasoning must explain the decision clearly',
+                'Consider file overlap and business purpose',
+            ],
+        });
+    }
+    /**
+     * Template for theme naming
+     */
+    static createThemeNamingPrompt(description, businessImpact, codeSnippets) {
+        return this.createJsonPrompt({
+            instruction: `Generate a concise, business-focused name for this code theme:
+
+Description: ${description}
+Business Impact: ${businessImpact}
+Code Context: ${codeSnippets.slice(0, 2).join('\n---\n')}
+
+Create a theme name that:
+1. Focuses on business value, not technical implementation
+2. Is clear and understandable to non-technical stakeholders
+3. Captures the primary business purpose
+4. Is concise (2-6 words)
+
+The name should answer "what business value does this provide?"`,
+            jsonSchema: '{"name": "Business-focused theme name"}',
+            examples: [
+                '{"name": "Improve User Authentication"}',
+                '{"name": "Streamline Payment Processing"}',
+                '{"name": "Enhance Data Validation"}',
+                '{"name": "Automate Report Generation"}',
+            ],
+            constraints: [
+                'Name must be 2-6 words',
+                'Focus on business value',
+                'Avoid technical jargon',
+                'Use action verbs when possible',
+            ],
+        });
+    }
+}
+exports.PromptTemplates = PromptTemplates;
 
 
 /***/ }),
@@ -40714,6 +43738,4479 @@ function parseParams (str) {
 }
 
 module.exports = parseParams
+
+
+/***/ }),
+
+/***/ 2046:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const index_js_1 = __importDefault(__nccwpck_require__(1059));
+__exportStar(__nccwpck_require__(1059), exports);
+exports["default"] = index_js_1.default;
+
+
+/***/ }),
+
+/***/ 2111:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ZodError = exports.quotelessJson = exports.ZodIssueCode = void 0;
+const util_js_1 = __nccwpck_require__(3304);
+exports.ZodIssueCode = util_js_1.util.arrayToEnum([
+    "invalid_type",
+    "invalid_literal",
+    "custom",
+    "invalid_union",
+    "invalid_union_discriminator",
+    "invalid_enum_value",
+    "unrecognized_keys",
+    "invalid_arguments",
+    "invalid_return_type",
+    "invalid_date",
+    "invalid_string",
+    "too_small",
+    "too_big",
+    "invalid_intersection_types",
+    "not_multiple_of",
+    "not_finite",
+]);
+const quotelessJson = (obj) => {
+    const json = JSON.stringify(obj, null, 2);
+    return json.replace(/"([^"]+)":/g, "$1:");
+};
+exports.quotelessJson = quotelessJson;
+class ZodError extends Error {
+    get errors() {
+        return this.issues;
+    }
+    constructor(issues) {
+        super();
+        this.issues = [];
+        this.addIssue = (sub) => {
+            this.issues = [...this.issues, sub];
+        };
+        this.addIssues = (subs = []) => {
+            this.issues = [...this.issues, ...subs];
+        };
+        const actualProto = new.target.prototype;
+        if (Object.setPrototypeOf) {
+            // eslint-disable-next-line ban/ban
+            Object.setPrototypeOf(this, actualProto);
+        }
+        else {
+            this.__proto__ = actualProto;
+        }
+        this.name = "ZodError";
+        this.issues = issues;
+    }
+    format(_mapper) {
+        const mapper = _mapper ||
+            function (issue) {
+                return issue.message;
+            };
+        const fieldErrors = { _errors: [] };
+        const processError = (error) => {
+            for (const issue of error.issues) {
+                if (issue.code === "invalid_union") {
+                    issue.unionErrors.map(processError);
+                }
+                else if (issue.code === "invalid_return_type") {
+                    processError(issue.returnTypeError);
+                }
+                else if (issue.code === "invalid_arguments") {
+                    processError(issue.argumentsError);
+                }
+                else if (issue.path.length === 0) {
+                    fieldErrors._errors.push(mapper(issue));
+                }
+                else {
+                    let curr = fieldErrors;
+                    let i = 0;
+                    while (i < issue.path.length) {
+                        const el = issue.path[i];
+                        const terminal = i === issue.path.length - 1;
+                        if (!terminal) {
+                            curr[el] = curr[el] || { _errors: [] };
+                            // if (typeof el === "string") {
+                            //   curr[el] = curr[el] || { _errors: [] };
+                            // } else if (typeof el === "number") {
+                            //   const errorArray: any = [];
+                            //   errorArray._errors = [];
+                            //   curr[el] = curr[el] || errorArray;
+                            // }
+                        }
+                        else {
+                            curr[el] = curr[el] || { _errors: [] };
+                            curr[el]._errors.push(mapper(issue));
+                        }
+                        curr = curr[el];
+                        i++;
+                    }
+                }
+            }
+        };
+        processError(this);
+        return fieldErrors;
+    }
+    static assert(value) {
+        if (!(value instanceof ZodError)) {
+            throw new Error(`Not a ZodError: ${value}`);
+        }
+    }
+    toString() {
+        return this.message;
+    }
+    get message() {
+        return JSON.stringify(this.issues, util_js_1.util.jsonStringifyReplacer, 2);
+    }
+    get isEmpty() {
+        return this.issues.length === 0;
+    }
+    flatten(mapper = (issue) => issue.message) {
+        const fieldErrors = {};
+        const formErrors = [];
+        for (const sub of this.issues) {
+            if (sub.path.length > 0) {
+                fieldErrors[sub.path[0]] = fieldErrors[sub.path[0]] || [];
+                fieldErrors[sub.path[0]].push(mapper(sub));
+            }
+            else {
+                formErrors.push(mapper(sub));
+            }
+        }
+        return { formErrors, fieldErrors };
+    }
+    get formErrors() {
+        return this.flatten();
+    }
+}
+exports.ZodError = ZodError;
+ZodError.create = (issues) => {
+    const error = new ZodError(issues);
+    return error;
+};
+
+
+/***/ }),
+
+/***/ 7665:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.defaultErrorMap = void 0;
+exports.setErrorMap = setErrorMap;
+exports.getErrorMap = getErrorMap;
+const en_js_1 = __importDefault(__nccwpck_require__(2929));
+exports.defaultErrorMap = en_js_1.default;
+let overrideErrorMap = en_js_1.default;
+function setErrorMap(map) {
+    overrideErrorMap = map;
+}
+function getErrorMap() {
+    return overrideErrorMap;
+}
+
+
+/***/ }),
+
+/***/ 8101:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+__exportStar(__nccwpck_require__(7665), exports);
+__exportStar(__nccwpck_require__(937), exports);
+__exportStar(__nccwpck_require__(6822), exports);
+__exportStar(__nccwpck_require__(3304), exports);
+__exportStar(__nccwpck_require__(4741), exports);
+__exportStar(__nccwpck_require__(2111), exports);
+
+
+/***/ }),
+
+/***/ 1344:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.errorUtil = void 0;
+var errorUtil;
+(function (errorUtil) {
+    errorUtil.errToObj = (message) => typeof message === "string" ? { message } : message || {};
+    // biome-ignore lint:
+    errorUtil.toString = (message) => typeof message === "string" ? message : message?.message;
+})(errorUtil || (exports.errorUtil = errorUtil = {}));
+
+
+/***/ }),
+
+/***/ 937:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isAsync = exports.isValid = exports.isDirty = exports.isAborted = exports.OK = exports.DIRTY = exports.INVALID = exports.ParseStatus = exports.EMPTY_PATH = exports.makeIssue = void 0;
+exports.addIssueToContext = addIssueToContext;
+const errors_js_1 = __nccwpck_require__(7665);
+const en_js_1 = __importDefault(__nccwpck_require__(2929));
+const makeIssue = (params) => {
+    const { data, path, errorMaps, issueData } = params;
+    const fullPath = [...path, ...(issueData.path || [])];
+    const fullIssue = {
+        ...issueData,
+        path: fullPath,
+    };
+    if (issueData.message !== undefined) {
+        return {
+            ...issueData,
+            path: fullPath,
+            message: issueData.message,
+        };
+    }
+    let errorMessage = "";
+    const maps = errorMaps
+        .filter((m) => !!m)
+        .slice()
+        .reverse();
+    for (const map of maps) {
+        errorMessage = map(fullIssue, { data, defaultError: errorMessage }).message;
+    }
+    return {
+        ...issueData,
+        path: fullPath,
+        message: errorMessage,
+    };
+};
+exports.makeIssue = makeIssue;
+exports.EMPTY_PATH = [];
+function addIssueToContext(ctx, issueData) {
+    const overrideMap = (0, errors_js_1.getErrorMap)();
+    const issue = (0, exports.makeIssue)({
+        issueData: issueData,
+        data: ctx.data,
+        path: ctx.path,
+        errorMaps: [
+            ctx.common.contextualErrorMap, // contextual error map is first priority
+            ctx.schemaErrorMap, // then schema-bound map if available
+            overrideMap, // then global override map
+            overrideMap === en_js_1.default ? undefined : en_js_1.default, // then global default map
+        ].filter((x) => !!x),
+    });
+    ctx.common.issues.push(issue);
+}
+class ParseStatus {
+    constructor() {
+        this.value = "valid";
+    }
+    dirty() {
+        if (this.value === "valid")
+            this.value = "dirty";
+    }
+    abort() {
+        if (this.value !== "aborted")
+            this.value = "aborted";
+    }
+    static mergeArray(status, results) {
+        const arrayValue = [];
+        for (const s of results) {
+            if (s.status === "aborted")
+                return exports.INVALID;
+            if (s.status === "dirty")
+                status.dirty();
+            arrayValue.push(s.value);
+        }
+        return { status: status.value, value: arrayValue };
+    }
+    static async mergeObjectAsync(status, pairs) {
+        const syncPairs = [];
+        for (const pair of pairs) {
+            const key = await pair.key;
+            const value = await pair.value;
+            syncPairs.push({
+                key,
+                value,
+            });
+        }
+        return ParseStatus.mergeObjectSync(status, syncPairs);
+    }
+    static mergeObjectSync(status, pairs) {
+        const finalObject = {};
+        for (const pair of pairs) {
+            const { key, value } = pair;
+            if (key.status === "aborted")
+                return exports.INVALID;
+            if (value.status === "aborted")
+                return exports.INVALID;
+            if (key.status === "dirty")
+                status.dirty();
+            if (value.status === "dirty")
+                status.dirty();
+            if (key.value !== "__proto__" && (typeof value.value !== "undefined" || pair.alwaysSet)) {
+                finalObject[key.value] = value.value;
+            }
+        }
+        return { status: status.value, value: finalObject };
+    }
+}
+exports.ParseStatus = ParseStatus;
+exports.INVALID = Object.freeze({
+    status: "aborted",
+});
+const DIRTY = (value) => ({ status: "dirty", value });
+exports.DIRTY = DIRTY;
+const OK = (value) => ({ status: "valid", value });
+exports.OK = OK;
+const isAborted = (x) => x.status === "aborted";
+exports.isAborted = isAborted;
+const isDirty = (x) => x.status === "dirty";
+exports.isDirty = isDirty;
+const isValid = (x) => x.status === "valid";
+exports.isValid = isValid;
+const isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
+exports.isAsync = isAsync;
+
+
+/***/ }),
+
+/***/ 6822:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+
+/***/ }),
+
+/***/ 3304:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getParsedType = exports.ZodParsedType = exports.objectUtil = exports.util = void 0;
+var util;
+(function (util) {
+    util.assertEqual = (_) => { };
+    function assertIs(_arg) { }
+    util.assertIs = assertIs;
+    function assertNever(_x) {
+        throw new Error();
+    }
+    util.assertNever = assertNever;
+    util.arrayToEnum = (items) => {
+        const obj = {};
+        for (const item of items) {
+            obj[item] = item;
+        }
+        return obj;
+    };
+    util.getValidEnumValues = (obj) => {
+        const validKeys = util.objectKeys(obj).filter((k) => typeof obj[obj[k]] !== "number");
+        const filtered = {};
+        for (const k of validKeys) {
+            filtered[k] = obj[k];
+        }
+        return util.objectValues(filtered);
+    };
+    util.objectValues = (obj) => {
+        return util.objectKeys(obj).map(function (e) {
+            return obj[e];
+        });
+    };
+    util.objectKeys = typeof Object.keys === "function" // eslint-disable-line ban/ban
+        ? (obj) => Object.keys(obj) // eslint-disable-line ban/ban
+        : (object) => {
+            const keys = [];
+            for (const key in object) {
+                if (Object.prototype.hasOwnProperty.call(object, key)) {
+                    keys.push(key);
+                }
+            }
+            return keys;
+        };
+    util.find = (arr, checker) => {
+        for (const item of arr) {
+            if (checker(item))
+                return item;
+        }
+        return undefined;
+    };
+    util.isInteger = typeof Number.isInteger === "function"
+        ? (val) => Number.isInteger(val) // eslint-disable-line ban/ban
+        : (val) => typeof val === "number" && Number.isFinite(val) && Math.floor(val) === val;
+    function joinValues(array, separator = " | ") {
+        return array.map((val) => (typeof val === "string" ? `'${val}'` : val)).join(separator);
+    }
+    util.joinValues = joinValues;
+    util.jsonStringifyReplacer = (_, value) => {
+        if (typeof value === "bigint") {
+            return value.toString();
+        }
+        return value;
+    };
+})(util || (exports.util = util = {}));
+var objectUtil;
+(function (objectUtil) {
+    objectUtil.mergeShapes = (first, second) => {
+        return {
+            ...first,
+            ...second, // second overwrites first
+        };
+    };
+})(objectUtil || (exports.objectUtil = objectUtil = {}));
+exports.ZodParsedType = util.arrayToEnum([
+    "string",
+    "nan",
+    "number",
+    "integer",
+    "float",
+    "boolean",
+    "date",
+    "bigint",
+    "symbol",
+    "function",
+    "undefined",
+    "null",
+    "array",
+    "object",
+    "unknown",
+    "promise",
+    "void",
+    "never",
+    "map",
+    "set",
+]);
+const getParsedType = (data) => {
+    const t = typeof data;
+    switch (t) {
+        case "undefined":
+            return exports.ZodParsedType.undefined;
+        case "string":
+            return exports.ZodParsedType.string;
+        case "number":
+            return Number.isNaN(data) ? exports.ZodParsedType.nan : exports.ZodParsedType.number;
+        case "boolean":
+            return exports.ZodParsedType.boolean;
+        case "function":
+            return exports.ZodParsedType.function;
+        case "bigint":
+            return exports.ZodParsedType.bigint;
+        case "symbol":
+            return exports.ZodParsedType.symbol;
+        case "object":
+            if (Array.isArray(data)) {
+                return exports.ZodParsedType.array;
+            }
+            if (data === null) {
+                return exports.ZodParsedType.null;
+            }
+            if (data.then && typeof data.then === "function" && data.catch && typeof data.catch === "function") {
+                return exports.ZodParsedType.promise;
+            }
+            if (typeof Map !== "undefined" && data instanceof Map) {
+                return exports.ZodParsedType.map;
+            }
+            if (typeof Set !== "undefined" && data instanceof Set) {
+                return exports.ZodParsedType.set;
+            }
+            if (typeof Date !== "undefined" && data instanceof Date) {
+                return exports.ZodParsedType.date;
+            }
+            return exports.ZodParsedType.object;
+        default:
+            return exports.ZodParsedType.unknown;
+    }
+};
+exports.getParsedType = getParsedType;
+
+
+/***/ }),
+
+/***/ 1059:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.z = void 0;
+const z = __importStar(__nccwpck_require__(8101));
+exports.z = z;
+__exportStar(__nccwpck_require__(8101), exports);
+exports["default"] = z;
+
+
+/***/ }),
+
+/***/ 2929:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const ZodError_js_1 = __nccwpck_require__(2111);
+const util_js_1 = __nccwpck_require__(3304);
+const errorMap = (issue, _ctx) => {
+    let message;
+    switch (issue.code) {
+        case ZodError_js_1.ZodIssueCode.invalid_type:
+            if (issue.received === util_js_1.ZodParsedType.undefined) {
+                message = "Required";
+            }
+            else {
+                message = `Expected ${issue.expected}, received ${issue.received}`;
+            }
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_literal:
+            message = `Invalid literal value, expected ${JSON.stringify(issue.expected, util_js_1.util.jsonStringifyReplacer)}`;
+            break;
+        case ZodError_js_1.ZodIssueCode.unrecognized_keys:
+            message = `Unrecognized key(s) in object: ${util_js_1.util.joinValues(issue.keys, ", ")}`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_union:
+            message = `Invalid input`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_union_discriminator:
+            message = `Invalid discriminator value. Expected ${util_js_1.util.joinValues(issue.options)}`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_enum_value:
+            message = `Invalid enum value. Expected ${util_js_1.util.joinValues(issue.options)}, received '${issue.received}'`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_arguments:
+            message = `Invalid function arguments`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_return_type:
+            message = `Invalid function return type`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_date:
+            message = `Invalid date`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_string:
+            if (typeof issue.validation === "object") {
+                if ("includes" in issue.validation) {
+                    message = `Invalid input: must include "${issue.validation.includes}"`;
+                    if (typeof issue.validation.position === "number") {
+                        message = `${message} at one or more positions greater than or equal to ${issue.validation.position}`;
+                    }
+                }
+                else if ("startsWith" in issue.validation) {
+                    message = `Invalid input: must start with "${issue.validation.startsWith}"`;
+                }
+                else if ("endsWith" in issue.validation) {
+                    message = `Invalid input: must end with "${issue.validation.endsWith}"`;
+                }
+                else {
+                    util_js_1.util.assertNever(issue.validation);
+                }
+            }
+            else if (issue.validation !== "regex") {
+                message = `Invalid ${issue.validation}`;
+            }
+            else {
+                message = "Invalid";
+            }
+            break;
+        case ZodError_js_1.ZodIssueCode.too_small:
+            if (issue.type === "array")
+                message = `Array must contain ${issue.exact ? "exactly" : issue.inclusive ? `at least` : `more than`} ${issue.minimum} element(s)`;
+            else if (issue.type === "string")
+                message = `String must contain ${issue.exact ? "exactly" : issue.inclusive ? `at least` : `over`} ${issue.minimum} character(s)`;
+            else if (issue.type === "number")
+                message = `Number must be ${issue.exact ? `exactly equal to ` : issue.inclusive ? `greater than or equal to ` : `greater than `}${issue.minimum}`;
+            else if (issue.type === "date")
+                message = `Date must be ${issue.exact ? `exactly equal to ` : issue.inclusive ? `greater than or equal to ` : `greater than `}${new Date(Number(issue.minimum))}`;
+            else
+                message = "Invalid input";
+            break;
+        case ZodError_js_1.ZodIssueCode.too_big:
+            if (issue.type === "array")
+                message = `Array must contain ${issue.exact ? `exactly` : issue.inclusive ? `at most` : `less than`} ${issue.maximum} element(s)`;
+            else if (issue.type === "string")
+                message = `String must contain ${issue.exact ? `exactly` : issue.inclusive ? `at most` : `under`} ${issue.maximum} character(s)`;
+            else if (issue.type === "number")
+                message = `Number must be ${issue.exact ? `exactly` : issue.inclusive ? `less than or equal to` : `less than`} ${issue.maximum}`;
+            else if (issue.type === "bigint")
+                message = `BigInt must be ${issue.exact ? `exactly` : issue.inclusive ? `less than or equal to` : `less than`} ${issue.maximum}`;
+            else if (issue.type === "date")
+                message = `Date must be ${issue.exact ? `exactly` : issue.inclusive ? `smaller than or equal to` : `smaller than`} ${new Date(Number(issue.maximum))}`;
+            else
+                message = "Invalid input";
+            break;
+        case ZodError_js_1.ZodIssueCode.custom:
+            message = `Invalid input`;
+            break;
+        case ZodError_js_1.ZodIssueCode.invalid_intersection_types:
+            message = `Intersection results could not be merged`;
+            break;
+        case ZodError_js_1.ZodIssueCode.not_multiple_of:
+            message = `Number must be a multiple of ${issue.multipleOf}`;
+            break;
+        case ZodError_js_1.ZodIssueCode.not_finite:
+            message = "Number must be finite";
+            break;
+        default:
+            message = _ctx.defaultError;
+            util_js_1.util.assertNever(issue);
+    }
+    return { message };
+};
+exports["default"] = errorMap;
+
+
+/***/ }),
+
+/***/ 4741:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.discriminatedUnion = exports.date = exports.boolean = exports.bigint = exports.array = exports.any = exports.coerce = exports.ZodFirstPartyTypeKind = exports.late = exports.ZodSchema = exports.Schema = exports.ZodReadonly = exports.ZodPipeline = exports.ZodBranded = exports.BRAND = exports.ZodNaN = exports.ZodCatch = exports.ZodDefault = exports.ZodNullable = exports.ZodOptional = exports.ZodTransformer = exports.ZodEffects = exports.ZodPromise = exports.ZodNativeEnum = exports.ZodEnum = exports.ZodLiteral = exports.ZodLazy = exports.ZodFunction = exports.ZodSet = exports.ZodMap = exports.ZodRecord = exports.ZodTuple = exports.ZodIntersection = exports.ZodDiscriminatedUnion = exports.ZodUnion = exports.ZodObject = exports.ZodArray = exports.ZodVoid = exports.ZodNever = exports.ZodUnknown = exports.ZodAny = exports.ZodNull = exports.ZodUndefined = exports.ZodSymbol = exports.ZodDate = exports.ZodBoolean = exports.ZodBigInt = exports.ZodNumber = exports.ZodString = exports.ZodType = void 0;
+exports.NEVER = exports["void"] = exports.unknown = exports.union = exports.undefined = exports.tuple = exports.transformer = exports.symbol = exports.string = exports.strictObject = exports.set = exports.record = exports.promise = exports.preprocess = exports.pipeline = exports.ostring = exports.optional = exports.onumber = exports.oboolean = exports.object = exports.number = exports.nullable = exports["null"] = exports.never = exports.nativeEnum = exports.nan = exports.map = exports.literal = exports.lazy = exports.intersection = exports["instanceof"] = exports["function"] = exports["enum"] = exports.effect = void 0;
+exports.datetimeRegex = datetimeRegex;
+exports.custom = custom;
+const ZodError_js_1 = __nccwpck_require__(2111);
+const errors_js_1 = __nccwpck_require__(7665);
+const errorUtil_js_1 = __nccwpck_require__(1344);
+const parseUtil_js_1 = __nccwpck_require__(937);
+const util_js_1 = __nccwpck_require__(3304);
+class ParseInputLazyPath {
+    constructor(parent, value, path, key) {
+        this._cachedPath = [];
+        this.parent = parent;
+        this.data = value;
+        this._path = path;
+        this._key = key;
+    }
+    get path() {
+        if (!this._cachedPath.length) {
+            if (Array.isArray(this._key)) {
+                this._cachedPath.push(...this._path, ...this._key);
+            }
+            else {
+                this._cachedPath.push(...this._path, this._key);
+            }
+        }
+        return this._cachedPath;
+    }
+}
+const handleResult = (ctx, result) => {
+    if ((0, parseUtil_js_1.isValid)(result)) {
+        return { success: true, data: result.value };
+    }
+    else {
+        if (!ctx.common.issues.length) {
+            throw new Error("Validation failed but no issues detected.");
+        }
+        return {
+            success: false,
+            get error() {
+                if (this._error)
+                    return this._error;
+                const error = new ZodError_js_1.ZodError(ctx.common.issues);
+                this._error = error;
+                return this._error;
+            },
+        };
+    }
+};
+function processCreateParams(params) {
+    if (!params)
+        return {};
+    const { errorMap, invalid_type_error, required_error, description } = params;
+    if (errorMap && (invalid_type_error || required_error)) {
+        throw new Error(`Can't use "invalid_type_error" or "required_error" in conjunction with custom error map.`);
+    }
+    if (errorMap)
+        return { errorMap: errorMap, description };
+    const customMap = (iss, ctx) => {
+        const { message } = params;
+        if (iss.code === "invalid_enum_value") {
+            return { message: message ?? ctx.defaultError };
+        }
+        if (typeof ctx.data === "undefined") {
+            return { message: message ?? required_error ?? ctx.defaultError };
+        }
+        if (iss.code !== "invalid_type")
+            return { message: ctx.defaultError };
+        return { message: message ?? invalid_type_error ?? ctx.defaultError };
+    };
+    return { errorMap: customMap, description };
+}
+class ZodType {
+    get description() {
+        return this._def.description;
+    }
+    _getType(input) {
+        return (0, util_js_1.getParsedType)(input.data);
+    }
+    _getOrReturnCtx(input, ctx) {
+        return (ctx || {
+            common: input.parent.common,
+            data: input.data,
+            parsedType: (0, util_js_1.getParsedType)(input.data),
+            schemaErrorMap: this._def.errorMap,
+            path: input.path,
+            parent: input.parent,
+        });
+    }
+    _processInputParams(input) {
+        return {
+            status: new parseUtil_js_1.ParseStatus(),
+            ctx: {
+                common: input.parent.common,
+                data: input.data,
+                parsedType: (0, util_js_1.getParsedType)(input.data),
+                schemaErrorMap: this._def.errorMap,
+                path: input.path,
+                parent: input.parent,
+            },
+        };
+    }
+    _parseSync(input) {
+        const result = this._parse(input);
+        if ((0, parseUtil_js_1.isAsync)(result)) {
+            throw new Error("Synchronous parse encountered promise.");
+        }
+        return result;
+    }
+    _parseAsync(input) {
+        const result = this._parse(input);
+        return Promise.resolve(result);
+    }
+    parse(data, params) {
+        const result = this.safeParse(data, params);
+        if (result.success)
+            return result.data;
+        throw result.error;
+    }
+    safeParse(data, params) {
+        const ctx = {
+            common: {
+                issues: [],
+                async: params?.async ?? false,
+                contextualErrorMap: params?.errorMap,
+            },
+            path: params?.path || [],
+            schemaErrorMap: this._def.errorMap,
+            parent: null,
+            data,
+            parsedType: (0, util_js_1.getParsedType)(data),
+        };
+        const result = this._parseSync({ data, path: ctx.path, parent: ctx });
+        return handleResult(ctx, result);
+    }
+    "~validate"(data) {
+        const ctx = {
+            common: {
+                issues: [],
+                async: !!this["~standard"].async,
+            },
+            path: [],
+            schemaErrorMap: this._def.errorMap,
+            parent: null,
+            data,
+            parsedType: (0, util_js_1.getParsedType)(data),
+        };
+        if (!this["~standard"].async) {
+            try {
+                const result = this._parseSync({ data, path: [], parent: ctx });
+                return (0, parseUtil_js_1.isValid)(result)
+                    ? {
+                        value: result.value,
+                    }
+                    : {
+                        issues: ctx.common.issues,
+                    };
+            }
+            catch (err) {
+                if (err?.message?.toLowerCase()?.includes("encountered")) {
+                    this["~standard"].async = true;
+                }
+                ctx.common = {
+                    issues: [],
+                    async: true,
+                };
+            }
+        }
+        return this._parseAsync({ data, path: [], parent: ctx }).then((result) => (0, parseUtil_js_1.isValid)(result)
+            ? {
+                value: result.value,
+            }
+            : {
+                issues: ctx.common.issues,
+            });
+    }
+    async parseAsync(data, params) {
+        const result = await this.safeParseAsync(data, params);
+        if (result.success)
+            return result.data;
+        throw result.error;
+    }
+    async safeParseAsync(data, params) {
+        const ctx = {
+            common: {
+                issues: [],
+                contextualErrorMap: params?.errorMap,
+                async: true,
+            },
+            path: params?.path || [],
+            schemaErrorMap: this._def.errorMap,
+            parent: null,
+            data,
+            parsedType: (0, util_js_1.getParsedType)(data),
+        };
+        const maybeAsyncResult = this._parse({ data, path: ctx.path, parent: ctx });
+        const result = await ((0, parseUtil_js_1.isAsync)(maybeAsyncResult) ? maybeAsyncResult : Promise.resolve(maybeAsyncResult));
+        return handleResult(ctx, result);
+    }
+    refine(check, message) {
+        const getIssueProperties = (val) => {
+            if (typeof message === "string" || typeof message === "undefined") {
+                return { message };
+            }
+            else if (typeof message === "function") {
+                return message(val);
+            }
+            else {
+                return message;
+            }
+        };
+        return this._refinement((val, ctx) => {
+            const result = check(val);
+            const setError = () => ctx.addIssue({
+                code: ZodError_js_1.ZodIssueCode.custom,
+                ...getIssueProperties(val),
+            });
+            if (typeof Promise !== "undefined" && result instanceof Promise) {
+                return result.then((data) => {
+                    if (!data) {
+                        setError();
+                        return false;
+                    }
+                    else {
+                        return true;
+                    }
+                });
+            }
+            if (!result) {
+                setError();
+                return false;
+            }
+            else {
+                return true;
+            }
+        });
+    }
+    refinement(check, refinementData) {
+        return this._refinement((val, ctx) => {
+            if (!check(val)) {
+                ctx.addIssue(typeof refinementData === "function" ? refinementData(val, ctx) : refinementData);
+                return false;
+            }
+            else {
+                return true;
+            }
+        });
+    }
+    _refinement(refinement) {
+        return new ZodEffects({
+            schema: this,
+            typeName: ZodFirstPartyTypeKind.ZodEffects,
+            effect: { type: "refinement", refinement },
+        });
+    }
+    superRefine(refinement) {
+        return this._refinement(refinement);
+    }
+    constructor(def) {
+        /** Alias of safeParseAsync */
+        this.spa = this.safeParseAsync;
+        this._def = def;
+        this.parse = this.parse.bind(this);
+        this.safeParse = this.safeParse.bind(this);
+        this.parseAsync = this.parseAsync.bind(this);
+        this.safeParseAsync = this.safeParseAsync.bind(this);
+        this.spa = this.spa.bind(this);
+        this.refine = this.refine.bind(this);
+        this.refinement = this.refinement.bind(this);
+        this.superRefine = this.superRefine.bind(this);
+        this.optional = this.optional.bind(this);
+        this.nullable = this.nullable.bind(this);
+        this.nullish = this.nullish.bind(this);
+        this.array = this.array.bind(this);
+        this.promise = this.promise.bind(this);
+        this.or = this.or.bind(this);
+        this.and = this.and.bind(this);
+        this.transform = this.transform.bind(this);
+        this.brand = this.brand.bind(this);
+        this.default = this.default.bind(this);
+        this.catch = this.catch.bind(this);
+        this.describe = this.describe.bind(this);
+        this.pipe = this.pipe.bind(this);
+        this.readonly = this.readonly.bind(this);
+        this.isNullable = this.isNullable.bind(this);
+        this.isOptional = this.isOptional.bind(this);
+        this["~standard"] = {
+            version: 1,
+            vendor: "zod",
+            validate: (data) => this["~validate"](data),
+        };
+    }
+    optional() {
+        return ZodOptional.create(this, this._def);
+    }
+    nullable() {
+        return ZodNullable.create(this, this._def);
+    }
+    nullish() {
+        return this.nullable().optional();
+    }
+    array() {
+        return ZodArray.create(this);
+    }
+    promise() {
+        return ZodPromise.create(this, this._def);
+    }
+    or(option) {
+        return ZodUnion.create([this, option], this._def);
+    }
+    and(incoming) {
+        return ZodIntersection.create(this, incoming, this._def);
+    }
+    transform(transform) {
+        return new ZodEffects({
+            ...processCreateParams(this._def),
+            schema: this,
+            typeName: ZodFirstPartyTypeKind.ZodEffects,
+            effect: { type: "transform", transform },
+        });
+    }
+    default(def) {
+        const defaultValueFunc = typeof def === "function" ? def : () => def;
+        return new ZodDefault({
+            ...processCreateParams(this._def),
+            innerType: this,
+            defaultValue: defaultValueFunc,
+            typeName: ZodFirstPartyTypeKind.ZodDefault,
+        });
+    }
+    brand() {
+        return new ZodBranded({
+            typeName: ZodFirstPartyTypeKind.ZodBranded,
+            type: this,
+            ...processCreateParams(this._def),
+        });
+    }
+    catch(def) {
+        const catchValueFunc = typeof def === "function" ? def : () => def;
+        return new ZodCatch({
+            ...processCreateParams(this._def),
+            innerType: this,
+            catchValue: catchValueFunc,
+            typeName: ZodFirstPartyTypeKind.ZodCatch,
+        });
+    }
+    describe(description) {
+        const This = this.constructor;
+        return new This({
+            ...this._def,
+            description,
+        });
+    }
+    pipe(target) {
+        return ZodPipeline.create(this, target);
+    }
+    readonly() {
+        return ZodReadonly.create(this);
+    }
+    isOptional() {
+        return this.safeParse(undefined).success;
+    }
+    isNullable() {
+        return this.safeParse(null).success;
+    }
+}
+exports.ZodType = ZodType;
+exports.Schema = ZodType;
+exports.ZodSchema = ZodType;
+const cuidRegex = /^c[^\s-]{8,}$/i;
+const cuid2Regex = /^[0-9a-z]+$/;
+const ulidRegex = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+// const uuidRegex =
+//   /^([a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[a-f0-9]{4}-[a-f0-9]{12}|00000000-0000-0000-0000-000000000000)$/i;
+const uuidRegex = /^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$/i;
+const nanoidRegex = /^[a-z0-9_-]{21}$/i;
+const jwtRegex = /^[A-Za-z0-9-_]+\.[A-Za-z0-9-_]+\.[A-Za-z0-9-_]*$/;
+const durationRegex = /^[-+]?P(?!$)(?:(?:[-+]?\d+Y)|(?:[-+]?\d+[.,]\d+Y$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:(?:[-+]?\d+W)|(?:[-+]?\d+[.,]\d+W$))?(?:(?:[-+]?\d+D)|(?:[-+]?\d+[.,]\d+D$))?(?:T(?=[\d+-])(?:(?:[-+]?\d+H)|(?:[-+]?\d+[.,]\d+H$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:[-+]?\d+(?:[.,]\d+)?S)?)??$/;
+// from https://stackoverflow.com/a/46181/1550155
+// old version: too slow, didn't support unicode
+// const emailRegex = /^((([a-z]|\d|[!#\$%&'\*\+\-\/=\?\^_`{\|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+(\.([a-z]|\d|[!#\$%&'\*\+\-\/=\?\^_`{\|}~]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])+)*)|((\x22)((((\x20|\x09)*(\x0d\x0a))?(\x20|\x09)+)?(([\x01-\x08\x0b\x0c\x0e-\x1f\x7f]|\x21|[\x23-\x5b]|[\x5d-\x7e]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(\\([\x01-\x09\x0b\x0c\x0d-\x7f]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF]))))*(((\x20|\x09)*(\x0d\x0a))?(\x20|\x09)+)?(\x22)))@((([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.)+(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))$/i;
+//old email regex
+// const emailRegex = /^(([^<>()[\].,;:\s@"]+(\.[^<>()[\].,;:\s@"]+)*)|(".+"))@((?!-)([^<>()[\].,;:\s@"]+\.)+[^<>()[\].,;:\s@"]{1,})[^-<>()[\].,;:\s@"]$/i;
+// eslint-disable-next-line
+// const emailRegex =
+//   /^(([^<>()[\]\\.,;:\s@\"]+(\.[^<>()[\]\\.,;:\s@\"]+)*)|(\".+\"))@((\[(((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2}))\.){3}((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2}))\])|(\[IPv6:(([a-f0-9]{1,4}:){7}|::([a-f0-9]{1,4}:){0,6}|([a-f0-9]{1,4}:){1}:([a-f0-9]{1,4}:){0,5}|([a-f0-9]{1,4}:){2}:([a-f0-9]{1,4}:){0,4}|([a-f0-9]{1,4}:){3}:([a-f0-9]{1,4}:){0,3}|([a-f0-9]{1,4}:){4}:([a-f0-9]{1,4}:){0,2}|([a-f0-9]{1,4}:){5}:([a-f0-9]{1,4}:){0,1})([a-f0-9]{1,4}|(((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2}))\.){3}((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2})))\])|([A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])*(\.[A-Za-z]{2,})+))$/;
+// const emailRegex =
+//   /^[a-zA-Z0-9\.\!\#\$\%\&\'\*\+\/\=\?\^\_\`\{\|\}\~\-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+// const emailRegex =
+//   /^(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])$/i;
+const emailRegex = /^(?!\.)(?!.*\.\.)([A-Z0-9_'+\-\.]*)[A-Z0-9_+-]@([A-Z0-9][A-Z0-9\-]*\.)+[A-Z]{2,}$/i;
+// const emailRegex =
+//   /^[a-z0-9.!#$%&’*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9\-]+)*$/i;
+// from https://thekevinscott.com/emojis-in-javascript/#writing-a-regular-expression
+const _emojiRegex = `^(\\p{Extended_Pictographic}|\\p{Emoji_Component})+$`;
+let emojiRegex;
+// faster, simpler, safer
+const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
+const ipv4CidrRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/(3[0-2]|[12]?[0-9])$/;
+// const ipv6Regex =
+// /^(([a-f0-9]{1,4}:){7}|::([a-f0-9]{1,4}:){0,6}|([a-f0-9]{1,4}:){1}:([a-f0-9]{1,4}:){0,5}|([a-f0-9]{1,4}:){2}:([a-f0-9]{1,4}:){0,4}|([a-f0-9]{1,4}:){3}:([a-f0-9]{1,4}:){0,3}|([a-f0-9]{1,4}:){4}:([a-f0-9]{1,4}:){0,2}|([a-f0-9]{1,4}:){5}:([a-f0-9]{1,4}:){0,1})([a-f0-9]{1,4}|(((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2}))\.){3}((25[0-5])|(2[0-4][0-9])|(1[0-9]{2})|([0-9]{1,2})))$/;
+const ipv6Regex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$/;
+const ipv6CidrRegex = /^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$/;
+// https://stackoverflow.com/questions/7860392/determine-if-string-is-in-base64-using-javascript
+const base64Regex = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/;
+// https://base64.guru/standards/base64url
+const base64urlRegex = /^([0-9a-zA-Z-_]{4})*(([0-9a-zA-Z-_]{2}(==)?)|([0-9a-zA-Z-_]{3}(=)?))?$/;
+// simple
+// const dateRegexSource = `\\d{4}-\\d{2}-\\d{2}`;
+// no leap year validation
+// const dateRegexSource = `\\d{4}-((0[13578]|10|12)-31|(0[13-9]|1[0-2])-30|(0[1-9]|1[0-2])-(0[1-9]|1\\d|2\\d))`;
+// with leap year validation
+const dateRegexSource = `((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))`;
+const dateRegex = new RegExp(`^${dateRegexSource}$`);
+function timeRegexSource(args) {
+    let secondsRegexSource = `[0-5]\\d`;
+    if (args.precision) {
+        secondsRegexSource = `${secondsRegexSource}\\.\\d{${args.precision}}`;
+    }
+    else if (args.precision == null) {
+        secondsRegexSource = `${secondsRegexSource}(\\.\\d+)?`;
+    }
+    const secondsQuantifier = args.precision ? "+" : "?"; // require seconds if precision is nonzero
+    return `([01]\\d|2[0-3]):[0-5]\\d(:${secondsRegexSource})${secondsQuantifier}`;
+}
+function timeRegex(args) {
+    return new RegExp(`^${timeRegexSource(args)}$`);
+}
+// Adapted from https://stackoverflow.com/a/3143231
+function datetimeRegex(args) {
+    let regex = `${dateRegexSource}T${timeRegexSource(args)}`;
+    const opts = [];
+    opts.push(args.local ? `Z?` : `Z`);
+    if (args.offset)
+        opts.push(`([+-]\\d{2}:?\\d{2})`);
+    regex = `${regex}(${opts.join("|")})`;
+    return new RegExp(`^${regex}$`);
+}
+function isValidIP(ip, version) {
+    if ((version === "v4" || !version) && ipv4Regex.test(ip)) {
+        return true;
+    }
+    if ((version === "v6" || !version) && ipv6Regex.test(ip)) {
+        return true;
+    }
+    return false;
+}
+function isValidJWT(jwt, alg) {
+    if (!jwtRegex.test(jwt))
+        return false;
+    try {
+        const [header] = jwt.split(".");
+        // Convert base64url to base64
+        const base64 = header
+            .replace(/-/g, "+")
+            .replace(/_/g, "/")
+            .padEnd(header.length + ((4 - (header.length % 4)) % 4), "=");
+        const decoded = JSON.parse(atob(base64));
+        if (typeof decoded !== "object" || decoded === null)
+            return false;
+        if ("typ" in decoded && decoded?.typ !== "JWT")
+            return false;
+        if (!decoded.alg)
+            return false;
+        if (alg && decoded.alg !== alg)
+            return false;
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function isValidCidr(ip, version) {
+    if ((version === "v4" || !version) && ipv4CidrRegex.test(ip)) {
+        return true;
+    }
+    if ((version === "v6" || !version) && ipv6CidrRegex.test(ip)) {
+        return true;
+    }
+    return false;
+}
+class ZodString extends ZodType {
+    _parse(input) {
+        if (this._def.coerce) {
+            input.data = String(input.data);
+        }
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.string) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.string,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const status = new parseUtil_js_1.ParseStatus();
+        let ctx = undefined;
+        for (const check of this._def.checks) {
+            if (check.kind === "min") {
+                if (input.data.length < check.value) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_small,
+                        minimum: check.value,
+                        type: "string",
+                        inclusive: true,
+                        exact: false,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "max") {
+                if (input.data.length > check.value) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_big,
+                        maximum: check.value,
+                        type: "string",
+                        inclusive: true,
+                        exact: false,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "length") {
+                const tooBig = input.data.length > check.value;
+                const tooSmall = input.data.length < check.value;
+                if (tooBig || tooSmall) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    if (tooBig) {
+                        (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                            code: ZodError_js_1.ZodIssueCode.too_big,
+                            maximum: check.value,
+                            type: "string",
+                            inclusive: true,
+                            exact: true,
+                            message: check.message,
+                        });
+                    }
+                    else if (tooSmall) {
+                        (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                            code: ZodError_js_1.ZodIssueCode.too_small,
+                            minimum: check.value,
+                            type: "string",
+                            inclusive: true,
+                            exact: true,
+                            message: check.message,
+                        });
+                    }
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "email") {
+                if (!emailRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "email",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "emoji") {
+                if (!emojiRegex) {
+                    emojiRegex = new RegExp(_emojiRegex, "u");
+                }
+                if (!emojiRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "emoji",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "uuid") {
+                if (!uuidRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "uuid",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "nanoid") {
+                if (!nanoidRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "nanoid",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "cuid") {
+                if (!cuidRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "cuid",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "cuid2") {
+                if (!cuid2Regex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "cuid2",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "ulid") {
+                if (!ulidRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "ulid",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "url") {
+                try {
+                    new URL(input.data);
+                }
+                catch {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "url",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "regex") {
+                check.regex.lastIndex = 0;
+                const testResult = check.regex.test(input.data);
+                if (!testResult) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "regex",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "trim") {
+                input.data = input.data.trim();
+            }
+            else if (check.kind === "includes") {
+                if (!input.data.includes(check.value, check.position)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        validation: { includes: check.value, position: check.position },
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "toLowerCase") {
+                input.data = input.data.toLowerCase();
+            }
+            else if (check.kind === "toUpperCase") {
+                input.data = input.data.toUpperCase();
+            }
+            else if (check.kind === "startsWith") {
+                if (!input.data.startsWith(check.value)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        validation: { startsWith: check.value },
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "endsWith") {
+                if (!input.data.endsWith(check.value)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        validation: { endsWith: check.value },
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "datetime") {
+                const regex = datetimeRegex(check);
+                if (!regex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        validation: "datetime",
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "date") {
+                const regex = dateRegex;
+                if (!regex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        validation: "date",
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "time") {
+                const regex = timeRegex(check);
+                if (!regex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        validation: "time",
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "duration") {
+                if (!durationRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "duration",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "ip") {
+                if (!isValidIP(input.data, check.version)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "ip",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "jwt") {
+                if (!isValidJWT(input.data, check.alg)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "jwt",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "cidr") {
+                if (!isValidCidr(input.data, check.version)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "cidr",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "base64") {
+                if (!base64Regex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "base64",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "base64url") {
+                if (!base64urlRegex.test(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        validation: "base64url",
+                        code: ZodError_js_1.ZodIssueCode.invalid_string,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else {
+                util_js_1.util.assertNever(check);
+            }
+        }
+        return { status: status.value, value: input.data };
+    }
+    _regex(regex, validation, message) {
+        return this.refinement((data) => regex.test(data), {
+            validation,
+            code: ZodError_js_1.ZodIssueCode.invalid_string,
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    _addCheck(check) {
+        return new ZodString({
+            ...this._def,
+            checks: [...this._def.checks, check],
+        });
+    }
+    email(message) {
+        return this._addCheck({ kind: "email", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    url(message) {
+        return this._addCheck({ kind: "url", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    emoji(message) {
+        return this._addCheck({ kind: "emoji", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    uuid(message) {
+        return this._addCheck({ kind: "uuid", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    nanoid(message) {
+        return this._addCheck({ kind: "nanoid", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    cuid(message) {
+        return this._addCheck({ kind: "cuid", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    cuid2(message) {
+        return this._addCheck({ kind: "cuid2", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    ulid(message) {
+        return this._addCheck({ kind: "ulid", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    base64(message) {
+        return this._addCheck({ kind: "base64", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    base64url(message) {
+        // base64url encoding is a modification of base64 that can safely be used in URLs and filenames
+        return this._addCheck({
+            kind: "base64url",
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    jwt(options) {
+        return this._addCheck({ kind: "jwt", ...errorUtil_js_1.errorUtil.errToObj(options) });
+    }
+    ip(options) {
+        return this._addCheck({ kind: "ip", ...errorUtil_js_1.errorUtil.errToObj(options) });
+    }
+    cidr(options) {
+        return this._addCheck({ kind: "cidr", ...errorUtil_js_1.errorUtil.errToObj(options) });
+    }
+    datetime(options) {
+        if (typeof options === "string") {
+            return this._addCheck({
+                kind: "datetime",
+                precision: null,
+                offset: false,
+                local: false,
+                message: options,
+            });
+        }
+        return this._addCheck({
+            kind: "datetime",
+            precision: typeof options?.precision === "undefined" ? null : options?.precision,
+            offset: options?.offset ?? false,
+            local: options?.local ?? false,
+            ...errorUtil_js_1.errorUtil.errToObj(options?.message),
+        });
+    }
+    date(message) {
+        return this._addCheck({ kind: "date", message });
+    }
+    time(options) {
+        if (typeof options === "string") {
+            return this._addCheck({
+                kind: "time",
+                precision: null,
+                message: options,
+            });
+        }
+        return this._addCheck({
+            kind: "time",
+            precision: typeof options?.precision === "undefined" ? null : options?.precision,
+            ...errorUtil_js_1.errorUtil.errToObj(options?.message),
+        });
+    }
+    duration(message) {
+        return this._addCheck({ kind: "duration", ...errorUtil_js_1.errorUtil.errToObj(message) });
+    }
+    regex(regex, message) {
+        return this._addCheck({
+            kind: "regex",
+            regex: regex,
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    includes(value, options) {
+        return this._addCheck({
+            kind: "includes",
+            value: value,
+            position: options?.position,
+            ...errorUtil_js_1.errorUtil.errToObj(options?.message),
+        });
+    }
+    startsWith(value, message) {
+        return this._addCheck({
+            kind: "startsWith",
+            value: value,
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    endsWith(value, message) {
+        return this._addCheck({
+            kind: "endsWith",
+            value: value,
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    min(minLength, message) {
+        return this._addCheck({
+            kind: "min",
+            value: minLength,
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    max(maxLength, message) {
+        return this._addCheck({
+            kind: "max",
+            value: maxLength,
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    length(len, message) {
+        return this._addCheck({
+            kind: "length",
+            value: len,
+            ...errorUtil_js_1.errorUtil.errToObj(message),
+        });
+    }
+    /**
+     * Equivalent to `.min(1)`
+     */
+    nonempty(message) {
+        return this.min(1, errorUtil_js_1.errorUtil.errToObj(message));
+    }
+    trim() {
+        return new ZodString({
+            ...this._def,
+            checks: [...this._def.checks, { kind: "trim" }],
+        });
+    }
+    toLowerCase() {
+        return new ZodString({
+            ...this._def,
+            checks: [...this._def.checks, { kind: "toLowerCase" }],
+        });
+    }
+    toUpperCase() {
+        return new ZodString({
+            ...this._def,
+            checks: [...this._def.checks, { kind: "toUpperCase" }],
+        });
+    }
+    get isDatetime() {
+        return !!this._def.checks.find((ch) => ch.kind === "datetime");
+    }
+    get isDate() {
+        return !!this._def.checks.find((ch) => ch.kind === "date");
+    }
+    get isTime() {
+        return !!this._def.checks.find((ch) => ch.kind === "time");
+    }
+    get isDuration() {
+        return !!this._def.checks.find((ch) => ch.kind === "duration");
+    }
+    get isEmail() {
+        return !!this._def.checks.find((ch) => ch.kind === "email");
+    }
+    get isURL() {
+        return !!this._def.checks.find((ch) => ch.kind === "url");
+    }
+    get isEmoji() {
+        return !!this._def.checks.find((ch) => ch.kind === "emoji");
+    }
+    get isUUID() {
+        return !!this._def.checks.find((ch) => ch.kind === "uuid");
+    }
+    get isNANOID() {
+        return !!this._def.checks.find((ch) => ch.kind === "nanoid");
+    }
+    get isCUID() {
+        return !!this._def.checks.find((ch) => ch.kind === "cuid");
+    }
+    get isCUID2() {
+        return !!this._def.checks.find((ch) => ch.kind === "cuid2");
+    }
+    get isULID() {
+        return !!this._def.checks.find((ch) => ch.kind === "ulid");
+    }
+    get isIP() {
+        return !!this._def.checks.find((ch) => ch.kind === "ip");
+    }
+    get isCIDR() {
+        return !!this._def.checks.find((ch) => ch.kind === "cidr");
+    }
+    get isBase64() {
+        return !!this._def.checks.find((ch) => ch.kind === "base64");
+    }
+    get isBase64url() {
+        // base64url encoding is a modification of base64 that can safely be used in URLs and filenames
+        return !!this._def.checks.find((ch) => ch.kind === "base64url");
+    }
+    get minLength() {
+        let min = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "min") {
+                if (min === null || ch.value > min)
+                    min = ch.value;
+            }
+        }
+        return min;
+    }
+    get maxLength() {
+        let max = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "max") {
+                if (max === null || ch.value < max)
+                    max = ch.value;
+            }
+        }
+        return max;
+    }
+}
+exports.ZodString = ZodString;
+ZodString.create = (params) => {
+    return new ZodString({
+        checks: [],
+        typeName: ZodFirstPartyTypeKind.ZodString,
+        coerce: params?.coerce ?? false,
+        ...processCreateParams(params),
+    });
+};
+// https://stackoverflow.com/questions/3966484/why-does-modulus-operator-return-fractional-number-in-javascript/31711034#31711034
+function floatSafeRemainder(val, step) {
+    const valDecCount = (val.toString().split(".")[1] || "").length;
+    const stepDecCount = (step.toString().split(".")[1] || "").length;
+    const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;
+    const valInt = Number.parseInt(val.toFixed(decCount).replace(".", ""));
+    const stepInt = Number.parseInt(step.toFixed(decCount).replace(".", ""));
+    return (valInt % stepInt) / 10 ** decCount;
+}
+class ZodNumber extends ZodType {
+    constructor() {
+        super(...arguments);
+        this.min = this.gte;
+        this.max = this.lte;
+        this.step = this.multipleOf;
+    }
+    _parse(input) {
+        if (this._def.coerce) {
+            input.data = Number(input.data);
+        }
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.number) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.number,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        let ctx = undefined;
+        const status = new parseUtil_js_1.ParseStatus();
+        for (const check of this._def.checks) {
+            if (check.kind === "int") {
+                if (!util_js_1.util.isInteger(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.invalid_type,
+                        expected: "integer",
+                        received: "float",
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "min") {
+                const tooSmall = check.inclusive ? input.data < check.value : input.data <= check.value;
+                if (tooSmall) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_small,
+                        minimum: check.value,
+                        type: "number",
+                        inclusive: check.inclusive,
+                        exact: false,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "max") {
+                const tooBig = check.inclusive ? input.data > check.value : input.data >= check.value;
+                if (tooBig) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_big,
+                        maximum: check.value,
+                        type: "number",
+                        inclusive: check.inclusive,
+                        exact: false,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "multipleOf") {
+                if (floatSafeRemainder(input.data, check.value) !== 0) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.not_multiple_of,
+                        multipleOf: check.value,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "finite") {
+                if (!Number.isFinite(input.data)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.not_finite,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else {
+                util_js_1.util.assertNever(check);
+            }
+        }
+        return { status: status.value, value: input.data };
+    }
+    gte(value, message) {
+        return this.setLimit("min", value, true, errorUtil_js_1.errorUtil.toString(message));
+    }
+    gt(value, message) {
+        return this.setLimit("min", value, false, errorUtil_js_1.errorUtil.toString(message));
+    }
+    lte(value, message) {
+        return this.setLimit("max", value, true, errorUtil_js_1.errorUtil.toString(message));
+    }
+    lt(value, message) {
+        return this.setLimit("max", value, false, errorUtil_js_1.errorUtil.toString(message));
+    }
+    setLimit(kind, value, inclusive, message) {
+        return new ZodNumber({
+            ...this._def,
+            checks: [
+                ...this._def.checks,
+                {
+                    kind,
+                    value,
+                    inclusive,
+                    message: errorUtil_js_1.errorUtil.toString(message),
+                },
+            ],
+        });
+    }
+    _addCheck(check) {
+        return new ZodNumber({
+            ...this._def,
+            checks: [...this._def.checks, check],
+        });
+    }
+    int(message) {
+        return this._addCheck({
+            kind: "int",
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    positive(message) {
+        return this._addCheck({
+            kind: "min",
+            value: 0,
+            inclusive: false,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    negative(message) {
+        return this._addCheck({
+            kind: "max",
+            value: 0,
+            inclusive: false,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    nonpositive(message) {
+        return this._addCheck({
+            kind: "max",
+            value: 0,
+            inclusive: true,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    nonnegative(message) {
+        return this._addCheck({
+            kind: "min",
+            value: 0,
+            inclusive: true,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    multipleOf(value, message) {
+        return this._addCheck({
+            kind: "multipleOf",
+            value: value,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    finite(message) {
+        return this._addCheck({
+            kind: "finite",
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    safe(message) {
+        return this._addCheck({
+            kind: "min",
+            inclusive: true,
+            value: Number.MIN_SAFE_INTEGER,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        })._addCheck({
+            kind: "max",
+            inclusive: true,
+            value: Number.MAX_SAFE_INTEGER,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    get minValue() {
+        let min = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "min") {
+                if (min === null || ch.value > min)
+                    min = ch.value;
+            }
+        }
+        return min;
+    }
+    get maxValue() {
+        let max = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "max") {
+                if (max === null || ch.value < max)
+                    max = ch.value;
+            }
+        }
+        return max;
+    }
+    get isInt() {
+        return !!this._def.checks.find((ch) => ch.kind === "int" || (ch.kind === "multipleOf" && util_js_1.util.isInteger(ch.value)));
+    }
+    get isFinite() {
+        let max = null;
+        let min = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "finite" || ch.kind === "int" || ch.kind === "multipleOf") {
+                return true;
+            }
+            else if (ch.kind === "min") {
+                if (min === null || ch.value > min)
+                    min = ch.value;
+            }
+            else if (ch.kind === "max") {
+                if (max === null || ch.value < max)
+                    max = ch.value;
+            }
+        }
+        return Number.isFinite(min) && Number.isFinite(max);
+    }
+}
+exports.ZodNumber = ZodNumber;
+ZodNumber.create = (params) => {
+    return new ZodNumber({
+        checks: [],
+        typeName: ZodFirstPartyTypeKind.ZodNumber,
+        coerce: params?.coerce || false,
+        ...processCreateParams(params),
+    });
+};
+class ZodBigInt extends ZodType {
+    constructor() {
+        super(...arguments);
+        this.min = this.gte;
+        this.max = this.lte;
+    }
+    _parse(input) {
+        if (this._def.coerce) {
+            try {
+                input.data = BigInt(input.data);
+            }
+            catch {
+                return this._getInvalidInput(input);
+            }
+        }
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.bigint) {
+            return this._getInvalidInput(input);
+        }
+        let ctx = undefined;
+        const status = new parseUtil_js_1.ParseStatus();
+        for (const check of this._def.checks) {
+            if (check.kind === "min") {
+                const tooSmall = check.inclusive ? input.data < check.value : input.data <= check.value;
+                if (tooSmall) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_small,
+                        type: "bigint",
+                        minimum: check.value,
+                        inclusive: check.inclusive,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "max") {
+                const tooBig = check.inclusive ? input.data > check.value : input.data >= check.value;
+                if (tooBig) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_big,
+                        type: "bigint",
+                        maximum: check.value,
+                        inclusive: check.inclusive,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "multipleOf") {
+                if (input.data % check.value !== BigInt(0)) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.not_multiple_of,
+                        multipleOf: check.value,
+                        message: check.message,
+                    });
+                    status.dirty();
+                }
+            }
+            else {
+                util_js_1.util.assertNever(check);
+            }
+        }
+        return { status: status.value, value: input.data };
+    }
+    _getInvalidInput(input) {
+        const ctx = this._getOrReturnCtx(input);
+        (0, parseUtil_js_1.addIssueToContext)(ctx, {
+            code: ZodError_js_1.ZodIssueCode.invalid_type,
+            expected: util_js_1.ZodParsedType.bigint,
+            received: ctx.parsedType,
+        });
+        return parseUtil_js_1.INVALID;
+    }
+    gte(value, message) {
+        return this.setLimit("min", value, true, errorUtil_js_1.errorUtil.toString(message));
+    }
+    gt(value, message) {
+        return this.setLimit("min", value, false, errorUtil_js_1.errorUtil.toString(message));
+    }
+    lte(value, message) {
+        return this.setLimit("max", value, true, errorUtil_js_1.errorUtil.toString(message));
+    }
+    lt(value, message) {
+        return this.setLimit("max", value, false, errorUtil_js_1.errorUtil.toString(message));
+    }
+    setLimit(kind, value, inclusive, message) {
+        return new ZodBigInt({
+            ...this._def,
+            checks: [
+                ...this._def.checks,
+                {
+                    kind,
+                    value,
+                    inclusive,
+                    message: errorUtil_js_1.errorUtil.toString(message),
+                },
+            ],
+        });
+    }
+    _addCheck(check) {
+        return new ZodBigInt({
+            ...this._def,
+            checks: [...this._def.checks, check],
+        });
+    }
+    positive(message) {
+        return this._addCheck({
+            kind: "min",
+            value: BigInt(0),
+            inclusive: false,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    negative(message) {
+        return this._addCheck({
+            kind: "max",
+            value: BigInt(0),
+            inclusive: false,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    nonpositive(message) {
+        return this._addCheck({
+            kind: "max",
+            value: BigInt(0),
+            inclusive: true,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    nonnegative(message) {
+        return this._addCheck({
+            kind: "min",
+            value: BigInt(0),
+            inclusive: true,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    multipleOf(value, message) {
+        return this._addCheck({
+            kind: "multipleOf",
+            value,
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    get minValue() {
+        let min = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "min") {
+                if (min === null || ch.value > min)
+                    min = ch.value;
+            }
+        }
+        return min;
+    }
+    get maxValue() {
+        let max = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "max") {
+                if (max === null || ch.value < max)
+                    max = ch.value;
+            }
+        }
+        return max;
+    }
+}
+exports.ZodBigInt = ZodBigInt;
+ZodBigInt.create = (params) => {
+    return new ZodBigInt({
+        checks: [],
+        typeName: ZodFirstPartyTypeKind.ZodBigInt,
+        coerce: params?.coerce ?? false,
+        ...processCreateParams(params),
+    });
+};
+class ZodBoolean extends ZodType {
+    _parse(input) {
+        if (this._def.coerce) {
+            input.data = Boolean(input.data);
+        }
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.boolean) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.boolean,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+}
+exports.ZodBoolean = ZodBoolean;
+ZodBoolean.create = (params) => {
+    return new ZodBoolean({
+        typeName: ZodFirstPartyTypeKind.ZodBoolean,
+        coerce: params?.coerce || false,
+        ...processCreateParams(params),
+    });
+};
+class ZodDate extends ZodType {
+    _parse(input) {
+        if (this._def.coerce) {
+            input.data = new Date(input.data);
+        }
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.date) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.date,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        if (Number.isNaN(input.data.getTime())) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_date,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const status = new parseUtil_js_1.ParseStatus();
+        let ctx = undefined;
+        for (const check of this._def.checks) {
+            if (check.kind === "min") {
+                if (input.data.getTime() < check.value) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_small,
+                        message: check.message,
+                        inclusive: true,
+                        exact: false,
+                        minimum: check.value,
+                        type: "date",
+                    });
+                    status.dirty();
+                }
+            }
+            else if (check.kind === "max") {
+                if (input.data.getTime() > check.value) {
+                    ctx = this._getOrReturnCtx(input, ctx);
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.too_big,
+                        message: check.message,
+                        inclusive: true,
+                        exact: false,
+                        maximum: check.value,
+                        type: "date",
+                    });
+                    status.dirty();
+                }
+            }
+            else {
+                util_js_1.util.assertNever(check);
+            }
+        }
+        return {
+            status: status.value,
+            value: new Date(input.data.getTime()),
+        };
+    }
+    _addCheck(check) {
+        return new ZodDate({
+            ...this._def,
+            checks: [...this._def.checks, check],
+        });
+    }
+    min(minDate, message) {
+        return this._addCheck({
+            kind: "min",
+            value: minDate.getTime(),
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    max(maxDate, message) {
+        return this._addCheck({
+            kind: "max",
+            value: maxDate.getTime(),
+            message: errorUtil_js_1.errorUtil.toString(message),
+        });
+    }
+    get minDate() {
+        let min = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "min") {
+                if (min === null || ch.value > min)
+                    min = ch.value;
+            }
+        }
+        return min != null ? new Date(min) : null;
+    }
+    get maxDate() {
+        let max = null;
+        for (const ch of this._def.checks) {
+            if (ch.kind === "max") {
+                if (max === null || ch.value < max)
+                    max = ch.value;
+            }
+        }
+        return max != null ? new Date(max) : null;
+    }
+}
+exports.ZodDate = ZodDate;
+ZodDate.create = (params) => {
+    return new ZodDate({
+        checks: [],
+        coerce: params?.coerce || false,
+        typeName: ZodFirstPartyTypeKind.ZodDate,
+        ...processCreateParams(params),
+    });
+};
+class ZodSymbol extends ZodType {
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.symbol) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.symbol,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+}
+exports.ZodSymbol = ZodSymbol;
+ZodSymbol.create = (params) => {
+    return new ZodSymbol({
+        typeName: ZodFirstPartyTypeKind.ZodSymbol,
+        ...processCreateParams(params),
+    });
+};
+class ZodUndefined extends ZodType {
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.undefined) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.undefined,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+}
+exports.ZodUndefined = ZodUndefined;
+ZodUndefined.create = (params) => {
+    return new ZodUndefined({
+        typeName: ZodFirstPartyTypeKind.ZodUndefined,
+        ...processCreateParams(params),
+    });
+};
+class ZodNull extends ZodType {
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.null) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.null,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+}
+exports.ZodNull = ZodNull;
+ZodNull.create = (params) => {
+    return new ZodNull({
+        typeName: ZodFirstPartyTypeKind.ZodNull,
+        ...processCreateParams(params),
+    });
+};
+class ZodAny extends ZodType {
+    constructor() {
+        super(...arguments);
+        // to prevent instances of other classes from extending ZodAny. this causes issues with catchall in ZodObject.
+        this._any = true;
+    }
+    _parse(input) {
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+}
+exports.ZodAny = ZodAny;
+ZodAny.create = (params) => {
+    return new ZodAny({
+        typeName: ZodFirstPartyTypeKind.ZodAny,
+        ...processCreateParams(params),
+    });
+};
+class ZodUnknown extends ZodType {
+    constructor() {
+        super(...arguments);
+        // required
+        this._unknown = true;
+    }
+    _parse(input) {
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+}
+exports.ZodUnknown = ZodUnknown;
+ZodUnknown.create = (params) => {
+    return new ZodUnknown({
+        typeName: ZodFirstPartyTypeKind.ZodUnknown,
+        ...processCreateParams(params),
+    });
+};
+class ZodNever extends ZodType {
+    _parse(input) {
+        const ctx = this._getOrReturnCtx(input);
+        (0, parseUtil_js_1.addIssueToContext)(ctx, {
+            code: ZodError_js_1.ZodIssueCode.invalid_type,
+            expected: util_js_1.ZodParsedType.never,
+            received: ctx.parsedType,
+        });
+        return parseUtil_js_1.INVALID;
+    }
+}
+exports.ZodNever = ZodNever;
+ZodNever.create = (params) => {
+    return new ZodNever({
+        typeName: ZodFirstPartyTypeKind.ZodNever,
+        ...processCreateParams(params),
+    });
+};
+class ZodVoid extends ZodType {
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.undefined) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.void,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+}
+exports.ZodVoid = ZodVoid;
+ZodVoid.create = (params) => {
+    return new ZodVoid({
+        typeName: ZodFirstPartyTypeKind.ZodVoid,
+        ...processCreateParams(params),
+    });
+};
+class ZodArray extends ZodType {
+    _parse(input) {
+        const { ctx, status } = this._processInputParams(input);
+        const def = this._def;
+        if (ctx.parsedType !== util_js_1.ZodParsedType.array) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.array,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        if (def.exactLength !== null) {
+            const tooBig = ctx.data.length > def.exactLength.value;
+            const tooSmall = ctx.data.length < def.exactLength.value;
+            if (tooBig || tooSmall) {
+                (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                    code: tooBig ? ZodError_js_1.ZodIssueCode.too_big : ZodError_js_1.ZodIssueCode.too_small,
+                    minimum: (tooSmall ? def.exactLength.value : undefined),
+                    maximum: (tooBig ? def.exactLength.value : undefined),
+                    type: "array",
+                    inclusive: true,
+                    exact: true,
+                    message: def.exactLength.message,
+                });
+                status.dirty();
+            }
+        }
+        if (def.minLength !== null) {
+            if (ctx.data.length < def.minLength.value) {
+                (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                    code: ZodError_js_1.ZodIssueCode.too_small,
+                    minimum: def.minLength.value,
+                    type: "array",
+                    inclusive: true,
+                    exact: false,
+                    message: def.minLength.message,
+                });
+                status.dirty();
+            }
+        }
+        if (def.maxLength !== null) {
+            if (ctx.data.length > def.maxLength.value) {
+                (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                    code: ZodError_js_1.ZodIssueCode.too_big,
+                    maximum: def.maxLength.value,
+                    type: "array",
+                    inclusive: true,
+                    exact: false,
+                    message: def.maxLength.message,
+                });
+                status.dirty();
+            }
+        }
+        if (ctx.common.async) {
+            return Promise.all([...ctx.data].map((item, i) => {
+                return def.type._parseAsync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+            })).then((result) => {
+                return parseUtil_js_1.ParseStatus.mergeArray(status, result);
+            });
+        }
+        const result = [...ctx.data].map((item, i) => {
+            return def.type._parseSync(new ParseInputLazyPath(ctx, item, ctx.path, i));
+        });
+        return parseUtil_js_1.ParseStatus.mergeArray(status, result);
+    }
+    get element() {
+        return this._def.type;
+    }
+    min(minLength, message) {
+        return new ZodArray({
+            ...this._def,
+            minLength: { value: minLength, message: errorUtil_js_1.errorUtil.toString(message) },
+        });
+    }
+    max(maxLength, message) {
+        return new ZodArray({
+            ...this._def,
+            maxLength: { value: maxLength, message: errorUtil_js_1.errorUtil.toString(message) },
+        });
+    }
+    length(len, message) {
+        return new ZodArray({
+            ...this._def,
+            exactLength: { value: len, message: errorUtil_js_1.errorUtil.toString(message) },
+        });
+    }
+    nonempty(message) {
+        return this.min(1, message);
+    }
+}
+exports.ZodArray = ZodArray;
+ZodArray.create = (schema, params) => {
+    return new ZodArray({
+        type: schema,
+        minLength: null,
+        maxLength: null,
+        exactLength: null,
+        typeName: ZodFirstPartyTypeKind.ZodArray,
+        ...processCreateParams(params),
+    });
+};
+function deepPartialify(schema) {
+    if (schema instanceof ZodObject) {
+        const newShape = {};
+        for (const key in schema.shape) {
+            const fieldSchema = schema.shape[key];
+            newShape[key] = ZodOptional.create(deepPartialify(fieldSchema));
+        }
+        return new ZodObject({
+            ...schema._def,
+            shape: () => newShape,
+        });
+    }
+    else if (schema instanceof ZodArray) {
+        return new ZodArray({
+            ...schema._def,
+            type: deepPartialify(schema.element),
+        });
+    }
+    else if (schema instanceof ZodOptional) {
+        return ZodOptional.create(deepPartialify(schema.unwrap()));
+    }
+    else if (schema instanceof ZodNullable) {
+        return ZodNullable.create(deepPartialify(schema.unwrap()));
+    }
+    else if (schema instanceof ZodTuple) {
+        return ZodTuple.create(schema.items.map((item) => deepPartialify(item)));
+    }
+    else {
+        return schema;
+    }
+}
+class ZodObject extends ZodType {
+    constructor() {
+        super(...arguments);
+        this._cached = null;
+        /**
+         * @deprecated In most cases, this is no longer needed - unknown properties are now silently stripped.
+         * If you want to pass through unknown properties, use `.passthrough()` instead.
+         */
+        this.nonstrict = this.passthrough;
+        // extend<
+        //   Augmentation extends ZodRawShape,
+        //   NewOutput extends util.flatten<{
+        //     [k in keyof Augmentation | keyof Output]: k extends keyof Augmentation
+        //       ? Augmentation[k]["_output"]
+        //       : k extends keyof Output
+        //       ? Output[k]
+        //       : never;
+        //   }>,
+        //   NewInput extends util.flatten<{
+        //     [k in keyof Augmentation | keyof Input]: k extends keyof Augmentation
+        //       ? Augmentation[k]["_input"]
+        //       : k extends keyof Input
+        //       ? Input[k]
+        //       : never;
+        //   }>
+        // >(
+        //   augmentation: Augmentation
+        // ): ZodObject<
+        //   extendShape<T, Augmentation>,
+        //   UnknownKeys,
+        //   Catchall,
+        //   NewOutput,
+        //   NewInput
+        // > {
+        //   return new ZodObject({
+        //     ...this._def,
+        //     shape: () => ({
+        //       ...this._def.shape(),
+        //       ...augmentation,
+        //     }),
+        //   }) as any;
+        // }
+        /**
+         * @deprecated Use `.extend` instead
+         *  */
+        this.augment = this.extend;
+    }
+    _getCached() {
+        if (this._cached !== null)
+            return this._cached;
+        const shape = this._def.shape();
+        const keys = util_js_1.util.objectKeys(shape);
+        this._cached = { shape, keys };
+        return this._cached;
+    }
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.object) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.object,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const { status, ctx } = this._processInputParams(input);
+        const { shape, keys: shapeKeys } = this._getCached();
+        const extraKeys = [];
+        if (!(this._def.catchall instanceof ZodNever && this._def.unknownKeys === "strip")) {
+            for (const key in ctx.data) {
+                if (!shapeKeys.includes(key)) {
+                    extraKeys.push(key);
+                }
+            }
+        }
+        const pairs = [];
+        for (const key of shapeKeys) {
+            const keyValidator = shape[key];
+            const value = ctx.data[key];
+            pairs.push({
+                key: { status: "valid", value: key },
+                value: keyValidator._parse(new ParseInputLazyPath(ctx, value, ctx.path, key)),
+                alwaysSet: key in ctx.data,
+            });
+        }
+        if (this._def.catchall instanceof ZodNever) {
+            const unknownKeys = this._def.unknownKeys;
+            if (unknownKeys === "passthrough") {
+                for (const key of extraKeys) {
+                    pairs.push({
+                        key: { status: "valid", value: key },
+                        value: { status: "valid", value: ctx.data[key] },
+                    });
+                }
+            }
+            else if (unknownKeys === "strict") {
+                if (extraKeys.length > 0) {
+                    (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                        code: ZodError_js_1.ZodIssueCode.unrecognized_keys,
+                        keys: extraKeys,
+                    });
+                    status.dirty();
+                }
+            }
+            else if (unknownKeys === "strip") {
+            }
+            else {
+                throw new Error(`Internal ZodObject error: invalid unknownKeys value.`);
+            }
+        }
+        else {
+            // run catchall validation
+            const catchall = this._def.catchall;
+            for (const key of extraKeys) {
+                const value = ctx.data[key];
+                pairs.push({
+                    key: { status: "valid", value: key },
+                    value: catchall._parse(new ParseInputLazyPath(ctx, value, ctx.path, key) //, ctx.child(key), value, getParsedType(value)
+                    ),
+                    alwaysSet: key in ctx.data,
+                });
+            }
+        }
+        if (ctx.common.async) {
+            return Promise.resolve()
+                .then(async () => {
+                const syncPairs = [];
+                for (const pair of pairs) {
+                    const key = await pair.key;
+                    const value = await pair.value;
+                    syncPairs.push({
+                        key,
+                        value,
+                        alwaysSet: pair.alwaysSet,
+                    });
+                }
+                return syncPairs;
+            })
+                .then((syncPairs) => {
+                return parseUtil_js_1.ParseStatus.mergeObjectSync(status, syncPairs);
+            });
+        }
+        else {
+            return parseUtil_js_1.ParseStatus.mergeObjectSync(status, pairs);
+        }
+    }
+    get shape() {
+        return this._def.shape();
+    }
+    strict(message) {
+        errorUtil_js_1.errorUtil.errToObj;
+        return new ZodObject({
+            ...this._def,
+            unknownKeys: "strict",
+            ...(message !== undefined
+                ? {
+                    errorMap: (issue, ctx) => {
+                        const defaultError = this._def.errorMap?.(issue, ctx).message ?? ctx.defaultError;
+                        if (issue.code === "unrecognized_keys")
+                            return {
+                                message: errorUtil_js_1.errorUtil.errToObj(message).message ?? defaultError,
+                            };
+                        return {
+                            message: defaultError,
+                        };
+                    },
+                }
+                : {}),
+        });
+    }
+    strip() {
+        return new ZodObject({
+            ...this._def,
+            unknownKeys: "strip",
+        });
+    }
+    passthrough() {
+        return new ZodObject({
+            ...this._def,
+            unknownKeys: "passthrough",
+        });
+    }
+    // const AugmentFactory =
+    //   <Def extends ZodObjectDef>(def: Def) =>
+    //   <Augmentation extends ZodRawShape>(
+    //     augmentation: Augmentation
+    //   ): ZodObject<
+    //     extendShape<ReturnType<Def["shape"]>, Augmentation>,
+    //     Def["unknownKeys"],
+    //     Def["catchall"]
+    //   > => {
+    //     return new ZodObject({
+    //       ...def,
+    //       shape: () => ({
+    //         ...def.shape(),
+    //         ...augmentation,
+    //       }),
+    //     }) as any;
+    //   };
+    extend(augmentation) {
+        return new ZodObject({
+            ...this._def,
+            shape: () => ({
+                ...this._def.shape(),
+                ...augmentation,
+            }),
+        });
+    }
+    /**
+     * Prior to zod@1.0.12 there was a bug in the
+     * inferred type of merged objects. Please
+     * upgrade if you are experiencing issues.
+     */
+    merge(merging) {
+        const merged = new ZodObject({
+            unknownKeys: merging._def.unknownKeys,
+            catchall: merging._def.catchall,
+            shape: () => ({
+                ...this._def.shape(),
+                ...merging._def.shape(),
+            }),
+            typeName: ZodFirstPartyTypeKind.ZodObject,
+        });
+        return merged;
+    }
+    // merge<
+    //   Incoming extends AnyZodObject,
+    //   Augmentation extends Incoming["shape"],
+    //   NewOutput extends {
+    //     [k in keyof Augmentation | keyof Output]: k extends keyof Augmentation
+    //       ? Augmentation[k]["_output"]
+    //       : k extends keyof Output
+    //       ? Output[k]
+    //       : never;
+    //   },
+    //   NewInput extends {
+    //     [k in keyof Augmentation | keyof Input]: k extends keyof Augmentation
+    //       ? Augmentation[k]["_input"]
+    //       : k extends keyof Input
+    //       ? Input[k]
+    //       : never;
+    //   }
+    // >(
+    //   merging: Incoming
+    // ): ZodObject<
+    //   extendShape<T, ReturnType<Incoming["_def"]["shape"]>>,
+    //   Incoming["_def"]["unknownKeys"],
+    //   Incoming["_def"]["catchall"],
+    //   NewOutput,
+    //   NewInput
+    // > {
+    //   const merged: any = new ZodObject({
+    //     unknownKeys: merging._def.unknownKeys,
+    //     catchall: merging._def.catchall,
+    //     shape: () =>
+    //       objectUtil.mergeShapes(this._def.shape(), merging._def.shape()),
+    //     typeName: ZodFirstPartyTypeKind.ZodObject,
+    //   }) as any;
+    //   return merged;
+    // }
+    setKey(key, schema) {
+        return this.augment({ [key]: schema });
+    }
+    // merge<Incoming extends AnyZodObject>(
+    //   merging: Incoming
+    // ): //ZodObject<T & Incoming["_shape"], UnknownKeys, Catchall> = (merging) => {
+    // ZodObject<
+    //   extendShape<T, ReturnType<Incoming["_def"]["shape"]>>,
+    //   Incoming["_def"]["unknownKeys"],
+    //   Incoming["_def"]["catchall"]
+    // > {
+    //   // const mergedShape = objectUtil.mergeShapes(
+    //   //   this._def.shape(),
+    //   //   merging._def.shape()
+    //   // );
+    //   const merged: any = new ZodObject({
+    //     unknownKeys: merging._def.unknownKeys,
+    //     catchall: merging._def.catchall,
+    //     shape: () =>
+    //       objectUtil.mergeShapes(this._def.shape(), merging._def.shape()),
+    //     typeName: ZodFirstPartyTypeKind.ZodObject,
+    //   }) as any;
+    //   return merged;
+    // }
+    catchall(index) {
+        return new ZodObject({
+            ...this._def,
+            catchall: index,
+        });
+    }
+    pick(mask) {
+        const shape = {};
+        for (const key of util_js_1.util.objectKeys(mask)) {
+            if (mask[key] && this.shape[key]) {
+                shape[key] = this.shape[key];
+            }
+        }
+        return new ZodObject({
+            ...this._def,
+            shape: () => shape,
+        });
+    }
+    omit(mask) {
+        const shape = {};
+        for (const key of util_js_1.util.objectKeys(this.shape)) {
+            if (!mask[key]) {
+                shape[key] = this.shape[key];
+            }
+        }
+        return new ZodObject({
+            ...this._def,
+            shape: () => shape,
+        });
+    }
+    /**
+     * @deprecated
+     */
+    deepPartial() {
+        return deepPartialify(this);
+    }
+    partial(mask) {
+        const newShape = {};
+        for (const key of util_js_1.util.objectKeys(this.shape)) {
+            const fieldSchema = this.shape[key];
+            if (mask && !mask[key]) {
+                newShape[key] = fieldSchema;
+            }
+            else {
+                newShape[key] = fieldSchema.optional();
+            }
+        }
+        return new ZodObject({
+            ...this._def,
+            shape: () => newShape,
+        });
+    }
+    required(mask) {
+        const newShape = {};
+        for (const key of util_js_1.util.objectKeys(this.shape)) {
+            if (mask && !mask[key]) {
+                newShape[key] = this.shape[key];
+            }
+            else {
+                const fieldSchema = this.shape[key];
+                let newField = fieldSchema;
+                while (newField instanceof ZodOptional) {
+                    newField = newField._def.innerType;
+                }
+                newShape[key] = newField;
+            }
+        }
+        return new ZodObject({
+            ...this._def,
+            shape: () => newShape,
+        });
+    }
+    keyof() {
+        return createZodEnum(util_js_1.util.objectKeys(this.shape));
+    }
+}
+exports.ZodObject = ZodObject;
+ZodObject.create = (shape, params) => {
+    return new ZodObject({
+        shape: () => shape,
+        unknownKeys: "strip",
+        catchall: ZodNever.create(),
+        typeName: ZodFirstPartyTypeKind.ZodObject,
+        ...processCreateParams(params),
+    });
+};
+ZodObject.strictCreate = (shape, params) => {
+    return new ZodObject({
+        shape: () => shape,
+        unknownKeys: "strict",
+        catchall: ZodNever.create(),
+        typeName: ZodFirstPartyTypeKind.ZodObject,
+        ...processCreateParams(params),
+    });
+};
+ZodObject.lazycreate = (shape, params) => {
+    return new ZodObject({
+        shape,
+        unknownKeys: "strip",
+        catchall: ZodNever.create(),
+        typeName: ZodFirstPartyTypeKind.ZodObject,
+        ...processCreateParams(params),
+    });
+};
+class ZodUnion extends ZodType {
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        const options = this._def.options;
+        function handleResults(results) {
+            // return first issue-free validation if it exists
+            for (const result of results) {
+                if (result.result.status === "valid") {
+                    return result.result;
+                }
+            }
+            for (const result of results) {
+                if (result.result.status === "dirty") {
+                    // add issues from dirty option
+                    ctx.common.issues.push(...result.ctx.common.issues);
+                    return result.result;
+                }
+            }
+            // return invalid
+            const unionErrors = results.map((result) => new ZodError_js_1.ZodError(result.ctx.common.issues));
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_union,
+                unionErrors,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        if (ctx.common.async) {
+            return Promise.all(options.map(async (option) => {
+                const childCtx = {
+                    ...ctx,
+                    common: {
+                        ...ctx.common,
+                        issues: [],
+                    },
+                    parent: null,
+                };
+                return {
+                    result: await option._parseAsync({
+                        data: ctx.data,
+                        path: ctx.path,
+                        parent: childCtx,
+                    }),
+                    ctx: childCtx,
+                };
+            })).then(handleResults);
+        }
+        else {
+            let dirty = undefined;
+            const issues = [];
+            for (const option of options) {
+                const childCtx = {
+                    ...ctx,
+                    common: {
+                        ...ctx.common,
+                        issues: [],
+                    },
+                    parent: null,
+                };
+                const result = option._parseSync({
+                    data: ctx.data,
+                    path: ctx.path,
+                    parent: childCtx,
+                });
+                if (result.status === "valid") {
+                    return result;
+                }
+                else if (result.status === "dirty" && !dirty) {
+                    dirty = { result, ctx: childCtx };
+                }
+                if (childCtx.common.issues.length) {
+                    issues.push(childCtx.common.issues);
+                }
+            }
+            if (dirty) {
+                ctx.common.issues.push(...dirty.ctx.common.issues);
+                return dirty.result;
+            }
+            const unionErrors = issues.map((issues) => new ZodError_js_1.ZodError(issues));
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_union,
+                unionErrors,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+    }
+    get options() {
+        return this._def.options;
+    }
+}
+exports.ZodUnion = ZodUnion;
+ZodUnion.create = (types, params) => {
+    return new ZodUnion({
+        options: types,
+        typeName: ZodFirstPartyTypeKind.ZodUnion,
+        ...processCreateParams(params),
+    });
+};
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+//////////                                 //////////
+//////////      ZodDiscriminatedUnion      //////////
+//////////                                 //////////
+/////////////////////////////////////////////////////
+/////////////////////////////////////////////////////
+const getDiscriminator = (type) => {
+    if (type instanceof ZodLazy) {
+        return getDiscriminator(type.schema);
+    }
+    else if (type instanceof ZodEffects) {
+        return getDiscriminator(type.innerType());
+    }
+    else if (type instanceof ZodLiteral) {
+        return [type.value];
+    }
+    else if (type instanceof ZodEnum) {
+        return type.options;
+    }
+    else if (type instanceof ZodNativeEnum) {
+        // eslint-disable-next-line ban/ban
+        return util_js_1.util.objectValues(type.enum);
+    }
+    else if (type instanceof ZodDefault) {
+        return getDiscriminator(type._def.innerType);
+    }
+    else if (type instanceof ZodUndefined) {
+        return [undefined];
+    }
+    else if (type instanceof ZodNull) {
+        return [null];
+    }
+    else if (type instanceof ZodOptional) {
+        return [undefined, ...getDiscriminator(type.unwrap())];
+    }
+    else if (type instanceof ZodNullable) {
+        return [null, ...getDiscriminator(type.unwrap())];
+    }
+    else if (type instanceof ZodBranded) {
+        return getDiscriminator(type.unwrap());
+    }
+    else if (type instanceof ZodReadonly) {
+        return getDiscriminator(type.unwrap());
+    }
+    else if (type instanceof ZodCatch) {
+        return getDiscriminator(type._def.innerType);
+    }
+    else {
+        return [];
+    }
+};
+class ZodDiscriminatedUnion extends ZodType {
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.object) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.object,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const discriminator = this.discriminator;
+        const discriminatorValue = ctx.data[discriminator];
+        const option = this.optionsMap.get(discriminatorValue);
+        if (!option) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_union_discriminator,
+                options: Array.from(this.optionsMap.keys()),
+                path: [discriminator],
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        if (ctx.common.async) {
+            return option._parseAsync({
+                data: ctx.data,
+                path: ctx.path,
+                parent: ctx,
+            });
+        }
+        else {
+            return option._parseSync({
+                data: ctx.data,
+                path: ctx.path,
+                parent: ctx,
+            });
+        }
+    }
+    get discriminator() {
+        return this._def.discriminator;
+    }
+    get options() {
+        return this._def.options;
+    }
+    get optionsMap() {
+        return this._def.optionsMap;
+    }
+    /**
+     * The constructor of the discriminated union schema. Its behaviour is very similar to that of the normal z.union() constructor.
+     * However, it only allows a union of objects, all of which need to share a discriminator property. This property must
+     * have a different value for each object in the union.
+     * @param discriminator the name of the discriminator property
+     * @param types an array of object schemas
+     * @param params
+     */
+    static create(discriminator, options, params) {
+        // Get all the valid discriminator values
+        const optionsMap = new Map();
+        // try {
+        for (const type of options) {
+            const discriminatorValues = getDiscriminator(type.shape[discriminator]);
+            if (!discriminatorValues.length) {
+                throw new Error(`A discriminator value for key \`${discriminator}\` could not be extracted from all schema options`);
+            }
+            for (const value of discriminatorValues) {
+                if (optionsMap.has(value)) {
+                    throw new Error(`Discriminator property ${String(discriminator)} has duplicate value ${String(value)}`);
+                }
+                optionsMap.set(value, type);
+            }
+        }
+        return new ZodDiscriminatedUnion({
+            typeName: ZodFirstPartyTypeKind.ZodDiscriminatedUnion,
+            discriminator,
+            options,
+            optionsMap,
+            ...processCreateParams(params),
+        });
+    }
+}
+exports.ZodDiscriminatedUnion = ZodDiscriminatedUnion;
+function mergeValues(a, b) {
+    const aType = (0, util_js_1.getParsedType)(a);
+    const bType = (0, util_js_1.getParsedType)(b);
+    if (a === b) {
+        return { valid: true, data: a };
+    }
+    else if (aType === util_js_1.ZodParsedType.object && bType === util_js_1.ZodParsedType.object) {
+        const bKeys = util_js_1.util.objectKeys(b);
+        const sharedKeys = util_js_1.util.objectKeys(a).filter((key) => bKeys.indexOf(key) !== -1);
+        const newObj = { ...a, ...b };
+        for (const key of sharedKeys) {
+            const sharedValue = mergeValues(a[key], b[key]);
+            if (!sharedValue.valid) {
+                return { valid: false };
+            }
+            newObj[key] = sharedValue.data;
+        }
+        return { valid: true, data: newObj };
+    }
+    else if (aType === util_js_1.ZodParsedType.array && bType === util_js_1.ZodParsedType.array) {
+        if (a.length !== b.length) {
+            return { valid: false };
+        }
+        const newArray = [];
+        for (let index = 0; index < a.length; index++) {
+            const itemA = a[index];
+            const itemB = b[index];
+            const sharedValue = mergeValues(itemA, itemB);
+            if (!sharedValue.valid) {
+                return { valid: false };
+            }
+            newArray.push(sharedValue.data);
+        }
+        return { valid: true, data: newArray };
+    }
+    else if (aType === util_js_1.ZodParsedType.date && bType === util_js_1.ZodParsedType.date && +a === +b) {
+        return { valid: true, data: a };
+    }
+    else {
+        return { valid: false };
+    }
+}
+class ZodIntersection extends ZodType {
+    _parse(input) {
+        const { status, ctx } = this._processInputParams(input);
+        const handleParsed = (parsedLeft, parsedRight) => {
+            if ((0, parseUtil_js_1.isAborted)(parsedLeft) || (0, parseUtil_js_1.isAborted)(parsedRight)) {
+                return parseUtil_js_1.INVALID;
+            }
+            const merged = mergeValues(parsedLeft.value, parsedRight.value);
+            if (!merged.valid) {
+                (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                    code: ZodError_js_1.ZodIssueCode.invalid_intersection_types,
+                });
+                return parseUtil_js_1.INVALID;
+            }
+            if ((0, parseUtil_js_1.isDirty)(parsedLeft) || (0, parseUtil_js_1.isDirty)(parsedRight)) {
+                status.dirty();
+            }
+            return { status: status.value, value: merged.data };
+        };
+        if (ctx.common.async) {
+            return Promise.all([
+                this._def.left._parseAsync({
+                    data: ctx.data,
+                    path: ctx.path,
+                    parent: ctx,
+                }),
+                this._def.right._parseAsync({
+                    data: ctx.data,
+                    path: ctx.path,
+                    parent: ctx,
+                }),
+            ]).then(([left, right]) => handleParsed(left, right));
+        }
+        else {
+            return handleParsed(this._def.left._parseSync({
+                data: ctx.data,
+                path: ctx.path,
+                parent: ctx,
+            }), this._def.right._parseSync({
+                data: ctx.data,
+                path: ctx.path,
+                parent: ctx,
+            }));
+        }
+    }
+}
+exports.ZodIntersection = ZodIntersection;
+ZodIntersection.create = (left, right, params) => {
+    return new ZodIntersection({
+        left: left,
+        right: right,
+        typeName: ZodFirstPartyTypeKind.ZodIntersection,
+        ...processCreateParams(params),
+    });
+};
+// type ZodTupleItems = [ZodTypeAny, ...ZodTypeAny[]];
+class ZodTuple extends ZodType {
+    _parse(input) {
+        const { status, ctx } = this._processInputParams(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.array) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.array,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        if (ctx.data.length < this._def.items.length) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.too_small,
+                minimum: this._def.items.length,
+                inclusive: true,
+                exact: false,
+                type: "array",
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const rest = this._def.rest;
+        if (!rest && ctx.data.length > this._def.items.length) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.too_big,
+                maximum: this._def.items.length,
+                inclusive: true,
+                exact: false,
+                type: "array",
+            });
+            status.dirty();
+        }
+        const items = [...ctx.data]
+            .map((item, itemIndex) => {
+            const schema = this._def.items[itemIndex] || this._def.rest;
+            if (!schema)
+                return null;
+            return schema._parse(new ParseInputLazyPath(ctx, item, ctx.path, itemIndex));
+        })
+            .filter((x) => !!x); // filter nulls
+        if (ctx.common.async) {
+            return Promise.all(items).then((results) => {
+                return parseUtil_js_1.ParseStatus.mergeArray(status, results);
+            });
+        }
+        else {
+            return parseUtil_js_1.ParseStatus.mergeArray(status, items);
+        }
+    }
+    get items() {
+        return this._def.items;
+    }
+    rest(rest) {
+        return new ZodTuple({
+            ...this._def,
+            rest,
+        });
+    }
+}
+exports.ZodTuple = ZodTuple;
+ZodTuple.create = (schemas, params) => {
+    if (!Array.isArray(schemas)) {
+        throw new Error("You must pass an array of schemas to z.tuple([ ... ])");
+    }
+    return new ZodTuple({
+        items: schemas,
+        typeName: ZodFirstPartyTypeKind.ZodTuple,
+        rest: null,
+        ...processCreateParams(params),
+    });
+};
+class ZodRecord extends ZodType {
+    get keySchema() {
+        return this._def.keyType;
+    }
+    get valueSchema() {
+        return this._def.valueType;
+    }
+    _parse(input) {
+        const { status, ctx } = this._processInputParams(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.object) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.object,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const pairs = [];
+        const keyType = this._def.keyType;
+        const valueType = this._def.valueType;
+        for (const key in ctx.data) {
+            pairs.push({
+                key: keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, key)),
+                value: valueType._parse(new ParseInputLazyPath(ctx, ctx.data[key], ctx.path, key)),
+                alwaysSet: key in ctx.data,
+            });
+        }
+        if (ctx.common.async) {
+            return parseUtil_js_1.ParseStatus.mergeObjectAsync(status, pairs);
+        }
+        else {
+            return parseUtil_js_1.ParseStatus.mergeObjectSync(status, pairs);
+        }
+    }
+    get element() {
+        return this._def.valueType;
+    }
+    static create(first, second, third) {
+        if (second instanceof ZodType) {
+            return new ZodRecord({
+                keyType: first,
+                valueType: second,
+                typeName: ZodFirstPartyTypeKind.ZodRecord,
+                ...processCreateParams(third),
+            });
+        }
+        return new ZodRecord({
+            keyType: ZodString.create(),
+            valueType: first,
+            typeName: ZodFirstPartyTypeKind.ZodRecord,
+            ...processCreateParams(second),
+        });
+    }
+}
+exports.ZodRecord = ZodRecord;
+class ZodMap extends ZodType {
+    get keySchema() {
+        return this._def.keyType;
+    }
+    get valueSchema() {
+        return this._def.valueType;
+    }
+    _parse(input) {
+        const { status, ctx } = this._processInputParams(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.map) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.map,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const keyType = this._def.keyType;
+        const valueType = this._def.valueType;
+        const pairs = [...ctx.data.entries()].map(([key, value], index) => {
+            return {
+                key: keyType._parse(new ParseInputLazyPath(ctx, key, ctx.path, [index, "key"])),
+                value: valueType._parse(new ParseInputLazyPath(ctx, value, ctx.path, [index, "value"])),
+            };
+        });
+        if (ctx.common.async) {
+            const finalMap = new Map();
+            return Promise.resolve().then(async () => {
+                for (const pair of pairs) {
+                    const key = await pair.key;
+                    const value = await pair.value;
+                    if (key.status === "aborted" || value.status === "aborted") {
+                        return parseUtil_js_1.INVALID;
+                    }
+                    if (key.status === "dirty" || value.status === "dirty") {
+                        status.dirty();
+                    }
+                    finalMap.set(key.value, value.value);
+                }
+                return { status: status.value, value: finalMap };
+            });
+        }
+        else {
+            const finalMap = new Map();
+            for (const pair of pairs) {
+                const key = pair.key;
+                const value = pair.value;
+                if (key.status === "aborted" || value.status === "aborted") {
+                    return parseUtil_js_1.INVALID;
+                }
+                if (key.status === "dirty" || value.status === "dirty") {
+                    status.dirty();
+                }
+                finalMap.set(key.value, value.value);
+            }
+            return { status: status.value, value: finalMap };
+        }
+    }
+}
+exports.ZodMap = ZodMap;
+ZodMap.create = (keyType, valueType, params) => {
+    return new ZodMap({
+        valueType,
+        keyType,
+        typeName: ZodFirstPartyTypeKind.ZodMap,
+        ...processCreateParams(params),
+    });
+};
+class ZodSet extends ZodType {
+    _parse(input) {
+        const { status, ctx } = this._processInputParams(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.set) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.set,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const def = this._def;
+        if (def.minSize !== null) {
+            if (ctx.data.size < def.minSize.value) {
+                (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                    code: ZodError_js_1.ZodIssueCode.too_small,
+                    minimum: def.minSize.value,
+                    type: "set",
+                    inclusive: true,
+                    exact: false,
+                    message: def.minSize.message,
+                });
+                status.dirty();
+            }
+        }
+        if (def.maxSize !== null) {
+            if (ctx.data.size > def.maxSize.value) {
+                (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                    code: ZodError_js_1.ZodIssueCode.too_big,
+                    maximum: def.maxSize.value,
+                    type: "set",
+                    inclusive: true,
+                    exact: false,
+                    message: def.maxSize.message,
+                });
+                status.dirty();
+            }
+        }
+        const valueType = this._def.valueType;
+        function finalizeSet(elements) {
+            const parsedSet = new Set();
+            for (const element of elements) {
+                if (element.status === "aborted")
+                    return parseUtil_js_1.INVALID;
+                if (element.status === "dirty")
+                    status.dirty();
+                parsedSet.add(element.value);
+            }
+            return { status: status.value, value: parsedSet };
+        }
+        const elements = [...ctx.data.values()].map((item, i) => valueType._parse(new ParseInputLazyPath(ctx, item, ctx.path, i)));
+        if (ctx.common.async) {
+            return Promise.all(elements).then((elements) => finalizeSet(elements));
+        }
+        else {
+            return finalizeSet(elements);
+        }
+    }
+    min(minSize, message) {
+        return new ZodSet({
+            ...this._def,
+            minSize: { value: minSize, message: errorUtil_js_1.errorUtil.toString(message) },
+        });
+    }
+    max(maxSize, message) {
+        return new ZodSet({
+            ...this._def,
+            maxSize: { value: maxSize, message: errorUtil_js_1.errorUtil.toString(message) },
+        });
+    }
+    size(size, message) {
+        return this.min(size, message).max(size, message);
+    }
+    nonempty(message) {
+        return this.min(1, message);
+    }
+}
+exports.ZodSet = ZodSet;
+ZodSet.create = (valueType, params) => {
+    return new ZodSet({
+        valueType,
+        minSize: null,
+        maxSize: null,
+        typeName: ZodFirstPartyTypeKind.ZodSet,
+        ...processCreateParams(params),
+    });
+};
+class ZodFunction extends ZodType {
+    constructor() {
+        super(...arguments);
+        this.validate = this.implement;
+    }
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.function) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.function,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        function makeArgsIssue(args, error) {
+            return (0, parseUtil_js_1.makeIssue)({
+                data: args,
+                path: ctx.path,
+                errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, (0, errors_js_1.getErrorMap)(), errors_js_1.defaultErrorMap].filter((x) => !!x),
+                issueData: {
+                    code: ZodError_js_1.ZodIssueCode.invalid_arguments,
+                    argumentsError: error,
+                },
+            });
+        }
+        function makeReturnsIssue(returns, error) {
+            return (0, parseUtil_js_1.makeIssue)({
+                data: returns,
+                path: ctx.path,
+                errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, (0, errors_js_1.getErrorMap)(), errors_js_1.defaultErrorMap].filter((x) => !!x),
+                issueData: {
+                    code: ZodError_js_1.ZodIssueCode.invalid_return_type,
+                    returnTypeError: error,
+                },
+            });
+        }
+        const params = { errorMap: ctx.common.contextualErrorMap };
+        const fn = ctx.data;
+        if (this._def.returns instanceof ZodPromise) {
+            // Would love a way to avoid disabling this rule, but we need
+            // an alias (using an arrow function was what caused 2651).
+            // eslint-disable-next-line @typescript-eslint/no-this-alias
+            const me = this;
+            return (0, parseUtil_js_1.OK)(async function (...args) {
+                const error = new ZodError_js_1.ZodError([]);
+                const parsedArgs = await me._def.args.parseAsync(args, params).catch((e) => {
+                    error.addIssue(makeArgsIssue(args, e));
+                    throw error;
+                });
+                const result = await Reflect.apply(fn, this, parsedArgs);
+                const parsedReturns = await me._def.returns._def.type
+                    .parseAsync(result, params)
+                    .catch((e) => {
+                    error.addIssue(makeReturnsIssue(result, e));
+                    throw error;
+                });
+                return parsedReturns;
+            });
+        }
+        else {
+            // Would love a way to avoid disabling this rule, but we need
+            // an alias (using an arrow function was what caused 2651).
+            // eslint-disable-next-line @typescript-eslint/no-this-alias
+            const me = this;
+            return (0, parseUtil_js_1.OK)(function (...args) {
+                const parsedArgs = me._def.args.safeParse(args, params);
+                if (!parsedArgs.success) {
+                    throw new ZodError_js_1.ZodError([makeArgsIssue(args, parsedArgs.error)]);
+                }
+                const result = Reflect.apply(fn, this, parsedArgs.data);
+                const parsedReturns = me._def.returns.safeParse(result, params);
+                if (!parsedReturns.success) {
+                    throw new ZodError_js_1.ZodError([makeReturnsIssue(result, parsedReturns.error)]);
+                }
+                return parsedReturns.data;
+            });
+        }
+    }
+    parameters() {
+        return this._def.args;
+    }
+    returnType() {
+        return this._def.returns;
+    }
+    args(...items) {
+        return new ZodFunction({
+            ...this._def,
+            args: ZodTuple.create(items).rest(ZodUnknown.create()),
+        });
+    }
+    returns(returnType) {
+        return new ZodFunction({
+            ...this._def,
+            returns: returnType,
+        });
+    }
+    implement(func) {
+        const validatedFunc = this.parse(func);
+        return validatedFunc;
+    }
+    strictImplement(func) {
+        const validatedFunc = this.parse(func);
+        return validatedFunc;
+    }
+    static create(args, returns, params) {
+        return new ZodFunction({
+            args: (args ? args : ZodTuple.create([]).rest(ZodUnknown.create())),
+            returns: returns || ZodUnknown.create(),
+            typeName: ZodFirstPartyTypeKind.ZodFunction,
+            ...processCreateParams(params),
+        });
+    }
+}
+exports.ZodFunction = ZodFunction;
+class ZodLazy extends ZodType {
+    get schema() {
+        return this._def.getter();
+    }
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        const lazySchema = this._def.getter();
+        return lazySchema._parse({ data: ctx.data, path: ctx.path, parent: ctx });
+    }
+}
+exports.ZodLazy = ZodLazy;
+ZodLazy.create = (getter, params) => {
+    return new ZodLazy({
+        getter: getter,
+        typeName: ZodFirstPartyTypeKind.ZodLazy,
+        ...processCreateParams(params),
+    });
+};
+class ZodLiteral extends ZodType {
+    _parse(input) {
+        if (input.data !== this._def.value) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                received: ctx.data,
+                code: ZodError_js_1.ZodIssueCode.invalid_literal,
+                expected: this._def.value,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return { status: "valid", value: input.data };
+    }
+    get value() {
+        return this._def.value;
+    }
+}
+exports.ZodLiteral = ZodLiteral;
+ZodLiteral.create = (value, params) => {
+    return new ZodLiteral({
+        value: value,
+        typeName: ZodFirstPartyTypeKind.ZodLiteral,
+        ...processCreateParams(params),
+    });
+};
+function createZodEnum(values, params) {
+    return new ZodEnum({
+        values,
+        typeName: ZodFirstPartyTypeKind.ZodEnum,
+        ...processCreateParams(params),
+    });
+}
+class ZodEnum extends ZodType {
+    _parse(input) {
+        if (typeof input.data !== "string") {
+            const ctx = this._getOrReturnCtx(input);
+            const expectedValues = this._def.values;
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                expected: util_js_1.util.joinValues(expectedValues),
+                received: ctx.parsedType,
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        if (!this._cache) {
+            this._cache = new Set(this._def.values);
+        }
+        if (!this._cache.has(input.data)) {
+            const ctx = this._getOrReturnCtx(input);
+            const expectedValues = this._def.values;
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                received: ctx.data,
+                code: ZodError_js_1.ZodIssueCode.invalid_enum_value,
+                options: expectedValues,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+    get options() {
+        return this._def.values;
+    }
+    get enum() {
+        const enumValues = {};
+        for (const val of this._def.values) {
+            enumValues[val] = val;
+        }
+        return enumValues;
+    }
+    get Values() {
+        const enumValues = {};
+        for (const val of this._def.values) {
+            enumValues[val] = val;
+        }
+        return enumValues;
+    }
+    get Enum() {
+        const enumValues = {};
+        for (const val of this._def.values) {
+            enumValues[val] = val;
+        }
+        return enumValues;
+    }
+    extract(values, newDef = this._def) {
+        return ZodEnum.create(values, {
+            ...this._def,
+            ...newDef,
+        });
+    }
+    exclude(values, newDef = this._def) {
+        return ZodEnum.create(this.options.filter((opt) => !values.includes(opt)), {
+            ...this._def,
+            ...newDef,
+        });
+    }
+}
+exports.ZodEnum = ZodEnum;
+ZodEnum.create = createZodEnum;
+class ZodNativeEnum extends ZodType {
+    _parse(input) {
+        const nativeEnumValues = util_js_1.util.getValidEnumValues(this._def.values);
+        const ctx = this._getOrReturnCtx(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.string && ctx.parsedType !== util_js_1.ZodParsedType.number) {
+            const expectedValues = util_js_1.util.objectValues(nativeEnumValues);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                expected: util_js_1.util.joinValues(expectedValues),
+                received: ctx.parsedType,
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        if (!this._cache) {
+            this._cache = new Set(util_js_1.util.getValidEnumValues(this._def.values));
+        }
+        if (!this._cache.has(input.data)) {
+            const expectedValues = util_js_1.util.objectValues(nativeEnumValues);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                received: ctx.data,
+                code: ZodError_js_1.ZodIssueCode.invalid_enum_value,
+                options: expectedValues,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return (0, parseUtil_js_1.OK)(input.data);
+    }
+    get enum() {
+        return this._def.values;
+    }
+}
+exports.ZodNativeEnum = ZodNativeEnum;
+ZodNativeEnum.create = (values, params) => {
+    return new ZodNativeEnum({
+        values: values,
+        typeName: ZodFirstPartyTypeKind.ZodNativeEnum,
+        ...processCreateParams(params),
+    });
+};
+class ZodPromise extends ZodType {
+    unwrap() {
+        return this._def.type;
+    }
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        if (ctx.parsedType !== util_js_1.ZodParsedType.promise && ctx.common.async === false) {
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.promise,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        const promisified = ctx.parsedType === util_js_1.ZodParsedType.promise ? ctx.data : Promise.resolve(ctx.data);
+        return (0, parseUtil_js_1.OK)(promisified.then((data) => {
+            return this._def.type.parseAsync(data, {
+                path: ctx.path,
+                errorMap: ctx.common.contextualErrorMap,
+            });
+        }));
+    }
+}
+exports.ZodPromise = ZodPromise;
+ZodPromise.create = (schema, params) => {
+    return new ZodPromise({
+        type: schema,
+        typeName: ZodFirstPartyTypeKind.ZodPromise,
+        ...processCreateParams(params),
+    });
+};
+class ZodEffects extends ZodType {
+    innerType() {
+        return this._def.schema;
+    }
+    sourceType() {
+        return this._def.schema._def.typeName === ZodFirstPartyTypeKind.ZodEffects
+            ? this._def.schema.sourceType()
+            : this._def.schema;
+    }
+    _parse(input) {
+        const { status, ctx } = this._processInputParams(input);
+        const effect = this._def.effect || null;
+        const checkCtx = {
+            addIssue: (arg) => {
+                (0, parseUtil_js_1.addIssueToContext)(ctx, arg);
+                if (arg.fatal) {
+                    status.abort();
+                }
+                else {
+                    status.dirty();
+                }
+            },
+            get path() {
+                return ctx.path;
+            },
+        };
+        checkCtx.addIssue = checkCtx.addIssue.bind(checkCtx);
+        if (effect.type === "preprocess") {
+            const processed = effect.transform(ctx.data, checkCtx);
+            if (ctx.common.async) {
+                return Promise.resolve(processed).then(async (processed) => {
+                    if (status.value === "aborted")
+                        return parseUtil_js_1.INVALID;
+                    const result = await this._def.schema._parseAsync({
+                        data: processed,
+                        path: ctx.path,
+                        parent: ctx,
+                    });
+                    if (result.status === "aborted")
+                        return parseUtil_js_1.INVALID;
+                    if (result.status === "dirty")
+                        return (0, parseUtil_js_1.DIRTY)(result.value);
+                    if (status.value === "dirty")
+                        return (0, parseUtil_js_1.DIRTY)(result.value);
+                    return result;
+                });
+            }
+            else {
+                if (status.value === "aborted")
+                    return parseUtil_js_1.INVALID;
+                const result = this._def.schema._parseSync({
+                    data: processed,
+                    path: ctx.path,
+                    parent: ctx,
+                });
+                if (result.status === "aborted")
+                    return parseUtil_js_1.INVALID;
+                if (result.status === "dirty")
+                    return (0, parseUtil_js_1.DIRTY)(result.value);
+                if (status.value === "dirty")
+                    return (0, parseUtil_js_1.DIRTY)(result.value);
+                return result;
+            }
+        }
+        if (effect.type === "refinement") {
+            const executeRefinement = (acc) => {
+                const result = effect.refinement(acc, checkCtx);
+                if (ctx.common.async) {
+                    return Promise.resolve(result);
+                }
+                if (result instanceof Promise) {
+                    throw new Error("Async refinement encountered during synchronous parse operation. Use .parseAsync instead.");
+                }
+                return acc;
+            };
+            if (ctx.common.async === false) {
+                const inner = this._def.schema._parseSync({
+                    data: ctx.data,
+                    path: ctx.path,
+                    parent: ctx,
+                });
+                if (inner.status === "aborted")
+                    return parseUtil_js_1.INVALID;
+                if (inner.status === "dirty")
+                    status.dirty();
+                // return value is ignored
+                executeRefinement(inner.value);
+                return { status: status.value, value: inner.value };
+            }
+            else {
+                return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
+                    if (inner.status === "aborted")
+                        return parseUtil_js_1.INVALID;
+                    if (inner.status === "dirty")
+                        status.dirty();
+                    return executeRefinement(inner.value).then(() => {
+                        return { status: status.value, value: inner.value };
+                    });
+                });
+            }
+        }
+        if (effect.type === "transform") {
+            if (ctx.common.async === false) {
+                const base = this._def.schema._parseSync({
+                    data: ctx.data,
+                    path: ctx.path,
+                    parent: ctx,
+                });
+                if (!(0, parseUtil_js_1.isValid)(base))
+                    return parseUtil_js_1.INVALID;
+                const result = effect.transform(base.value, checkCtx);
+                if (result instanceof Promise) {
+                    throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
+                }
+                return { status: status.value, value: result };
+            }
+            else {
+                return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
+                    if (!(0, parseUtil_js_1.isValid)(base))
+                        return parseUtil_js_1.INVALID;
+                    return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
+                        status: status.value,
+                        value: result,
+                    }));
+                });
+            }
+        }
+        util_js_1.util.assertNever(effect);
+    }
+}
+exports.ZodEffects = ZodEffects;
+exports.ZodTransformer = ZodEffects;
+ZodEffects.create = (schema, effect, params) => {
+    return new ZodEffects({
+        schema,
+        typeName: ZodFirstPartyTypeKind.ZodEffects,
+        effect,
+        ...processCreateParams(params),
+    });
+};
+ZodEffects.createWithPreprocess = (preprocess, schema, params) => {
+    return new ZodEffects({
+        schema,
+        effect: { type: "preprocess", transform: preprocess },
+        typeName: ZodFirstPartyTypeKind.ZodEffects,
+        ...processCreateParams(params),
+    });
+};
+class ZodOptional extends ZodType {
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType === util_js_1.ZodParsedType.undefined) {
+            return (0, parseUtil_js_1.OK)(undefined);
+        }
+        return this._def.innerType._parse(input);
+    }
+    unwrap() {
+        return this._def.innerType;
+    }
+}
+exports.ZodOptional = ZodOptional;
+ZodOptional.create = (type, params) => {
+    return new ZodOptional({
+        innerType: type,
+        typeName: ZodFirstPartyTypeKind.ZodOptional,
+        ...processCreateParams(params),
+    });
+};
+class ZodNullable extends ZodType {
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType === util_js_1.ZodParsedType.null) {
+            return (0, parseUtil_js_1.OK)(null);
+        }
+        return this._def.innerType._parse(input);
+    }
+    unwrap() {
+        return this._def.innerType;
+    }
+}
+exports.ZodNullable = ZodNullable;
+ZodNullable.create = (type, params) => {
+    return new ZodNullable({
+        innerType: type,
+        typeName: ZodFirstPartyTypeKind.ZodNullable,
+        ...processCreateParams(params),
+    });
+};
+class ZodDefault extends ZodType {
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        let data = ctx.data;
+        if (ctx.parsedType === util_js_1.ZodParsedType.undefined) {
+            data = this._def.defaultValue();
+        }
+        return this._def.innerType._parse({
+            data,
+            path: ctx.path,
+            parent: ctx,
+        });
+    }
+    removeDefault() {
+        return this._def.innerType;
+    }
+}
+exports.ZodDefault = ZodDefault;
+ZodDefault.create = (type, params) => {
+    return new ZodDefault({
+        innerType: type,
+        typeName: ZodFirstPartyTypeKind.ZodDefault,
+        defaultValue: typeof params.default === "function" ? params.default : () => params.default,
+        ...processCreateParams(params),
+    });
+};
+class ZodCatch extends ZodType {
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        // newCtx is used to not collect issues from inner types in ctx
+        const newCtx = {
+            ...ctx,
+            common: {
+                ...ctx.common,
+                issues: [],
+            },
+        };
+        const result = this._def.innerType._parse({
+            data: newCtx.data,
+            path: newCtx.path,
+            parent: {
+                ...newCtx,
+            },
+        });
+        if ((0, parseUtil_js_1.isAsync)(result)) {
+            return result.then((result) => {
+                return {
+                    status: "valid",
+                    value: result.status === "valid"
+                        ? result.value
+                        : this._def.catchValue({
+                            get error() {
+                                return new ZodError_js_1.ZodError(newCtx.common.issues);
+                            },
+                            input: newCtx.data,
+                        }),
+                };
+            });
+        }
+        else {
+            return {
+                status: "valid",
+                value: result.status === "valid"
+                    ? result.value
+                    : this._def.catchValue({
+                        get error() {
+                            return new ZodError_js_1.ZodError(newCtx.common.issues);
+                        },
+                        input: newCtx.data,
+                    }),
+            };
+        }
+    }
+    removeCatch() {
+        return this._def.innerType;
+    }
+}
+exports.ZodCatch = ZodCatch;
+ZodCatch.create = (type, params) => {
+    return new ZodCatch({
+        innerType: type,
+        typeName: ZodFirstPartyTypeKind.ZodCatch,
+        catchValue: typeof params.catch === "function" ? params.catch : () => params.catch,
+        ...processCreateParams(params),
+    });
+};
+class ZodNaN extends ZodType {
+    _parse(input) {
+        const parsedType = this._getType(input);
+        if (parsedType !== util_js_1.ZodParsedType.nan) {
+            const ctx = this._getOrReturnCtx(input);
+            (0, parseUtil_js_1.addIssueToContext)(ctx, {
+                code: ZodError_js_1.ZodIssueCode.invalid_type,
+                expected: util_js_1.ZodParsedType.nan,
+                received: ctx.parsedType,
+            });
+            return parseUtil_js_1.INVALID;
+        }
+        return { status: "valid", value: input.data };
+    }
+}
+exports.ZodNaN = ZodNaN;
+ZodNaN.create = (params) => {
+    return new ZodNaN({
+        typeName: ZodFirstPartyTypeKind.ZodNaN,
+        ...processCreateParams(params),
+    });
+};
+exports.BRAND = Symbol("zod_brand");
+class ZodBranded extends ZodType {
+    _parse(input) {
+        const { ctx } = this._processInputParams(input);
+        const data = ctx.data;
+        return this._def.type._parse({
+            data,
+            path: ctx.path,
+            parent: ctx,
+        });
+    }
+    unwrap() {
+        return this._def.type;
+    }
+}
+exports.ZodBranded = ZodBranded;
+class ZodPipeline extends ZodType {
+    _parse(input) {
+        const { status, ctx } = this._processInputParams(input);
+        if (ctx.common.async) {
+            const handleAsync = async () => {
+                const inResult = await this._def.in._parseAsync({
+                    data: ctx.data,
+                    path: ctx.path,
+                    parent: ctx,
+                });
+                if (inResult.status === "aborted")
+                    return parseUtil_js_1.INVALID;
+                if (inResult.status === "dirty") {
+                    status.dirty();
+                    return (0, parseUtil_js_1.DIRTY)(inResult.value);
+                }
+                else {
+                    return this._def.out._parseAsync({
+                        data: inResult.value,
+                        path: ctx.path,
+                        parent: ctx,
+                    });
+                }
+            };
+            return handleAsync();
+        }
+        else {
+            const inResult = this._def.in._parseSync({
+                data: ctx.data,
+                path: ctx.path,
+                parent: ctx,
+            });
+            if (inResult.status === "aborted")
+                return parseUtil_js_1.INVALID;
+            if (inResult.status === "dirty") {
+                status.dirty();
+                return {
+                    status: "dirty",
+                    value: inResult.value,
+                };
+            }
+            else {
+                return this._def.out._parseSync({
+                    data: inResult.value,
+                    path: ctx.path,
+                    parent: ctx,
+                });
+            }
+        }
+    }
+    static create(a, b) {
+        return new ZodPipeline({
+            in: a,
+            out: b,
+            typeName: ZodFirstPartyTypeKind.ZodPipeline,
+        });
+    }
+}
+exports.ZodPipeline = ZodPipeline;
+class ZodReadonly extends ZodType {
+    _parse(input) {
+        const result = this._def.innerType._parse(input);
+        const freeze = (data) => {
+            if ((0, parseUtil_js_1.isValid)(data)) {
+                data.value = Object.freeze(data.value);
+            }
+            return data;
+        };
+        return (0, parseUtil_js_1.isAsync)(result) ? result.then((data) => freeze(data)) : freeze(result);
+    }
+    unwrap() {
+        return this._def.innerType;
+    }
+}
+exports.ZodReadonly = ZodReadonly;
+ZodReadonly.create = (type, params) => {
+    return new ZodReadonly({
+        innerType: type,
+        typeName: ZodFirstPartyTypeKind.ZodReadonly,
+        ...processCreateParams(params),
+    });
+};
+////////////////////////////////////////
+////////////////////////////////////////
+//////////                    //////////
+//////////      z.custom      //////////
+//////////                    //////////
+////////////////////////////////////////
+////////////////////////////////////////
+function cleanParams(params, data) {
+    const p = typeof params === "function" ? params(data) : typeof params === "string" ? { message: params } : params;
+    const p2 = typeof p === "string" ? { message: p } : p;
+    return p2;
+}
+function custom(check, _params = {}, 
+/**
+ * @deprecated
+ *
+ * Pass `fatal` into the params object instead:
+ *
+ * ```ts
+ * z.string().custom((val) => val.length > 5, { fatal: false })
+ * ```
+ *
+ */
+fatal) {
+    if (check)
+        return ZodAny.create().superRefine((data, ctx) => {
+            const r = check(data);
+            if (r instanceof Promise) {
+                return r.then((r) => {
+                    if (!r) {
+                        const params = cleanParams(_params, data);
+                        const _fatal = params.fatal ?? fatal ?? true;
+                        ctx.addIssue({ code: "custom", ...params, fatal: _fatal });
+                    }
+                });
+            }
+            if (!r) {
+                const params = cleanParams(_params, data);
+                const _fatal = params.fatal ?? fatal ?? true;
+                ctx.addIssue({ code: "custom", ...params, fatal: _fatal });
+            }
+            return;
+        });
+    return ZodAny.create();
+}
+exports.late = {
+    object: ZodObject.lazycreate,
+};
+var ZodFirstPartyTypeKind;
+(function (ZodFirstPartyTypeKind) {
+    ZodFirstPartyTypeKind["ZodString"] = "ZodString";
+    ZodFirstPartyTypeKind["ZodNumber"] = "ZodNumber";
+    ZodFirstPartyTypeKind["ZodNaN"] = "ZodNaN";
+    ZodFirstPartyTypeKind["ZodBigInt"] = "ZodBigInt";
+    ZodFirstPartyTypeKind["ZodBoolean"] = "ZodBoolean";
+    ZodFirstPartyTypeKind["ZodDate"] = "ZodDate";
+    ZodFirstPartyTypeKind["ZodSymbol"] = "ZodSymbol";
+    ZodFirstPartyTypeKind["ZodUndefined"] = "ZodUndefined";
+    ZodFirstPartyTypeKind["ZodNull"] = "ZodNull";
+    ZodFirstPartyTypeKind["ZodAny"] = "ZodAny";
+    ZodFirstPartyTypeKind["ZodUnknown"] = "ZodUnknown";
+    ZodFirstPartyTypeKind["ZodNever"] = "ZodNever";
+    ZodFirstPartyTypeKind["ZodVoid"] = "ZodVoid";
+    ZodFirstPartyTypeKind["ZodArray"] = "ZodArray";
+    ZodFirstPartyTypeKind["ZodObject"] = "ZodObject";
+    ZodFirstPartyTypeKind["ZodUnion"] = "ZodUnion";
+    ZodFirstPartyTypeKind["ZodDiscriminatedUnion"] = "ZodDiscriminatedUnion";
+    ZodFirstPartyTypeKind["ZodIntersection"] = "ZodIntersection";
+    ZodFirstPartyTypeKind["ZodTuple"] = "ZodTuple";
+    ZodFirstPartyTypeKind["ZodRecord"] = "ZodRecord";
+    ZodFirstPartyTypeKind["ZodMap"] = "ZodMap";
+    ZodFirstPartyTypeKind["ZodSet"] = "ZodSet";
+    ZodFirstPartyTypeKind["ZodFunction"] = "ZodFunction";
+    ZodFirstPartyTypeKind["ZodLazy"] = "ZodLazy";
+    ZodFirstPartyTypeKind["ZodLiteral"] = "ZodLiteral";
+    ZodFirstPartyTypeKind["ZodEnum"] = "ZodEnum";
+    ZodFirstPartyTypeKind["ZodEffects"] = "ZodEffects";
+    ZodFirstPartyTypeKind["ZodNativeEnum"] = "ZodNativeEnum";
+    ZodFirstPartyTypeKind["ZodOptional"] = "ZodOptional";
+    ZodFirstPartyTypeKind["ZodNullable"] = "ZodNullable";
+    ZodFirstPartyTypeKind["ZodDefault"] = "ZodDefault";
+    ZodFirstPartyTypeKind["ZodCatch"] = "ZodCatch";
+    ZodFirstPartyTypeKind["ZodPromise"] = "ZodPromise";
+    ZodFirstPartyTypeKind["ZodBranded"] = "ZodBranded";
+    ZodFirstPartyTypeKind["ZodPipeline"] = "ZodPipeline";
+    ZodFirstPartyTypeKind["ZodReadonly"] = "ZodReadonly";
+})(ZodFirstPartyTypeKind || (exports.ZodFirstPartyTypeKind = ZodFirstPartyTypeKind = {}));
+// requires TS 4.4+
+class Class {
+    constructor(..._) { }
+}
+const instanceOfType = (
+// const instanceOfType = <T extends new (...args: any[]) => any>(
+cls, params = {
+    message: `Input not instance of ${cls.name}`,
+}) => custom((data) => data instanceof cls, params);
+exports["instanceof"] = instanceOfType;
+const stringType = ZodString.create;
+exports.string = stringType;
+const numberType = ZodNumber.create;
+exports.number = numberType;
+const nanType = ZodNaN.create;
+exports.nan = nanType;
+const bigIntType = ZodBigInt.create;
+exports.bigint = bigIntType;
+const booleanType = ZodBoolean.create;
+exports.boolean = booleanType;
+const dateType = ZodDate.create;
+exports.date = dateType;
+const symbolType = ZodSymbol.create;
+exports.symbol = symbolType;
+const undefinedType = ZodUndefined.create;
+exports.undefined = undefinedType;
+const nullType = ZodNull.create;
+exports["null"] = nullType;
+const anyType = ZodAny.create;
+exports.any = anyType;
+const unknownType = ZodUnknown.create;
+exports.unknown = unknownType;
+const neverType = ZodNever.create;
+exports.never = neverType;
+const voidType = ZodVoid.create;
+exports["void"] = voidType;
+const arrayType = ZodArray.create;
+exports.array = arrayType;
+const objectType = ZodObject.create;
+exports.object = objectType;
+const strictObjectType = ZodObject.strictCreate;
+exports.strictObject = strictObjectType;
+const unionType = ZodUnion.create;
+exports.union = unionType;
+const discriminatedUnionType = ZodDiscriminatedUnion.create;
+exports.discriminatedUnion = discriminatedUnionType;
+const intersectionType = ZodIntersection.create;
+exports.intersection = intersectionType;
+const tupleType = ZodTuple.create;
+exports.tuple = tupleType;
+const recordType = ZodRecord.create;
+exports.record = recordType;
+const mapType = ZodMap.create;
+exports.map = mapType;
+const setType = ZodSet.create;
+exports.set = setType;
+const functionType = ZodFunction.create;
+exports["function"] = functionType;
+const lazyType = ZodLazy.create;
+exports.lazy = lazyType;
+const literalType = ZodLiteral.create;
+exports.literal = literalType;
+const enumType = ZodEnum.create;
+exports["enum"] = enumType;
+const nativeEnumType = ZodNativeEnum.create;
+exports.nativeEnum = nativeEnumType;
+const promiseType = ZodPromise.create;
+exports.promise = promiseType;
+const effectsType = ZodEffects.create;
+exports.effect = effectsType;
+exports.transformer = effectsType;
+const optionalType = ZodOptional.create;
+exports.optional = optionalType;
+const nullableType = ZodNullable.create;
+exports.nullable = nullableType;
+const preprocessType = ZodEffects.createWithPreprocess;
+exports.preprocess = preprocessType;
+const pipelineType = ZodPipeline.create;
+exports.pipeline = pipelineType;
+const ostring = () => stringType().optional();
+exports.ostring = ostring;
+const onumber = () => numberType().optional();
+exports.onumber = onumber;
+const oboolean = () => booleanType().optional();
+exports.oboolean = oboolean;
+exports.coerce = {
+    string: ((arg) => ZodString.create({ ...arg, coerce: true })),
+    number: ((arg) => ZodNumber.create({ ...arg, coerce: true })),
+    boolean: ((arg) => ZodBoolean.create({
+        ...arg,
+        coerce: true,
+    })),
+    bigint: ((arg) => ZodBigInt.create({ ...arg, coerce: true })),
+    date: ((arg) => ZodDate.create({ ...arg, coerce: true })),
+};
+exports.NEVER = parseUtil_js_1.INVALID;
 
 
 /***/ })

@@ -15,11 +15,4 @@ export declare class AISimilarityService {
     private buildThemeDetails;
     private parseAISimilarityResponse;
     private createFallbackSimilarity;
-    /**
-     * Calculate similarity for multiple theme pairs in a single AI call
-     * This is the key performance optimization method
-     */
-    calculateBatchSimilarity(batchPrompt: string, expectedResults: number): Promise<{
-        results: unknown[];
-    }>;
 }

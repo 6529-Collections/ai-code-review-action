@@ -156,13 +156,36 @@ ${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
   }
 
   private getBatchSimilarityPrompt(): string {
-    return `Analyze pairs:
+    return `Analyze similarity between theme pairs. Determine if each pair should be merged based on semantic similarity, functional overlap, and business context.
+
 {{pairs}}
 
-JSON:
-- results: [{pairId, shouldMerge, confidence, scores: {name, description, pattern, business, semantic}}]
+CRITICAL: Respond with ONLY valid JSON in this exact format:
+{
+  "success": true,
+  "results": [
+    {
+      "pairId": "pair-0",
+      "shouldMerge": boolean,
+      "confidence": 0.0-1.0,
+      "reasoning": "brief explanation (max 30 words)",
+      "scores": {
+        "name": 0.0-1.0,
+        "description": 0.0-1.0,
+        "pattern": 0.0-1.0,
+        "business": 0.0-1.0,
+        "semantic": 0.0-1.0
+      }
+    }
+  ],
+  "metadata": {
+    "processedCount": {{pairCount}},
+    "failedCount": 0,
+    "processingTimeMs": 0
+  }
+}
 
-${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
+Return ONLY the JSON object, no additional text.`;
   }
 
   private getCrossLevelSimilarityPrompt(): string {

@@ -52,19 +52,14 @@ export declare class ThemeSimilarityService {
      */
     private createPairBatches;
     /**
-     * Process a batch of theme pairs with a single AI call
+     * Process a batch of theme pairs using unified batch processor
      * This is the key optimization - multiple pairs analyzed in one API call
      */
     private processSimilarityBatch;
     /**
-     * Build optimized prompt for batch similarity analysis
-     * PRD: "Structured prompts with clear sections"
+     * Convert unified batch results to SimilarityMetrics format
      */
-    private buildBatchSimilarityPrompt;
-    /**
-     * Parse batch AI response into individual similarity metrics
-     */
-    private parseBatchSimilarityResponse;
+    private convertUnifiedResultsToSimilarityMetrics;
     /**
      * Fallback to individual processing if batch fails
      */

@@ -1,4 +1,6 @@
 import { PromptType, PromptResponse } from '../prompt-types';
+import { ConsolidatedTheme } from '../../../types/similarity-types';
+import { UnifiedBatchResponse, SimilarityResult, BatchProcessingOptions } from '../../../types/batch-types';
 interface QueueItem<T> {
     id: string;
     promptType: PromptType;
@@ -103,5 +105,24 @@ export declare class BatchProcessor {
      * Get batch history
      */
     getBatchHistory(limit?: number): Batch<any>[];
+    /**
+     * Process similarity batch using unified format
+     */
+    processSimilarityBatch(pairs: Array<{
+        theme1: ConsolidatedTheme;
+        theme2: ConsolidatedTheme;
+    }>, options?: BatchProcessingOptions): Promise<UnifiedBatchResponse<SimilarityResult>>;
+    /**
+     * Build unified similarity prompt
+     */
+    private buildUnifiedSimilarityPrompt;
+    /**
+     * Parse unified similarity response
+     */
+    private parseUnifiedSimilarityResponse;
+    /**
+     * Estimate token count for a prompt (simplified)
+     */
+    private estimateTokens;
 }
 export {};

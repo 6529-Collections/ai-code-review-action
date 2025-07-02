@@ -7,6 +7,16 @@ import {
 } from './batch-strategies';
 import { AdaptiveBatchingController, SystemMetrics } from './adaptive-batching';
 import { SecureFileNamer } from '../../../utils/secure-file-namer';
+import { JsonExtractor } from '../../../utils/json-extractor';
+import { logger } from '../../../utils/logger';
+import { ConsolidatedTheme } from '../../../types/similarity-types';
+import {
+  UnifiedBatchResponse,
+  SimilarityResult,
+  BatchProcessingOptions,
+  isSimilarityResult,
+  isUnifiedBatchResponse,
+} from '../../../types/batch-types';
 
 interface QueueItem<T> {
   id: string;
@@ -587,5 +597,188 @@ export class BatchProcessor {
    */
   getBatchHistory(limit: number = 10): Batch<any>[] {
     return this.batchHistory.slice(-limit);
+  }
+
+  /**
+   * Process similarity batch using unified format
+   */
+  async processSimilarityBatch(
+    pairs: Array<{ theme1: ConsolidatedTheme; theme2: ConsolidatedTheme }>,
+    options?: BatchProcessingOptions
+  ): Promise<UnifiedBatchResponse<SimilarityResult>> {
+    const startTime = Date.now();
+    const batchContext = logger.startOperation('Batch Similarity Processing', {
+      pairCount: pairs.length,
+      maxBatchSize: options?.maxBatchSize || 8,
+    });
+
+    try {
+      // Create batch prompt
+      const prompt = this.buildUnifiedSimilarityPrompt(pairs);
+      
+      // Execute via unified service
+      const response = await this.unifiedService.execute<any>(
+        PromptType.BATCH_SIMILARITY,
+        { prompt, pairs: JSON.stringify(pairs) }
+      );
+
+      if (!response.success) {
+        throw new Error(`Batch processing failed: ${response.error}`);
+      }
+
+      // Parse and validate response
+      const batchResult = this.parseUnifiedSimilarityResponse(
+        response.data?.response || '',
+        pairs.length
+      );
+
+      const processingTime = Date.now() - startTime;
+      
+      logger.endOperation(batchContext, true, {
+        processedCount: batchResult.results.length,
+        failedCount: batchResult.metadata.failedCount,
+        processingTime,
+      });
+
+      return {
+        ...batchResult,
+        metadata: {
+          ...batchResult.metadata,
+          processingTimeMs: processingTime,
+        },
+      };
+    } catch (error) {
+      const processingTime = Date.now() - startTime;
+      
+      logger.logError('Batch similarity processing failed', error as Error, {
+        pairCount: pairs.length,
+        processingTime,
+        batchSize: options?.maxBatchSize,
+      });
+      
+      logger.endOperation(batchContext, false);
+      throw error;
+    }
+  }
+
+  /**
+   * Build unified similarity prompt
+   */
+  private buildUnifiedSimilarityPrompt(
+    pairs: Array<{ theme1: ConsolidatedTheme; theme2: ConsolidatedTheme }>
+  ): string {
+    const formattedPairs = pairs.map((pair, index) => {
+      const pairId = `pair-${index}`;
+      return `
+**${pairId}:**
+Theme 1: "${pair.theme1.name}"
+- Description: ${pair.theme1.description}
+- Files: ${pair.theme1.affectedFiles.join(', ')}
+- Code: ${pair.theme1.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+
+Theme 2: "${pair.theme2.name}"
+- Description: ${pair.theme2.description}
+- Files: ${pair.theme2.affectedFiles.join(', ')}
+- Code: ${pair.theme2.codeSnippets.slice(0, 2).join('\n').substring(0, 200)}...
+`;
+    });
+
+    return `Analyze the similarity between these theme pairs. Determine if each pair should be merged based on semantic similarity, functional overlap, and business context.
+
+CRITICAL: Respond with ONLY valid JSON in this exact format:
+{
+  "success": true,
+  "results": [
+    {
+      "pairId": "pair-0",
+      "shouldMerge": boolean,
+      "confidence": 0.0-1.0,
+      "reasoning": "brief explanation (max 30 words)",
+      "scores": {
+        "name": 0.0-1.0,
+        "description": 0.0-1.0,
+        "pattern": 0.0-1.0,
+        "business": 0.0-1.0,
+        "semantic": 0.0-1.0
+      }
+    }
+  ],
+  "metadata": {
+    "processedCount": ${pairs.length},
+    "failedCount": 0,
+    "processingTimeMs": 0
+  }
+}
+
+Pairs to analyze:
+${formattedPairs.join('\n')}
+
+Remember: Return ONLY the JSON object, no additional text.`;
+  }
+
+  /**
+   * Parse unified similarity response
+   */
+  private parseUnifiedSimilarityResponse(
+    response: string,
+    expectedCount: number
+  ): UnifiedBatchResponse<SimilarityResult> {
+    try {
+      // Extract JSON using robust JsonExtractor
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        ['success', 'results'] // Required fields
+      );
+
+      if (!extractionResult.success) {
+        throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+      }
+
+      // Validate response structure
+      const data = extractionResult.data as unknown;
+      if (!isUnifiedBatchResponse(data, isSimilarityResult)) {
+        throw new Error('Response structure validation failed');
+      }
+
+      const validatedResponse = data as UnifiedBatchResponse<SimilarityResult>;
+
+      // Verify we got results for all pairs
+      if (validatedResponse.results.length !== expectedCount) {
+        logger.logError('Batch response count mismatch', 
+          `Expected ${expectedCount} results, got ${validatedResponse.results.length}`, {
+          expectedCount,
+          actualCount: validatedResponse.results.length,
+          response: response.substring(0, 500),
+        });
+      }
+
+      return validatedResponse;
+    } catch (error) {
+      logger.logError('Failed to parse batch similarity response', error as Error, {
+        responseLength: response.length,
+        responseStart: response.substring(0, 200),
+        expectedCount,
+      });
+      
+      // Create fallback response
+      return {
+        success: false,
+        results: [],
+        metadata: {
+          processedCount: 0,
+          failedCount: expectedCount,
+          processingTimeMs: 0,
+        },
+      };
+    }
+  }
+
+  /**
+   * Estimate token count for a prompt (simplified)
+   */
+  private estimateTokens(text: string): number {
+    // Rough estimate: 4 characters per token
+    return Math.ceil(text.length / 4);
   }
 }
