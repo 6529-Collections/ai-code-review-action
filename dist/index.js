@@ -33195,7 +33195,7 @@ exports.DEFAULT_EXPANSION_CONFIG = {
     maxRetries: 3,
     retryDelay: 1000,
     retryBackoffMultiplier: 2,
-    enableProgressLogging: true,
+    enableProgressLogging: false,
     dynamicConcurrency: true,
     enableJitter: true,
 };
@@ -33298,6 +33298,8 @@ class ThemeExpansionService {
         // Check if theme is candidate for expansion
         const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
         if (!expansionCandidate) {
+            console.log(`[EXPANSION-FLOW] Theme "${theme.name}" NOT selected for expansion at depth ${currentDepth}`);
+            console.log(`[EXPANSION-FLOW] Will only process existing ${theme.childThemes.length} child themes`);
             // Still process existing child themes recursively
             const childResults = await this.processConcurrentlyWithLimit(theme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, theme), {
                 onProgress: (completed, total) => {
@@ -33392,7 +33394,12 @@ class ThemeExpansionService {
         // Get sibling themes for context
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
         // Let AI decide based on full context
+        console.log(`[AI-DECISION-INPUT] Calling AI for theme: "${theme.name}"`);
+        console.log(`[AI-DECISION-INPUT] Parent: "${parentTheme?.name || 'none'}"`);
+        console.log(`[AI-DECISION-INPUT] Siblings: ${siblingThemes.length} themes`);
+        console.log(`[AI-DECISION-INPUT] Depth: ${currentDepth}`);
         const expansionDecision = await this.aiDecisionService.shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes);
+        console.log(`[AI-DECISION-OUTPUT] Result for "${theme.name}": expand=${expansionDecision.shouldExpand}`);
         // Update theme with PRD-aligned decision metadata
         theme.isAtomic = expansionDecision.isAtomic;
         // Track expansion metrics for PRD analysis
@@ -33404,6 +33411,22 @@ class ThemeExpansionService {
         };
         // If theme is atomic or shouldn't expand, return null
         if (!expansionDecision.shouldExpand) {
+            // Detailed logging for expansion decisions
+            console.log(`[EXPANSION-DECISION] Evaluating theme: "${theme.name}" at depth ${currentDepth}`);
+            console.log(`[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`);
+            console.log(`[EXPANSION-DECISION] Code lines: ${theme.codeSnippets.join('\n').split('\n').length}`);
+            console.log(`[EXPANSION-DECISION] AI Decision: shouldExpand=${expansionDecision.shouldExpand}, isAtomic=${expansionDecision.isAtomic}`);
+            console.log(`[EXPANSION-DECISION] AI Reasoning: "${expansionDecision.reasoning}"`);
+            console.log(`[EXPANSION-DECISION] Business Context: "${expansionDecision.businessContext}"`);
+            console.log(`[EXPANSION-DECISION] Technical Context: "${expansionDecision.technicalContext}"`);
+            console.log(`[EXPANSION-DECISION] Testability: "${expansionDecision.testabilityAssessment}"`);
+            if (expansionDecision.suggestedSubThemes) {
+                console.log(`[EXPANSION-DECISION] Suggested sub-themes: ${expansionDecision.suggestedSubThemes.length} items`);
+            }
+            else {
+                console.log(`[EXPANSION-DECISION] No sub-themes suggested`);
+            }
+            console.log('---');
             if (expansionDecision.isAtomic) {
                 this.effectiveness.atomicThemesIdentified++;
             }
