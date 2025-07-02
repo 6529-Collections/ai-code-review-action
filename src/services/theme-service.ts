@@ -15,6 +15,7 @@ import {
 } from '../utils/ai-code-analyzer';
 import { JsonExtractor } from '../utils/json-extractor';
 import { ConcurrencyManager } from '../utils/concurrency-manager';
+import { performanceTracker } from '../utils/performance-tracker';
 
 // Concurrency configuration
 const PARALLEL_CONFIG = {
@@ -162,6 +163,7 @@ class ClaudeService {
 
       try {
         await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          silent: true,
           listeners: {
             stdout: (data: Buffer) => {
               output += data.toString();
@@ -591,6 +593,7 @@ export class ThemeService {
   async analyzeThemesWithEnhancedContext(
     gitService: import('./git-service').GitService
   ): Promise<ThemeAnalysisResult> {
+    performanceTracker.startTiming('Code Analysis');
     console.log('[THEME-SERVICE] Starting enhanced theme analysis');
     const startTime = Date.now();
 
@@ -670,7 +673,7 @@ export class ThemeService {
         {
           concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
           maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-          enableLogging: true,
+          enableLogging: false,
           onProgress: (completed, total) => {
             console.log(
               `[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`
@@ -726,6 +729,9 @@ export class ThemeService {
       console.log(
         '[THEME-SERVICE] Starting pipeline optimization with overlapped phases'
       );
+      performanceTracker.endTiming('Code Analysis');
+
+      performanceTracker.startTiming('Theme Consolidation');
       const consolidationStartTime = Date.now();
 
       // Start consolidation and expansion candidate identification in parallel
@@ -741,6 +747,17 @@ export class ThemeService {
       let consolidatedThemes = consolidatedThemesResult;
 
       const consolidationTime = Date.now() - consolidationStartTime;
+
+      // Track consolidation effectiveness
+      performanceTracker.trackEffectiveness(
+        'Theme Consolidation',
+        originalThemes.length,
+        consolidatedThemes.length,
+        consolidationTime
+      );
+
+      performanceTracker.endTiming('Theme Consolidation');
+
       console.log(
         `[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`
       );
@@ -750,6 +767,7 @@ export class ThemeService {
       let expansionStats = undefined;
 
       if (this.expansionEnabled && consolidatedThemes.length > 0) {
+        performanceTracker.startTiming('Theme Expansion');
         console.log(
           '[THEME-SERVICE] Starting AI-driven hierarchical expansion'
         );
@@ -760,6 +778,7 @@ export class ThemeService {
           console.log(
             `[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`
           );
+          const beforeExpansionCount = consolidatedThemes.length;
           const expandedThemes =
             await this.expansionService.expandThemesHierarchically(
               consolidatedThemes
@@ -770,15 +789,37 @@ export class ThemeService {
 
           // Apply cross-level deduplication
           if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
+            performanceTracker.startTiming('Cross-Level Deduplication');
             console.log('[THEME-SERVICE] Running cross-level deduplication...');
+            const beforeDedup = expandedThemes.length;
+            const dedupStartTime = Date.now();
+
             await this.hierarchicalSimilarityService.deduplicateHierarchy(
               expandedThemes
             );
+
+            // Track deduplication effectiveness
+            performanceTracker.trackEffectiveness(
+              'Cross-Level Deduplication',
+              beforeDedup,
+              expandedThemes.length,
+              Date.now() - dedupStartTime
+            );
+
+            performanceTracker.endTiming('Cross-Level Deduplication');
           } else {
             console.log(
               '[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)'
             );
           }
+
+          // Track expansion effectiveness
+          performanceTracker.trackEffectiveness(
+            'Theme Expansion',
+            beforeExpansionCount,
+            expandedThemes.length,
+            Date.now() - expansionStartTime
+          );
 
           // Update consolidated themes with expanded and deduplicated results
           consolidatedThemes = expandedThemes; // For now, use expanded themes directly
@@ -800,6 +841,7 @@ export class ThemeService {
         }
 
         expansionTime = Date.now() - expansionStartTime;
+        performanceTracker.endTiming('Theme Expansion');
       }
 
       // Calculate consolidation stats
@@ -1033,5 +1075,26 @@ export class ThemeService {
     return (
       foundActions.length > 1 || hasConnectors || foundFileTypes.length > 1
     );
+  }
+
+  /**
+   * Get effectiveness metrics from similarity service
+   */
+  getSimilarityEffectiveness(): unknown {
+    return this.similarityService.getEffectiveness();
+  }
+
+  /**
+   * Get effectiveness metrics from expansion service
+   */
+  getExpansionEffectiveness(): unknown {
+    return this.expansionService.getEffectiveness();
+  }
+
+  /**
+   * Get effectiveness metrics from hierarchical similarity service
+   */
+  getHierarchicalEffectiveness(): unknown {
+    return this.hierarchicalSimilarityService.getEffectiveness();
   }
 }

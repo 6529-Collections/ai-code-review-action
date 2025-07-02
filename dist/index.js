@@ -29962,14 +29962,20 @@ const utils_1 = __nccwpck_require__(1798);
 const git_service_1 = __nccwpck_require__(5902);
 const theme_service_1 = __nccwpck_require__(1599);
 const theme_formatter_1 = __nccwpck_require__(6583);
+const logger_1 = __nccwpck_require__(7893);
+const performance_tracker_1 = __nccwpck_require__(9766);
 async function run() {
     try {
+        // Reset performance tracker for this run
+        performance_tracker_1.performanceTracker.reset();
+        performance_tracker_1.performanceTracker.startTiming('Total AI Code Review');
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+        performance_tracker_1.performanceTracker.startTiming('Setup');
         // Install Claude Code CLI
         (0, utils_1.logInfo)('Installing Claude Code CLI...');
-        await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
+        await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
         (0, utils_1.logInfo)('Claude Code CLI installed successfully');
         // Initialize Claude CLI configuration to avoid JSON config errors
         (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
@@ -29983,17 +29989,20 @@ async function run() {
         await exec.exec('bash', [
             '-c',
             `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
-        ]);
+        ], { silent: true });
         (0, utils_1.logInfo)('Claude CLI configuration initialized');
+        performance_tracker_1.performanceTracker.endTiming('Setup');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
         // Initialize services with AI code analysis
         const gitService = new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
         // Initialize theme service with AI-driven expansion
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
         (0, utils_1.logInfo)('Using AI-driven theme expansion for natural hierarchy depth');
+        performance_tracker_1.performanceTracker.startTiming('Git Operations');
         // Get PR context and changed files
         const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
+        performance_tracker_1.performanceTracker.endTiming('Git Operations');
         // Log dev mode info
         if (prContext && prContext.number === 0) {
             (0, utils_1.logInfo)(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
@@ -30008,32 +30017,33 @@ async function run() {
             return;
         }
         // Analyze themes
+        performance_tracker_1.performanceTracker.startTiming('Theme Analysis');
         (0, utils_1.logInfo)('Analyzing code themes...');
         const themeAnalysis = await themeService.analyzeThemesWithEnhancedContext(gitService);
+        performance_tracker_1.performanceTracker.endTiming('Theme Analysis');
         // Debug: Log theme analysis result
-        console.log(`[DEBUG] Theme analysis completed:`);
-        console.log(`[DEBUG] - Total themes: ${themeAnalysis.totalThemes}`);
-        console.log(`[DEBUG] - Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`);
-        console.log(`[DEBUG] - Processing time: ${themeAnalysis.processingTime}ms`);
-        console.log(`[DEBUG] - Has expansion stats: ${!!themeAnalysis.expansionStats}`);
+        logger_1.logger.debug('MAIN', `Theme analysis completed: ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
+        logger_1.logger.debug('MAIN', `Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`);
+        logger_1.logger.debug('MAIN', `Has expansion stats: ${!!themeAnalysis.expansionStats}`);
         if (themeAnalysis.themes) {
-            console.log(`[DEBUG] - Theme names: ${themeAnalysis.themes.map((t) => t.name).join(', ')}`);
+            logger_1.logger.debug('MAIN', `Theme names: ${themeAnalysis.themes.map((t) => t.name).join(', ')}`);
         }
         else {
-            console.log(`[DEBUG] - Themes is null/undefined!`);
+            logger_1.logger.warn('MAIN', 'Themes is null/undefined!');
         }
         // Output results using enhanced formatter
+        performance_tracker_1.performanceTracker.startTiming('Output Generation');
         try {
-            console.log(`[DEBUG] Starting output formatting...`);
+            logger_1.logger.debug('MAIN', 'Starting output formatting...');
             // Use the new ThemeFormatter for better hierarchical display
             const detailedThemes = theme_formatter_1.ThemeFormatter.formatThemesForOutput(themeAnalysis.themes);
-            console.log(`[DEBUG] Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
+            logger_1.logger.debug('MAIN', `Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
             const safeSummary = theme_formatter_1.ThemeFormatter.createThemeSummary(themeAnalysis.themes);
-            console.log(`[DEBUG] Summary created, length: ${safeSummary?.length || 'undefined'}`);
-            console.log(`[DEBUG] Setting outputs...`);
+            logger_1.logger.debug('MAIN', `Summary created, length: ${safeSummary?.length || 'undefined'}`);
+            logger_1.logger.debug('MAIN', 'Setting outputs...');
             core.setOutput('themes', detailedThemes);
             core.setOutput('summary', safeSummary);
-            console.log(`[DEBUG] Outputs set successfully`);
+            logger_1.logger.debug('MAIN', 'Outputs set successfully');
             (0, utils_1.logInfo)(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
@@ -30041,19 +30051,28 @@ async function run() {
             }
         }
         catch (error) {
-            console.error(`[DEBUG] Error in output formatting:`, error);
-            console.error(`[DEBUG] Error stack:`, error instanceof Error ? error.stack : 'No stack trace');
-            (0, utils_1.logInfo)(`Failed to set outputs: ${error}`);
+            logger_1.logger.error('MAIN', `Error in output formatting: ${error}`);
+            if (error instanceof Error && error.stack) {
+                logger_1.logger.debug('MAIN', `Error stack: ${error.stack}`);
+            }
+            logger_1.logger.error('MAIN', `Failed to set outputs: ${error}`);
             core.setOutput('themes', 'No themes found');
             core.setOutput('summary', 'Output generation failed');
         }
-        (0, utils_1.logInfo)(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
-        (0, utils_1.logInfo)(`Processing time: ${themeAnalysis.processingTime}ms`);
+        performance_tracker_1.performanceTracker.endTiming('Output Generation');
+        logger_1.logger.info('MAIN', `Analysis complete: Found ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
         // Log theme names only (not full JSON)
         if (themeAnalysis.themes.length > 0) {
             const themeNames = themeAnalysis.themes.map((t) => t.name).join(', ');
-            (0, utils_1.logInfo)(`Themes: ${themeNames}`);
+            logger_1.logger.info('MAIN', `Themes: ${themeNames}`);
         }
+        // Log expansion statistics if available
+        if (themeAnalysis.expansionStats) {
+            logger_1.logger.info('MAIN', `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
+        }
+        // End total timing and generate comprehensive performance report
+        performance_tracker_1.performanceTracker.endTiming('Total AI Code Review');
+        performance_tracker_1.performanceTracker.generateReport();
     }
     catch (error) {
         (0, utils_1.handleError)(error);
@@ -30270,7 +30289,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         const domains = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(contexts, async (ctx) => await this.classifyBusinessDomain(ctx), {
             concurrencyLimit: 5,
             maxRetries: 2,
-            enableLogging: true,
+            enableLogging: false,
             onProgress: (completed, total) => {
                 console.log(`[AI-DOMAIN] Individual analysis progress: ${completed}/${total}`);
             },
@@ -30515,81 +30534,42 @@ exports.AIExpansionDecisionService = AIExpansionDecisionService;
 /***/ }),
 
 /***/ 270:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AISimilarityService = void 0;
 const similarity_calculator_1 = __nccwpck_require__(7831);
 const json_extractor_1 = __nccwpck_require__(2642);
-const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
+const claude_client_1 = __nccwpck_require__(3831);
+const logger_1 = __nccwpck_require__(7893);
 class AISimilarityService {
     constructor(anthropicApiKey) {
         this.anthropicApiKey = anthropicApiKey;
         this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
     }
     async calculateAISimilarity(theme1, theme2) {
         const prompt = this.buildSimilarityPrompt(theme1, theme2);
         try {
-            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-similarity', prompt);
-            let output = '';
-            try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                    listeners: {
-                        stdout: (data) => {
-                            output += data.toString();
-                        },
-                    },
-                });
-                const result = this.parseAISimilarityResponse(output);
-                console.log(`[AI-SIMILARITY] "${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
-                console.log(`[AI-SIMILARITY] Reasoning: ${result.reasoning}`);
-                return result;
-            }
-            finally {
-                cleanup(); // Ensure file is cleaned up even if execution fails
-            }
+            const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
+            const result = this.parseAISimilarityResponse(output);
+            logger_1.logger.debug('AI-SIMILARITY', `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
+            logger_1.logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
+            return result;
         }
         catch (error) {
-            console.warn(`AI similarity failed for "${theme1.name}" vs "${theme2.name}":`, error);
+            logger_1.logger.warn('AI-SIMILARITY', `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`);
             // Fallback to basic string matching
             return this.createFallbackSimilarity(theme1, theme2);
         }
+    }
+    /**
+     * Get Claude client for external metrics access
+     */
+    getClaudeClient() {
+        return this.claudeClient;
     }
     buildSimilarityPrompt(theme1, theme2) {
         // Include rich details if available
@@ -30719,22 +30699,11 @@ CRITICAL: Respond with ONLY valid JSON.
      * This is the key performance optimization method
      */
     async calculateBatchSimilarity(batchPrompt, expectedResults) {
-        const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', batchPrompt);
-        let output = '';
         try {
-            await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                listeners: {
-                    stdout: (data) => {
-                        output += data.toString();
-                    },
-                    stderr: (data) => {
-                        console.warn(`[AI-BATCH-SIMILARITY] stderr: ${data.toString()}`);
-                    },
-                },
-            });
-            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${output.length}`);
+            const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
+            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
             // Extract and validate JSON response
-            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['results']);
+            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
             if (!jsonResult.success) {
                 throw new Error(`JSON extraction failed: ${jsonResult.error}`);
             }
@@ -30751,11 +30720,7 @@ CRITICAL: Respond with ONLY valid JSON.
         }
         catch (error) {
             console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
-            console.log(`[AI-BATCH-SIMILARITY] Raw output: ${output.substring(0, 500)}...`);
             throw error;
-        }
-        finally {
-            cleanup();
         }
     }
 }
@@ -30819,6 +30784,7 @@ class BatchProcessor {
             let output = '';
             try {
                 await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    silent: true,
                     listeners: {
                         stdout: (data) => {
                             output += data.toString();
@@ -31025,7 +30991,7 @@ class BusinessDomainService {
         }, {
             concurrencyLimit: 3, // Fewer concurrent batches since each is larger
             maxRetries: 2,
-            enableLogging: true,
+            enableLogging: false,
             onProgress: (completed, total) => {
                 const themesCompleted = completed * batchSize;
                 const totalThemes = themes.length;
@@ -31184,6 +31150,7 @@ class BusinessDomainService {
             let output = '';
             try {
                 await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    silent: true,
                     listeners: {
                         stdout: (data) => {
                             output += data.toString();
@@ -32564,12 +32531,21 @@ const claude_client_1 = __nccwpck_require__(3831);
 const json_extractor_1 = __nccwpck_require__(2642);
 const utils_1 = __nccwpck_require__(1798);
 const concurrency_manager_1 = __nccwpck_require__(8692);
+const logger_1 = __nccwpck_require__(7893);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
  * Handles cross-level duplicate detection and hierarchy optimization
  */
 class HierarchicalSimilarityService {
     constructor(anthropicApiKey) {
+        this.effectiveness = {
+            crossLevelComparisonsGenerated: 0,
+            duplicatesFound: 0,
+            overlapsResolved: 0,
+            processingTime: 0,
+            aiCallsUsed: 0,
+            filteringReduction: 0,
+        };
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
         this.cache = new generic_cache_1.GenericCache(1800000); // 30 minutes TTL
     }
@@ -32578,7 +32554,11 @@ class HierarchicalSimilarityService {
      * Identifies potential duplicates, overlaps, and optimization opportunities
      */
     async analyzeCrossLevelSimilarity(hierarchy) {
-        (0, utils_1.logInfo)('Starting cross-level similarity analysis');
+        const startTime = Date.now();
+        const initialAICalls = this.claudeClient.getMetrics().totalCalls;
+        logger_1.logger.info('HIERARCHICAL', 'Starting cross-level similarity analysis');
+        // Reset effectiveness tracking
+        this.resetEffectiveness();
         const allThemes = this.flattenHierarchy(hierarchy);
         const comparisons = [];
         // Generate all cross-level comparison pairs
@@ -32599,13 +32579,15 @@ class HierarchicalSimilarityService {
         }
         // Track pre-filtering effectiveness
         const totalPossibleComparisons = (allThemes.length * (allThemes.length - 1)) / 2;
-        const filteringReduction = (((totalPossibleComparisons - comparisons.length) /
-            totalPossibleComparisons) *
-            100).toFixed(1);
-        (0, utils_1.logInfo)(`Generated ${comparisons.length} cross-level comparisons`);
-        (0, utils_1.logInfo)(`Pre-filtering reduced comparisons by ${filteringReduction}% (${totalPossibleComparisons} → ${comparisons.length})`);
+        this.effectiveness.filteringReduction =
+            ((totalPossibleComparisons - comparisons.length) /
+                totalPossibleComparisons) *
+                100;
+        this.effectiveness.crossLevelComparisonsGenerated = comparisons.length;
+        logger_1.logger.info('HIERARCHICAL', `Generated ${comparisons.length} cross-level comparisons`);
+        logger_1.logger.info('HIERARCHICAL', `Pre-filtering reduced comparisons by ${this.effectiveness.filteringReduction.toFixed(1)}% (${totalPossibleComparisons} → ${comparisons.length})`);
         if (comparisons.length > 100) {
-            (0, utils_1.logInfo)(`WARNING: Too many comparisons (${comparisons.length}), this may cause performance issues`);
+            logger_1.logger.warn('HIERARCHICAL', `Too many comparisons (${comparisons.length}), this may cause performance issues`);
         }
         // Process comparisons with controlled concurrency
         console.log(`[HIERARCHICAL] Starting ${comparisons.length} Claude API calls with concurrency limit of 10`);
@@ -32614,7 +32596,7 @@ class HierarchicalSimilarityService {
         }, {
             concurrencyLimit: 5,
             maxRetries: 3,
-            enableLogging: true,
+            enableLogging: false,
             onProgress: (completed, total) => {
                 console.log(`[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`);
             },
@@ -32637,7 +32619,11 @@ class HierarchicalSimilarityService {
         if (failedCount > 0) {
             console.warn(`[HIERARCHICAL] ${failedCount}/${comparisons.length} comparisons failed after retries`);
         }
-        (0, utils_1.logInfo)(`Completed cross-level similarity analysis: ${successfulResults.length} successful results`);
+        // Update effectiveness metrics
+        this.effectiveness.processingTime = Date.now() - startTime;
+        this.effectiveness.aiCallsUsed =
+            this.claudeClient.getMetrics().totalCalls - initialAICalls;
+        logger_1.logger.info('HIERARCHICAL', `Completed cross-level similarity analysis: ${successfulResults.length} successful results in ${this.effectiveness.processingTime}ms`);
         return successfulResults;
     }
     /**
@@ -32667,9 +32653,11 @@ class HierarchicalSimilarityService {
             processedIds.add(duplicate.theme2.id);
             if (duplicate.relationshipType === 'duplicate') {
                 duplicatesRemoved++;
+                this.effectiveness.duplicatesFound++;
             }
             else {
                 overlapsResolved++;
+                this.effectiveness.overlapsResolved++;
             }
         }
         const originalCount = this.countThemes(hierarchy);
@@ -33086,6 +33074,25 @@ Focus on business value and avoid merging themes with distinct business purposes
         visited.delete(theme.id); // Remove from visited when backtracking
         return false;
     }
+    /**
+     * Get effectiveness metrics for this hierarchical analysis
+     */
+    getEffectiveness() {
+        return { ...this.effectiveness };
+    }
+    /**
+     * Reset effectiveness metrics
+     */
+    resetEffectiveness() {
+        this.effectiveness = {
+            crossLevelComparisonsGenerated: 0,
+            duplicatesFound: 0,
+            overlapsResolved: 0,
+            processingTime: 0,
+            aiCallsUsed: 0,
+            filteringReduction: 0,
+        };
+    }
 }
 exports.HierarchicalSimilarityService = HierarchicalSimilarityService;
 
@@ -33093,12 +33100,13 @@ exports.HierarchicalSimilarityService = HierarchicalSimilarityService;
 /***/ }),
 
 /***/ 7329:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SimilarityCache = void 0;
+const performance_tracker_1 = __nccwpck_require__(9766);
 class SimilarityCache {
     constructor() {
         this.cache = new Map();
@@ -33112,14 +33120,18 @@ class SimilarityCache {
     }
     getCachedSimilarity(cacheKey) {
         const cached = this.cache.get(cacheKey);
-        if (!cached)
+        if (!cached) {
+            performance_tracker_1.performanceTracker.trackCache(false); // cache miss
             return null;
+        }
         // Check if cache has expired
         const ageMinutes = (Date.now() - cached.timestamp.getTime()) / (1000 * 60);
         if (ageMinutes > this.cacheExpireMinutes) {
             this.cache.delete(cacheKey);
+            performance_tracker_1.performanceTracker.trackCache(false); // cache miss (expired)
             return null;
         }
+        performance_tracker_1.performanceTracker.trackCache(true); // cache hit
         return cached;
     }
     cacheSimilarity(cacheKey, similarity) {
@@ -33153,10 +33165,10 @@ exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
 const generic_cache_1 = __nccwpck_require__(9267);
 const claude_client_1 = __nccwpck_require__(3831);
 const json_extractor_1 = __nccwpck_require__(2642);
-const utils_1 = __nccwpck_require__(1798);
 const concurrency_manager_1 = __nccwpck_require__(8692);
 const secure_file_namer_1 = __nccwpck_require__(1661);
 const ai_expansion_decision_service_1 = __nccwpck_require__(7257);
+const logger_1 = __nccwpck_require__(7893);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
     concurrencyLimit: 5,
@@ -33169,6 +33181,15 @@ exports.DEFAULT_EXPANSION_CONFIG = {
 };
 class ThemeExpansionService {
     constructor(anthropicApiKey, config = {}) {
+        this.effectiveness = {
+            themesEvaluated: 0,
+            themesExpanded: 0,
+            expansionRate: 0,
+            processingTime: 0,
+            aiCallsUsed: 0,
+            maxDepthReached: 0,
+            atomicThemesIdentified: 0,
+        };
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
         this.cache = new generic_cache_1.GenericCache(3600000); // 1 hour TTL
         this.config = { ...exports.DEFAULT_EXPANSION_CONFIG, ...config };
@@ -33195,9 +33216,12 @@ class ThemeExpansionService {
      * Main entry point for expanding themes hierarchically
      */
     async expandThemesHierarchically(consolidatedThemes) {
-        console.log(`[DEBUG-EXPANSION] Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
-        console.log(`[DEBUG-EXPANSION] Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
-        (0, utils_1.logInfo)(`Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
+        const startTime = Date.now();
+        const initialAICalls = this.claudeClient.getMetrics().totalCalls;
+        logger_1.logger.info('EXPANSION', `Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
+        logger_1.logger.debug('EXPANSION', `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
+        // Reset effectiveness tracking
+        this.resetEffectiveness();
         // Process themes with concurrency limit and retry logic
         const results = await this.processConcurrentlyWithLimit(consolidatedThemes, (theme) => this.expandThemeRecursively(theme, 0), {
             onProgress: (completed, total) => {
@@ -33226,19 +33250,30 @@ class ThemeExpansionService {
                 console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
             }
         }
-        console.log(`[DEBUG-EXPANSION] Completed expansion with ${expandedThemes.length}/${consolidatedThemes.length} themes`);
-        console.log(`[DEBUG-EXPANSION] Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`);
-        (0, utils_1.logInfo)(`Completed hierarchical expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes processed successfully`);
+        // Update effectiveness metrics
+        this.effectiveness.processingTime = Date.now() - startTime;
+        this.effectiveness.aiCallsUsed =
+            this.claudeClient.getMetrics().totalCalls - initialAICalls;
+        this.effectiveness.expansionRate =
+            this.effectiveness.themesEvaluated > 0
+                ? (this.effectiveness.themesExpanded /
+                    this.effectiveness.themesEvaluated) *
+                    100
+                : 0;
+        logger_1.logger.info('EXPANSION', `Completed expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes (${this.effectiveness.expansionRate.toFixed(1)}% expansion rate)`);
+        logger_1.logger.debug('EXPANSION', `Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`);
+        logger_1.logger.info('EXPANSION', `Max depth reached: ${this.effectiveness.maxDepthReached}, Atomic themes: ${this.effectiveness.atomicThemesIdentified}`);
         return expandedThemes;
     }
     /**
      * Recursively expand a theme to maximum depth
      */
     async expandThemeRecursively(theme, currentDepth, parentTheme) {
+        // Track depth metrics
+        this.effectiveness.maxDepthReached = Math.max(this.effectiveness.maxDepthReached, currentDepth);
         // PRD: No artificial limits - depth emerges from complexity
         if (currentDepth >= this.config.maxDepth) {
-            (0, utils_1.logInfo)(`Deep expansion at level ${currentDepth} - complexity demands it`);
-            // Still allow expansion, just log it
+            logger_1.logger.info('EXPANSION', `Deep expansion at level ${currentDepth} - complexity demands it`);
         }
         // Check if theme is candidate for expansion
         const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
@@ -33275,9 +33310,11 @@ class ThemeExpansionService {
         // Process expansion
         const result = await this.processExpansionRequest(expansionRequest);
         if (!result.success || !result.expandedTheme) {
-            (0, utils_1.logInfo)(`Expansion failed for theme ${theme.name}: ${result.error}`);
+            logger_1.logger.info('EXPANSION', `Expansion failed for theme ${theme.name}: ${result.error}`);
             return theme;
         }
+        // Track successful expansion
+        this.effectiveness.themesExpanded++;
         // Recursively expand new sub-themes
         const subThemeResults = await this.processConcurrentlyWithLimit(result.subThemes, (subTheme) => this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme), {
             onProgress: (completed, total) => {
@@ -33330,6 +33367,8 @@ class ThemeExpansionService {
      * Evaluate if a theme is a candidate for expansion using AI-driven decisions
      */
     async evaluateExpansionCandidate(theme, parentTheme, currentDepth = 0) {
+        // Track theme evaluation
+        this.effectiveness.themesEvaluated++;
         // Get sibling themes for context
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
         // Let AI decide based on full context
@@ -33345,10 +33384,13 @@ class ThemeExpansionService {
         };
         // If theme is atomic or shouldn't expand, return null
         if (!expansionDecision.shouldExpand) {
-            (0, utils_1.logInfo)(`Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
+            if (expansionDecision.isAtomic) {
+                this.effectiveness.atomicThemesIdentified++;
+            }
+            logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
             // Log PRD metrics
             if (expansionMetrics.atomicSize > 15) {
-                (0, utils_1.logInfo)(`WARNING: Atomic theme exceeds PRD size (${expansionMetrics.atomicSize} > 15 lines)`);
+                logger_1.logger.warn('EXPANSION', `Atomic theme exceeds PRD size (${expansionMetrics.atomicSize} > 15 lines)`);
             }
             return null;
         }
@@ -33366,7 +33408,7 @@ class ThemeExpansionService {
         if (subThemes.length <= 1) {
             return subThemes;
         }
-        (0, utils_1.logInfo)(`Deduplicating ${subThemes.length} sub-themes using AI`);
+        logger_1.logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
         // Calculate optimal batch size based on theme count
         const batchSize = this.calculateOptimalBatchSize(subThemes.length);
         const batches = [];
@@ -33420,13 +33462,13 @@ class ThemeExpansionService {
                 }
             }
         }
-        (0, utils_1.logInfo)(`Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`);
+        logger_1.logger.info('EXPANSION', `Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`);
         // Second pass: check if any of the final themes are still duplicates
         // This handles cases where duplicates were in different batches
         if (finalThemes.length > 1) {
-            (0, utils_1.logInfo)(`Running second pass deduplication on ${finalThemes.length} themes`);
+            logger_1.logger.info('EXPANSION', `Running second pass deduplication on ${finalThemes.length} themes`);
             const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
-            (0, utils_1.logInfo)(`Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
+            logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
             return secondPassResult;
         }
         return finalThemes;
@@ -33504,7 +33546,7 @@ If no duplicates found, return: {"duplicateGroups": []}`;
             return finalThemes;
         }
         catch (error) {
-            (0, utils_1.logInfo)(`Second pass deduplication failed: ${error}`);
+            logger_1.logger.info('EXPANSION', `Second pass deduplication failed: ${error}`);
             return themes;
         }
     }
@@ -33548,7 +33590,7 @@ CRITICAL: Respond with ONLY valid JSON.
             const response = await this.claudeClient.callClaude(prompt);
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['groups']);
             if (!extractionResult.success) {
-                (0, utils_1.logInfo)(`Failed to parse deduplication response: ${extractionResult.error}`);
+                logger_1.logger.info('EXPANSION', `Failed to parse deduplication response: ${extractionResult.error}`);
                 // Return each theme as its own group
                 return themes.map((theme) => [theme]);
             }
@@ -33581,7 +33623,7 @@ CRITICAL: Respond with ONLY valid JSON.
             return groups;
         }
         catch (error) {
-            (0, utils_1.logInfo)(`Deduplication batch failed: ${error}`);
+            logger_1.logger.info('EXPANSION', `Deduplication batch failed: ${error}`);
             // Return each theme as its own group
             return themes.map((theme) => [theme]);
         }
@@ -33651,7 +33693,7 @@ CRITICAL: Respond with ONLY valid JSON.
             };
         }
         catch (error) {
-            (0, utils_1.logInfo)(`Sub-theme merge failed: ${error}`);
+            logger_1.logger.info('EXPANSION', `Sub-theme merge failed: ${error}`);
             return themes[0]; // Use first theme as fallback
         }
     }
@@ -33775,7 +33817,7 @@ Return JSON with specific sub-themes:
             const response = await this.claudeClient.callClaude(prompt);
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['subThemes']);
             if (!extractionResult.success) {
-                (0, utils_1.logInfo)(`Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`);
+                logger_1.logger.info('EXPANSION', `Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`);
                 return {
                     subThemes: [],
                     shouldExpand: false,
@@ -33798,7 +33840,7 @@ Return JSON with specific sub-themes:
             };
         }
         catch (error) {
-            (0, utils_1.logInfo)(`AI analysis failed for theme ${theme.name}: ${error}`);
+            logger_1.logger.info('EXPANSION', `AI analysis failed for theme ${theme.name}: ${error}`);
             return {
                 subThemes: [],
                 shouldExpand: false,
@@ -33836,6 +33878,26 @@ Return JSON with specific sub-themes:
                 isAtomic: parentTheme.level >= 3, // Deeper levels likely atomic
             };
         });
+    }
+    /**
+     * Get effectiveness metrics for this expansion analysis
+     */
+    getEffectiveness() {
+        return { ...this.effectiveness };
+    }
+    /**
+     * Reset effectiveness metrics
+     */
+    resetEffectiveness() {
+        this.effectiveness = {
+            themesEvaluated: 0,
+            themesExpanded: 0,
+            expansionRate: 0,
+            processingTime: 0,
+            aiCallsUsed: 0,
+            maxDepthReached: 0,
+            atomicThemesIdentified: 0,
+        };
     }
 }
 exports.ThemeExpansionService = ThemeExpansionService;
@@ -33897,6 +33959,7 @@ class ThemeNamingService {
             let output = '';
             try {
                 await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    silent: true,
                     listeners: {
                         stdout: (data) => {
                             output += data.toString();
@@ -34137,6 +34200,7 @@ const hierarchical_similarity_1 = __nccwpck_require__(2983);
 const ai_code_analyzer_1 = __nccwpck_require__(9840);
 const json_extractor_1 = __nccwpck_require__(2642);
 const concurrency_manager_1 = __nccwpck_require__(8692);
+const performance_tracker_1 = __nccwpck_require__(9766);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
     CONCURRENCY_LIMIT: 5,
@@ -34157,6 +34221,7 @@ class ClaudeService {
             tempFile = filePath;
             try {
                 await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    silent: true,
                     listeners: {
                         stdout: (data) => {
                             output += data.toString();
@@ -34474,6 +34539,7 @@ class ThemeService {
         this.expansionEnabled = consolidationConfig?.expansionEnabled ?? true;
     }
     async analyzeThemesWithEnhancedContext(gitService) {
+        performance_tracker_1.performanceTracker.startTiming('Code Analysis');
         console.log('[THEME-SERVICE] Starting enhanced theme analysis');
         const startTime = Date.now();
         // Get enhanced code changes instead of basic changed files
@@ -34533,7 +34599,7 @@ class ThemeService {
             }, {
                 concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
                 maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-                enableLogging: true,
+                enableLogging: false,
                 onProgress: (completed, total) => {
                     console.log(`[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`);
                 },
@@ -34573,6 +34639,8 @@ class ThemeService {
             const originalThemes = contextManager.getRootThemes();
             // Pipeline optimization: Overlap consolidation and expansion preparation
             console.log('[THEME-SERVICE] Starting pipeline optimization with overlapped phases');
+            performance_tracker_1.performanceTracker.endTiming('Code Analysis');
+            performance_tracker_1.performanceTracker.startTiming('Theme Consolidation');
             const consolidationStartTime = Date.now();
             // Start consolidation and expansion candidate identification in parallel
             const [consolidatedThemesResult, expansionCandidates] = await Promise.all([
@@ -34583,26 +34651,39 @@ class ThemeService {
             ]);
             let consolidatedThemes = consolidatedThemesResult;
             const consolidationTime = Date.now() - consolidationStartTime;
+            // Track consolidation effectiveness
+            performance_tracker_1.performanceTracker.trackEffectiveness('Theme Consolidation', originalThemes.length, consolidatedThemes.length, consolidationTime);
+            performance_tracker_1.performanceTracker.endTiming('Theme Consolidation');
             console.log(`[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`);
             // Apply hierarchical expansion if enabled
             let expansionTime = 0;
             let expansionStats = undefined;
             if (this.expansionEnabled && consolidatedThemes.length > 0) {
+                performance_tracker_1.performanceTracker.startTiming('Theme Expansion');
                 console.log('[THEME-SERVICE] Starting AI-driven hierarchical expansion');
                 const expansionStartTime = Date.now();
                 try {
                     // Expand themes hierarchically using pre-identified candidates for optimization
                     console.log(`[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`);
+                    const beforeExpansionCount = consolidatedThemes.length;
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
                     console.log(`[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`);
                     // Apply cross-level deduplication
                     if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
+                        performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
                         console.log('[THEME-SERVICE] Running cross-level deduplication...');
+                        const beforeDedup = expandedThemes.length;
+                        const dedupStartTime = Date.now();
                         await this.hierarchicalSimilarityService.deduplicateHierarchy(expandedThemes);
+                        // Track deduplication effectiveness
+                        performance_tracker_1.performanceTracker.trackEffectiveness('Cross-Level Deduplication', beforeDedup, expandedThemes.length, Date.now() - dedupStartTime);
+                        performance_tracker_1.performanceTracker.endTiming('Cross-Level Deduplication');
                     }
                     else {
                         console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
                     }
+                    // Track expansion effectiveness
+                    performance_tracker_1.performanceTracker.trackEffectiveness('Theme Expansion', beforeExpansionCount, expandedThemes.length, Date.now() - expansionStartTime);
                     // Update consolidated themes with expanded and deduplicated results
                     consolidatedThemes = expandedThemes; // For now, use expanded themes directly
                     console.log(`[DEBUG-THEME-SERVICE] Final themes after processing: ${consolidatedThemes.length}`);
@@ -34614,6 +34695,7 @@ class ThemeService {
                     console.warn('[THEME-SERVICE] Expansion failed, using consolidated themes:', error);
                 }
                 expansionTime = Date.now() - expansionStartTime;
+                performance_tracker_1.performanceTracker.endTiming('Theme Expansion');
             }
             // Calculate consolidation stats
             const mergedThemes = consolidatedThemes.filter((t) => t.consolidationMethod === 'merge').length;
@@ -34798,6 +34880,24 @@ class ThemeService {
         const foundFileTypes = fileTypes.filter((type) => text.includes(type));
         return (foundActions.length > 1 || hasConnectors || foundFileTypes.length > 1);
     }
+    /**
+     * Get effectiveness metrics from similarity service
+     */
+    getSimilarityEffectiveness() {
+        return this.similarityService.getEffectiveness();
+    }
+    /**
+     * Get effectiveness metrics from expansion service
+     */
+    getExpansionEffectiveness() {
+        return this.expansionService.getEffectiveness();
+    }
+    /**
+     * Get effectiveness metrics from hierarchical similarity service
+     */
+    getHierarchicalEffectiveness() {
+        return this.hierarchicalSimilarityService.getEffectiveness();
+    }
 }
 exports.ThemeService = ThemeService;
 
@@ -34818,9 +34918,17 @@ const batch_processor_1 = __nccwpck_require__(325);
 const business_domain_1 = __nccwpck_require__(8133);
 const theme_naming_1 = __nccwpck_require__(9018);
 const concurrency_manager_1 = __nccwpck_require__(8692);
+const logger_1 = __nccwpck_require__(7893);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.pendingCalculations = new Map();
+        this.effectiveness = {
+            pairsAnalyzed: 0,
+            mergesDecided: 0,
+            mergeRate: 0,
+            processingTime: 0,
+            aiCallsUsed: 0,
+        };
         this.config = {
             similarityThreshold: 0.7, // Now represents confidence threshold for merge decision
             maxThemesPerParent: 5,
@@ -34837,20 +34945,20 @@ class ThemeSimilarityService {
         this.batchProcessor = new batch_processor_1.BatchProcessor();
         this.businessDomainService = new business_domain_1.BusinessDomainService(anthropicApiKey);
         this.themeNamingService = new theme_naming_1.ThemeNamingService();
-        console.log(`[CONFIG] Consolidation config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
+        logger_1.logger.info('SIMILARITY', `Config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
     }
     async calculateSimilarity(theme1, theme2) {
         const cacheKey = this.similarityCache.getCacheKey(theme1, theme2);
         // Check if already calculating
         const pending = this.pendingCalculations.get(cacheKey);
         if (pending) {
-            console.log(`[PENDING] Waiting for pending calculation: "${theme1.name}" vs "${theme2.name}"`);
+            logger_1.logger.trace('SIMILARITY', `Pending: ${theme1.name} vs ${theme2.name}`);
             return pending;
         }
         // Check cache
         const cached = this.similarityCache.getCachedSimilarity(cacheKey);
         if (cached) {
-            console.log(`[CACHE] Using cached similarity for "${theme1.name}" vs "${theme2.name}"`);
+            logger_1.logger.trace('SIMILARITY', `Cache hit: ${theme1.name} vs ${theme2.name}`);
             return cached.similarity;
         }
         // Start new calculation
@@ -34870,7 +34978,7 @@ class ThemeSimilarityService {
         const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
         // Skip only if NO file overlap AND completely different names
         if (fileOverlap === 0 && nameSimilarity < 0.1) {
-            console.log(`[SKIP] No file overlap and different names for "${theme1.name}" vs "${theme2.name}"`);
+            logger_1.logger.trace('SIMILARITY', `Skip: no overlap - ${theme1.name} vs ${theme2.name}`);
             const result = {
                 combinedScore: 0,
                 nameScore: 0,
@@ -34903,22 +35011,57 @@ class ThemeSimilarityService {
         console.log(`[CONSOLIDATION] Starting with ${themes.length} themes`);
         if (themes.length === 0)
             return [];
+        const startTime = Date.now();
+        const initialAICalls = this.aiSimilarityService
+            .getClaudeClient()
+            .getMetrics().totalCalls;
         // Step 1: Find merge candidates
-        console.log(`[CONSOLIDATION] Step 1: Finding merge candidates`);
+        logger_1.logger.info('SIMILARITY', 'Step 1: Finding merge candidates');
         const mergeGroups = await this.findMergeGroups(themes);
-        console.log(`[CONSOLIDATION] Found ${mergeGroups.size} merge groups`);
+        logger_1.logger.info('SIMILARITY', `Found ${mergeGroups.size} merge groups`);
         // Step 2: Create consolidated themes
-        console.log(`[CONSOLIDATION] Step 2: Creating consolidated themes`);
+        logger_1.logger.info('SIMILARITY', 'Step 2: Creating consolidated themes');
         const consolidated = await this.createConsolidatedThemes(mergeGroups, themes);
-        console.log(`[CONSOLIDATION] Created ${consolidated.length} consolidated themes`);
+        logger_1.logger.info('SIMILARITY', `Created ${consolidated.length} consolidated themes`);
         // Step 3: Build hierarchies
-        console.log(`[CONSOLIDATION] Step 3: Building hierarchies`);
+        logger_1.logger.info('SIMILARITY', 'Step 3: Building hierarchies');
         const hierarchical = await this.buildHierarchies(consolidated);
-        console.log(`[CONSOLIDATION] Final result: ${hierarchical.length} themes (${(((themes.length - hierarchical.length) / themes.length) * 100).toFixed(1)}% reduction)`);
+        // Update effectiveness metrics
+        this.effectiveness.processingTime = Date.now() - startTime;
+        this.effectiveness.aiCallsUsed =
+            this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls -
+                initialAICalls;
+        this.effectiveness.mergeRate =
+            this.effectiveness.pairsAnalyzed > 0
+                ? (this.effectiveness.mergesDecided /
+                    this.effectiveness.pairsAnalyzed) *
+                    100
+                : 0;
+        const reductionPercent = (((themes.length - hierarchical.length) / themes.length) *
+            100).toFixed(1);
+        logger_1.logger.info('SIMILARITY', `Final result: ${hierarchical.length} themes (${reductionPercent}% reduction, ${this.effectiveness.mergeRate.toFixed(1)}% merge rate)`);
         return hierarchical;
     }
+    /**
+     * Get effectiveness metrics for this similarity analysis
+     */
+    getEffectiveness() {
+        return { ...this.effectiveness };
+    }
+    /**
+     * Reset effectiveness metrics
+     */
+    resetEffectiveness() {
+        this.effectiveness = {
+            pairsAnalyzed: 0,
+            mergesDecided: 0,
+            mergeRate: 0,
+            processingTime: 0,
+            aiCallsUsed: 0,
+        };
+    }
     async findMergeGroups(themes) {
-        console.log(`[OPTIMIZATION] Using batch processing for ${themes.length} themes`);
+        logger_1.logger.debug('SIMILARITY', `Using batch processing for ${themes.length} themes`);
         // Step 1: Collect all theme pairs that need comparison
         const allPairs = [];
         for (let i = 0; i < themes.length; i++) {
@@ -34930,7 +35073,8 @@ class ThemeSimilarityService {
                 });
             }
         }
-        console.log(`[OPTIMIZATION] Total pairs to analyze: ${allPairs.length}`);
+        this.effectiveness.pairsAnalyzed = allPairs.length;
+        logger_1.logger.info('SIMILARITY', `Total pairs to analyze: ${allPairs.length}`);
         // Step 2: Calculate similarities using batch processing and early termination
         const similarities = await this.calculateBatchSimilarities(allPairs);
         // Step 3: Build merge groups based on calculated similarities
@@ -34939,25 +35083,28 @@ class ThemeSimilarityService {
     async calculateBatchSimilarities(pairs) {
         const similarities = new Map();
         // Use batch AI processing for significant performance improvement
-        console.log(`[SIMILARITY-BATCH] Processing ${pairs.length} pairs with batch AI calls`);
+        logger_1.logger.debug('SIMILARITY', `Processing ${pairs.length} pairs in batches`);
         // Split into batches for optimal processing
         const batchSize = this.calculateOptimalBatchSize(pairs.length);
         const batches = this.createPairBatches(pairs, batchSize);
-        console.log(`[SIMILARITY-BATCH] Split into ${batches.length} batches of ~${batchSize} pairs each`);
+        logger_1.logger.debug('SIMILARITY', `${batches.length} batches of ~${batchSize} pairs each`);
         // Process batches concurrently
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
             return await this.processSimilarityBatch(batch);
         }, {
             concurrencyLimit: 3, // Fewer concurrent batches since each is larger
             maxRetries: 2,
-            enableLogging: true,
+            enableLogging: false,
             onProgress: (completed, total) => {
-                const pairsCompleted = completed * batchSize;
-                const totalPairs = pairs.length;
-                console.log(`[SIMILARITY-BATCH] Progress: ${pairsCompleted}/${totalPairs} pairs processed (${completed}/${total} batches)`);
+                // Only log major progress milestones to reduce noise
+                if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
+                    const pairsCompleted = completed * batchSize;
+                    const totalPairs = pairs.length;
+                    logger_1.logger.debug('SIMILARITY', `Progress: ${pairsCompleted}/${totalPairs} pairs (${Math.round((completed / total) * 100)}%)`);
+                }
             },
             onError: (error, batch, retryCount) => {
-                console.warn(`[SIMILARITY-BATCH] Retry ${retryCount} for batch of ${batch.length} pairs: ${error.message}`);
+                logger_1.logger.warn('SIMILARITY', `Retry ${retryCount} for batch: ${error.message}`);
             },
         });
         // Store successful results
@@ -34978,7 +35125,7 @@ class ThemeSimilarityService {
                 }
             }
         }
-        console.log(`[SIMILARITY] Completed: ${successCount} successful, ${failedCount} failed`);
+        logger_1.logger.info('SIMILARITY', `Batch processing: ${successCount} successful, ${failedCount} failed`);
         return similarities;
     }
     buildMergeGroupsFromSimilarities(themes, similarities) {
@@ -35000,7 +35147,7 @@ class ThemeSimilarityService {
                     similarity.combinedScore >= this.config.similarityThreshold) {
                     group.push(otherTheme.id);
                     processed.add(otherTheme.id);
-                    console.log(`[MERGE] "${theme.name}" + "${otherTheme.name}" (score: ${similarity.combinedScore.toFixed(2)})`);
+                    logger_1.logger.trace('SIMILARITY', `Merge: ${theme.name} + ${otherTheme.name} (${similarity.combinedScore.toFixed(2)})`);
                 }
             }
             mergeGroups.set(theme.id, group);
@@ -35421,6 +35568,7 @@ const claude_client_1 = __nccwpck_require__(3831);
 const json_extractor_1 = __nccwpck_require__(2642);
 const code_analysis_cache_1 = __nccwpck_require__(8940);
 const concurrency_manager_1 = __nccwpck_require__(8692);
+const logger_1 = __nccwpck_require__(7893);
 /**
  * AI-powered code analyzer that replaces regex-based analysis
  * Uses Claude to understand code structure across all programming languages
@@ -35435,7 +35583,7 @@ class AICodeAnalyzer {
      * Replaces the static analyzeCodeChanges method
      */
     async analyzeCodeChanges(changes) {
-        console.log(`[AI-CODE-ANALYZER] Analyzing ${changes.length} code changes with AI aggregation`);
+        logger_1.logger.debug('CODE-ANALYSIS', `Analyzing ${changes.length} code changes`);
         const fileMetrics = this.analyzeFileMetrics(changes);
         const changePatterns = this.extractChangePatterns(changes);
         const contextSummary = this.buildContextSummary(changes, fileMetrics, changePatterns);
@@ -35452,7 +35600,7 @@ class AICodeAnalyzer {
      * Replaces the static processChangedFile method
      */
     async processChangedFile(filename, diffPatch, changeType, linesAdded, linesRemoved) {
-        console.log(`[AI-CODE-ANALYZER] Processing ${filename} (${changeType}) with AI`);
+        logger_1.logger.trace('CODE-ANALYSIS', `Processing ${filename} (${changeType})`);
         return await this.cache.getOrAnalyze(filename, diffPatch, async () => {
             try {
                 const aiAnalysis = await this.analyzeWithAI(filename, diffPatch, changeType);
@@ -35485,24 +35633,29 @@ class AICodeAnalyzer {
      * Process multiple files concurrently using ConcurrencyManager
      */
     async processChangedFilesConcurrently(files) {
-        console.log(`[AI-CODE-ANALYZER] Processing ${files.length} files concurrently`);
+        logger_1.logger.debug('CODE-ANALYSIS', `Processing ${files.length} files`);
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(files, async (file) => {
             return await this.processChangedFile(file.filename, file.diffPatch, file.changeType, file.linesAdded, file.linesRemoved);
         }, {
             concurrencyLimit: 5,
             maxRetries: 3,
-            enableLogging: true,
-            onProgress: (completed, total) => console.log(`[AI-CODE-ANALYZER] Progress: ${completed}/${total} files analyzed`),
-            onError: (error, item, retryCount) => console.warn(`[AI-CODE-ANALYZER] Retry ${retryCount} for ${item.filename}: ${error.message}`),
+            enableLogging: false, // Disable ConcurrencyManager's own logging
+            onProgress: (completed, total) => {
+                // Only log major milestones
+                if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
+                    logger_1.logger.debug('CODE-ANALYSIS', `Progress: ${completed}/${total} files`);
+                }
+            },
+            onError: (error, item, retryCount) => logger_1.logger.warn('CODE-ANALYSIS', `Retry ${retryCount} for ${item.filename}: ${error.message}`),
         });
         const { successful, failed } = concurrency_manager_1.ConcurrencyManager.separateResults(results);
         if (failed.length > 0) {
-            console.warn(`[AI-CODE-ANALYZER] ${failed.length} files failed all retry attempts`);
+            logger_1.logger.warn('CODE-ANALYSIS', `${failed.length} files failed analysis`);
             for (const failure of failed) {
-                console.warn(`[AI-CODE-ANALYZER] Failed: ${failure.item.filename} - ${failure.error.message}`);
+                logger_1.logger.warn('CODE-ANALYSIS', `Failed: ${failure.item.filename} - ${failure.error.message}`);
             }
         }
-        console.log(`[AI-CODE-ANALYZER] Successfully analyzed ${successful.length}/${files.length} files`);
+        logger_1.logger.info('CODE-ANALYSIS', `Analyzed ${successful.length}/${files.length} files`);
         return successful;
     }
     /**
@@ -35838,24 +35991,57 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ClaudeClient = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
 const secure_file_namer_1 = __nccwpck_require__(1661);
+const performance_tracker_1 = __nccwpck_require__(9766);
 /**
- * Simple Claude client for making AI calls
+ * Enhanced Claude client with performance tracking
  */
 class ClaudeClient {
     constructor(anthropicApiKey) {
         this.anthropicApiKey = anthropicApiKey;
         // Set the API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = this.anthropicApiKey;
+        // Initialize metrics
+        this.metrics = {
+            totalCalls: 0,
+            totalTime: 0,
+            errors: 0,
+            callsByContext: new Map(),
+            timeByContext: new Map(),
+            errorsByContext: new Map()
+        };
     }
-    async callClaude(prompt) {
+    async callClaude(prompt, context = 'unknown', operation) {
+        const startTime = Date.now();
+        this.metrics.totalCalls++;
+        this.updateContextCounter(this.metrics.callsByContext, context);
+        try {
+            const result = await this.executeClaudeCall(prompt);
+            const duration = Date.now() - startTime;
+            // Track successful call metrics
+            this.metrics.totalTime += duration;
+            this.updateContextCounter(this.metrics.timeByContext, context, duration);
+            // Track with performance tracker
+            performance_tracker_1.performanceTracker.trackAICall(context, duration, operation);
+            return result;
+        }
+        catch (error) {
+            // Track error metrics
+            this.metrics.errors++;
+            this.updateContextCounter(this.metrics.errorsByContext, context);
+            throw error;
+        }
+    }
+    async executeClaudeCall(prompt) {
         let tempFile = null;
         try {
             // Create secure temporary file for this request
             const { filePath, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-prompt', prompt);
             tempFile = filePath;
+            performance_tracker_1.performanceTracker.trackTempFile(true);
             let output = '';
             try {
                 await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    silent: true, // Suppress command logging
                     listeners: {
                         stdout: (data) => {
                             output += data.toString();
@@ -35866,11 +36052,41 @@ class ClaudeClient {
             }
             finally {
                 cleanup(); // Use secure cleanup
+                performance_tracker_1.performanceTracker.trackTempFile(false);
             }
         }
         catch (error) {
             throw new Error(`Claude API call failed: ${error}`);
         }
+    }
+    updateContextCounter(map, context, value = 1) {
+        const current = map.get(context) || 0;
+        map.set(context, current + value);
+    }
+    /**
+     * Get current AI call metrics
+     */
+    getMetrics() {
+        return {
+            totalCalls: this.metrics.totalCalls,
+            totalTime: this.metrics.totalTime,
+            averageTime: this.metrics.totalCalls > 0 ? this.metrics.totalTime / this.metrics.totalCalls : 0,
+            errors: this.metrics.errors,
+            callsByContext: new Map(this.metrics.callsByContext),
+            timeByContext: new Map(this.metrics.timeByContext),
+            errorsByContext: new Map(this.metrics.errorsByContext)
+        };
+    }
+    /**
+     * Reset metrics (useful for testing or between runs)
+     */
+    resetMetrics() {
+        this.metrics.totalCalls = 0;
+        this.metrics.totalTime = 0;
+        this.metrics.errors = 0;
+        this.metrics.callsByContext.clear();
+        this.metrics.timeByContext.clear();
+        this.metrics.errorsByContext.clear();
     }
 }
 exports.ClaudeClient = ClaudeClient;
@@ -35920,6 +36136,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CodeAnalysisCache = void 0;
 const crypto = __importStar(__nccwpck_require__(6982));
 const generic_cache_1 = __nccwpck_require__(9267);
+const logger_1 = __nccwpck_require__(7893);
+const performance_tracker_1 = __nccwpck_require__(9766);
 /**
  * Specialized cache for AI-based code analysis results
  * Uses content-based hashing for cache keys to ensure cache hits on identical diffs
@@ -35949,14 +36167,16 @@ class CodeAnalysisCache extends generic_cache_1.GenericCache {
         const key = this.generateCacheKey(filename, diffContent);
         const cached = this.get(key);
         if (cached) {
-            console.log(`[CODE-ANALYSIS-CACHE] Cache HIT for ${filename} (key: ${key})`);
+            logger_1.logger.trace('CACHE', `Hit: ${filename}`);
+            performance_tracker_1.performanceTracker.trackCache(true);
             return cached;
         }
-        console.log(`[CODE-ANALYSIS-CACHE] Cache MISS for ${filename} (key: ${key}) - analyzing with AI`);
+        logger_1.logger.trace('CACHE', `Miss: ${filename}`);
+        performance_tracker_1.performanceTracker.trackCache(false);
         const result = await processor();
         // Store in cache with default TTL
         this.set(key, result);
-        console.log(`[CODE-ANALYSIS-CACHE] Cached result for ${filename} (key: ${key})`);
+        logger_1.logger.trace('CACHE', `Cached: ${filename}`);
         return result;
     }
     /**
@@ -36740,6 +36960,377 @@ class JsonExtractor {
     }
 }
 exports.JsonExtractor = JsonExtractor;
+
+
+/***/ }),
+
+/***/ 7893:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Logging utility with configurable levels
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logger = exports.Logger = exports.LogLevel = void 0;
+var LogLevel;
+(function (LogLevel) {
+    LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
+    LogLevel[LogLevel["WARN"] = 1] = "WARN";
+    LogLevel[LogLevel["INFO"] = 2] = "INFO";
+    LogLevel[LogLevel["DEBUG"] = 3] = "DEBUG";
+    LogLevel[LogLevel["TRACE"] = 4] = "TRACE";
+})(LogLevel || (exports.LogLevel = LogLevel = {}));
+class Logger {
+    static parseLogLevel(level) {
+        switch (level.toUpperCase()) {
+            case 'ERROR':
+                return LogLevel.ERROR;
+            case 'WARN':
+                return LogLevel.WARN;
+            case 'INFO':
+                return LogLevel.INFO;
+            case 'DEBUG':
+                return LogLevel.DEBUG;
+            case 'TRACE':
+                return LogLevel.TRACE;
+            default:
+                return LogLevel.INFO;
+        }
+    }
+    static formatMessage(level, service, message) {
+        const timestamp = process.env.LOG_TIMESTAMPS === 'true'
+            ? `[${new Date().toISOString()}] `
+            : '';
+        return `${timestamp}[${level}] [${service}] ${message}`;
+    }
+    static error(service, message) {
+        if (Logger.level >= LogLevel.ERROR) {
+            console.error(Logger.formatMessage('ERROR', service, message));
+        }
+    }
+    static warn(service, message) {
+        if (Logger.level >= LogLevel.WARN) {
+            console.warn(Logger.formatMessage('WARN', service, message));
+        }
+    }
+    static info(service, message) {
+        if (Logger.level >= LogLevel.INFO) {
+            console.log(Logger.formatMessage('INFO', service, message));
+        }
+    }
+    static debug(service, message) {
+        if (Logger.level >= LogLevel.DEBUG) {
+            console.log(Logger.formatMessage('DEBUG', service, message));
+        }
+    }
+    static trace(service, message) {
+        if (Logger.level >= LogLevel.TRACE) {
+            console.log(Logger.formatMessage('TRACE', service, message));
+        }
+    }
+    static setLevel(level) {
+        Logger.level = level;
+    }
+    static getLevel() {
+        return Logger.level;
+    }
+}
+exports.Logger = Logger;
+Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
+// Export convenience functions
+exports.logger = {
+    error: (service, message) => Logger.error(service, message),
+    warn: (service, message) => Logger.warn(service, message),
+    info: (service, message) => Logger.info(service, message),
+    debug: (service, message) => Logger.debug(service, message),
+    trace: (service, message) => Logger.trace(service, message),
+};
+
+
+/***/ }),
+
+/***/ 9766:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.performanceTracker = exports.PerformanceTracker = void 0;
+const logger_1 = __nccwpck_require__(7893);
+class PerformanceTracker {
+    constructor() {
+        this.timingStack = [];
+        this.aiMetrics = new Map();
+        this.resourceMetrics = {
+            memoryStart: this.getMemoryUsage(),
+            memoryPeak: this.getMemoryUsage(),
+            memoryEnd: 0,
+            tempFilesCreated: 0,
+            tempFilesCleaned: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+        };
+        this.stages = [];
+        this.bottlenecks = [];
+        this.effectiveness = [];
+    }
+    static getInstance() {
+        if (!PerformanceTracker.instance) {
+            PerformanceTracker.instance = new PerformanceTracker();
+        }
+        return PerformanceTracker.instance;
+    }
+    /**
+     * Start timing an operation
+     */
+    startTiming(name, metadata) {
+        const entry = {
+            name,
+            startTime: Date.now(),
+            children: [],
+            metadata,
+        };
+        if (this.timingStack.length > 0) {
+            // Add as child to current operation
+            this.timingStack[this.timingStack.length - 1].children.push(entry);
+        }
+        else {
+            // Top-level operation
+            this.stages.push(entry);
+        }
+        this.timingStack.push(entry);
+        logger_1.logger.info('PERF', `🔄 Starting: ${name}`);
+    }
+    /**
+     * End timing an operation
+     */
+    endTiming(name) {
+        const entry = this.timingStack.pop();
+        if (!entry || entry.name !== name) {
+            logger_1.logger.warn('PERF', `Timing mismatch: expected ${name}, got ${entry?.name || 'none'}`);
+            return 0;
+        }
+        entry.endTime = Date.now();
+        entry.duration = entry.endTime - entry.startTime;
+        // Log completion with sub-stage breakdown
+        if (entry.children.length > 0) {
+            logger_1.logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s total)`);
+            // Log sub-stages with bottleneck detection
+            for (const child of entry.children) {
+                const childDuration = child.duration || 0;
+                const percentOfParent = (childDuration / entry.duration) * 100;
+                const isBottleneck = percentOfParent > 70; // More than 70% of parent time
+                const bottleneckIcon = isBottleneck ? ' ⚠️' : '';
+                logger_1.logger.info('PERF', `└─ ${child.name}: ${(childDuration / 1000).toFixed(1)}s (${percentOfParent.toFixed(0)}% of stage)${bottleneckIcon}`);
+                if (isBottleneck) {
+                    this.addBottleneck({
+                        type: 'sequential_processing',
+                        description: `${child.name} consuming ${percentOfParent.toFixed(0)}% of ${name}`,
+                        currentValue: `${(childDuration / 1000).toFixed(1)}s`,
+                        suggestion: 'Consider parallelization or optimization',
+                    });
+                }
+            }
+        }
+        else {
+            logger_1.logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s)`);
+        }
+        return entry.duration;
+    }
+    /**
+     * Track AI call performance
+     */
+    trackAICall(context, duration, operation) {
+        if (!this.aiMetrics.has(context)) {
+            this.aiMetrics.set(context, {
+                calls: 0,
+                totalTime: 0,
+                times: [],
+                operations: [],
+            });
+        }
+        const metrics = this.aiMetrics.get(context);
+        metrics.calls++;
+        metrics.totalTime += duration;
+        metrics.times.push(duration);
+        if (operation) {
+            metrics.operations.push(operation);
+        }
+        // Check for high latency
+        if (duration > 5000) {
+            // 5+ seconds
+            this.addBottleneck({
+                type: 'high_ai_latency',
+                description: `High AI latency in ${context}`,
+                currentValue: `${(duration / 1000).toFixed(1)}s`,
+                suggestion: 'Consider reducing prompt size or splitting into chunks',
+                estimatedSavings: `${((duration - 3000) / 1000).toFixed(1)}s per call`,
+            });
+        }
+        // Update memory peak
+        this.resourceMetrics.memoryPeak = Math.max(this.resourceMetrics.memoryPeak, this.getMemoryUsage());
+    }
+    /**
+     * Track effectiveness of an operation
+     */
+    trackEffectiveness(operation, input, output, timeSpent) {
+        const reductionRate = input > 0 ? ((input - output) / input) * 100 : 0;
+        const worthwhile = reductionRate > 10 || timeSpent < 5000; // Either good reduction or fast
+        this.effectiveness.push({
+            operation,
+            input,
+            output,
+            reductionRate,
+            timeSpent,
+            worthwhile,
+        });
+        if (!worthwhile && timeSpent > 10000) {
+            // 10+ seconds for minimal benefit
+            this.addBottleneck({
+                type: 'unnecessary_work',
+                description: `${operation}: ${timeSpent / 1000}s for ${reductionRate.toFixed(1)}% improvement`,
+                currentValue: `${reductionRate.toFixed(1)}% reduction`,
+                suggestion: 'Consider skipping this step or optimizing thresholds',
+                estimatedSavings: `${(timeSpent / 1000).toFixed(1)}s`,
+            });
+        }
+    }
+    /**
+     * Track resource usage
+     */
+    trackTempFile(created = true) {
+        if (created) {
+            this.resourceMetrics.tempFilesCreated++;
+        }
+        else {
+            this.resourceMetrics.tempFilesCleaned++;
+        }
+    }
+    trackCache(hit) {
+        if (hit) {
+            this.resourceMetrics.cacheHits++;
+        }
+        else {
+            this.resourceMetrics.cacheMisses++;
+        }
+    }
+    /**
+     * Add bottleneck warning
+     */
+    addBottleneck(bottleneck) {
+        this.bottlenecks.push(bottleneck);
+    }
+    /**
+     * Generate comprehensive performance report
+     */
+    generateReport() {
+        this.resourceMetrics.memoryEnd = this.getMemoryUsage();
+        logger_1.logger.info('PERFORMANCE', '📊 === PERFORMANCE ANALYSIS REPORT ===');
+        // Overall timing breakdown
+        const totalTime = this.stages.reduce((sum, stage) => sum + (stage.duration || 0), 0);
+        logger_1.logger.info('PERFORMANCE', `Total execution time: ${(totalTime / 1000).toFixed(1)}s`);
+        // Stage breakdown
+        if (this.stages.length > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n🎯 Stage Breakdown:');
+            this.stages.forEach((stage, index) => {
+                const duration = stage.duration || 0;
+                const percent = totalTime > 0 ? (duration / totalTime) * 100 : 0;
+                logger_1.logger.info('PERFORMANCE', `${index + 1}. ${stage.name}: ${(duration / 1000).toFixed(1)}s (${percent.toFixed(0)}%)`);
+            });
+        }
+        // AI call analytics
+        if (this.aiMetrics.size > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n🤖 AI Call Analytics:');
+            for (const [context, metrics] of this.aiMetrics) {
+                const avgTime = metrics.totalTime / metrics.calls;
+                const maxTime = Math.max(...metrics.times);
+                const minTime = Math.min(...metrics.times);
+                logger_1.logger.info('PERFORMANCE', `${context}:`);
+                logger_1.logger.info('PERFORMANCE', `├─ Calls: ${metrics.calls}, Total: ${(metrics.totalTime / 1000).toFixed(1)}s`);
+                logger_1.logger.info('PERFORMANCE', `├─ Avg: ${(avgTime / 1000).toFixed(1)}s, Max: ${(maxTime / 1000).toFixed(1)}s, Min: ${(minTime / 1000).toFixed(1)}s`);
+                // Find slowest operation
+                if (metrics.operations.length > 0) {
+                    const slowestIndex = metrics.times.indexOf(maxTime);
+                    if (slowestIndex >= 0 && metrics.operations[slowestIndex]) {
+                        logger_1.logger.info('PERFORMANCE', `└─ Slowest: ${metrics.operations[slowestIndex]} (${(maxTime / 1000).toFixed(1)}s)`);
+                    }
+                }
+            }
+        }
+        // Resource utilization
+        logger_1.logger.info('PERFORMANCE', '\n💾 Resource Utilization:');
+        logger_1.logger.info('PERFORMANCE', `Memory: ${this.resourceMetrics.memoryStart}MB → ${this.resourceMetrics.memoryEnd}MB (peak: ${this.resourceMetrics.memoryPeak}MB)`);
+        const tempFileLeaks = this.resourceMetrics.tempFilesCreated -
+            this.resourceMetrics.tempFilesCleaned;
+        logger_1.logger.info('PERFORMANCE', `Temp files: ${this.resourceMetrics.tempFilesCreated} created, ${this.resourceMetrics.tempFilesCleaned} cleaned${tempFileLeaks > 0 ? ` (${tempFileLeaks} leaked!)` : ''}`);
+        const totalCacheOps = this.resourceMetrics.cacheHits + this.resourceMetrics.cacheMisses;
+        const cacheHitRate = totalCacheOps > 0
+            ? (this.resourceMetrics.cacheHits / totalCacheOps) * 100
+            : 0;
+        logger_1.logger.info('PERFORMANCE', `Cache: ${this.resourceMetrics.cacheHits}/${totalCacheOps} hits (${cacheHitRate.toFixed(0)}% hit rate)`);
+        // Effectiveness tracking
+        if (this.effectiveness.length > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n📈 Effectiveness Analysis:');
+            this.effectiveness.forEach((eff) => {
+                const worthwhileIcon = eff.worthwhile ? '✅' : '⚠️';
+                logger_1.logger.info('PERFORMANCE', `${worthwhileIcon} ${eff.operation}: ${eff.input}→${eff.output} (${eff.reductionRate.toFixed(1)}% reduction, ${(eff.timeSpent / 1000).toFixed(1)}s)`);
+            });
+        }
+        // Bottleneck warnings and suggestions
+        if (this.bottlenecks.length > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n⚠️ Bottlenecks & Optimization Opportunities:');
+            this.bottlenecks.forEach((bottleneck, index) => {
+                logger_1.logger.info('PERFORMANCE', `${index + 1}. ${bottleneck.description}`);
+                logger_1.logger.info('PERFORMANCE', `   Current: ${bottleneck.currentValue}`);
+                logger_1.logger.info('PERFORMANCE', `   Suggestion: ${bottleneck.suggestion}`);
+                if (bottleneck.estimatedSavings) {
+                    logger_1.logger.info('PERFORMANCE', `   Est. savings: ${bottleneck.estimatedSavings}`);
+                }
+            });
+        }
+        // Final insights
+        const totalAICalls = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.calls, 0);
+        const totalAITime = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.totalTime, 0);
+        logger_1.logger.info('PERFORMANCE', '\n🎯 Key Insights:');
+        logger_1.logger.info('PERFORMANCE', `• Total AI calls: ${totalAICalls} (${(totalAITime / 1000).toFixed(1)}s, ${((totalAITime / totalTime) * 100).toFixed(0)}% of total time)`);
+        if (totalAICalls > 50) {
+            logger_1.logger.warn('PERFORMANCE', `• High AI usage detected (${totalAICalls} calls) - consider batch optimization`);
+        }
+        if (totalTime > 120000) {
+            // 2+ minutes
+            logger_1.logger.warn('PERFORMANCE', `• Long processing time (${(totalTime / 1000).toFixed(1)}s) - see bottleneck suggestions above`);
+        }
+        logger_1.logger.info('PERFORMANCE', '📊 === END PERFORMANCE REPORT ===');
+    }
+    /**
+     * Reset all metrics
+     */
+    reset() {
+        this.timingStack = [];
+        this.aiMetrics.clear();
+        this.stages = [];
+        this.bottlenecks = [];
+        this.effectiveness = [];
+        this.resourceMetrics = {
+            memoryStart: this.getMemoryUsage(),
+            memoryPeak: this.getMemoryUsage(),
+            memoryEnd: 0,
+            tempFilesCreated: 0,
+            tempFilesCleaned: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+        };
+    }
+    getMemoryUsage() {
+        const usage = process.memoryUsage();
+        return Math.round(usage.heapUsed / 1024 / 1024); // MB
+    }
+}
+exports.PerformanceTracker = PerformanceTracker;
+// Export singleton instance
+exports.performanceTracker = PerformanceTracker.getInstance();
 
 
 /***/ }),

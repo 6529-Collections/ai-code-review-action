@@ -1,5 +1,15 @@
 import { Theme } from './theme-service';
 import { SimilarityMetrics, ConsolidatedTheme, ConsolidationConfig } from '../types/similarity-types';
+/**
+ * Effectiveness tracking for similarity analysis
+ */
+export interface SimilarityEffectiveness {
+    pairsAnalyzed: number;
+    mergesDecided: number;
+    mergeRate: number;
+    processingTime: number;
+    aiCallsUsed: number;
+}
 export declare class ThemeSimilarityService {
     private config;
     private similarityCache;
@@ -9,10 +19,19 @@ export declare class ThemeSimilarityService {
     private businessDomainService;
     private themeNamingService;
     private pendingCalculations;
+    private effectiveness;
     constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>);
     calculateSimilarity(theme1: Theme, theme2: Theme): Promise<SimilarityMetrics>;
     private doCalculateSimilarity;
     consolidateThemes(themes: Theme[]): Promise<ConsolidatedTheme[]>;
+    /**
+     * Get effectiveness metrics for this similarity analysis
+     */
+    getEffectiveness(): SimilarityEffectiveness;
+    /**
+     * Reset effectiveness metrics
+     */
+    resetEffectiveness(): void;
     private findMergeGroups;
     private calculateBatchSimilarities;
     private buildMergeGroupsFromSimilarities;

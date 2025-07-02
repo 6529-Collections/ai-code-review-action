@@ -1,5 +1,6 @@
 import { Theme } from './theme-service';
 import { CachedSimilarity, SimilarityMetrics } from '../types/similarity-types';
+import { performanceTracker } from '../utils/performance-tracker';
 
 export class SimilarityCache {
   private cache: Map<string, CachedSimilarity> = new Map();
@@ -14,15 +15,20 @@ export class SimilarityCache {
 
   getCachedSimilarity(cacheKey: string): CachedSimilarity | null {
     const cached = this.cache.get(cacheKey);
-    if (!cached) return null;
+    if (!cached) {
+      performanceTracker.trackCache(false); // cache miss
+      return null;
+    }
 
     // Check if cache has expired
     const ageMinutes = (Date.now() - cached.timestamp.getTime()) / (1000 * 60);
     if (ageMinutes > this.cacheExpireMinutes) {
       this.cache.delete(cacheKey);
+      performanceTracker.trackCache(false); // cache miss (expired)
       return null;
     }
 
+    performanceTracker.trackCache(true); // cache hit
     return cached;
   }
 

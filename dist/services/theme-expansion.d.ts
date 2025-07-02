@@ -39,11 +39,24 @@ export interface ExpansionResult {
     error?: string;
     processingTime: number;
 }
+/**
+ * Effectiveness tracking for theme expansion
+ */
+export interface ExpansionEffectiveness {
+    themesEvaluated: number;
+    themesExpanded: number;
+    expansionRate: number;
+    processingTime: number;
+    aiCallsUsed: number;
+    maxDepthReached: number;
+    atomicThemesIdentified: number;
+}
 export declare class ThemeExpansionService {
     private claudeClient;
     private cache;
     private config;
     private aiDecisionService;
+    private effectiveness;
     constructor(anthropicApiKey: string, config?: Partial<ExpansionConfig>);
     /**
      * Process items concurrently with limit and retry logic
@@ -93,4 +106,12 @@ export declare class ThemeExpansionService {
      * Convert suggested sub-themes to ConsolidatedTheme objects
      */
     private convertSuggestedToConsolidatedThemes;
+    /**
+     * Get effectiveness metrics for this expansion analysis
+     */
+    getEffectiveness(): ExpansionEffectiveness;
+    /**
+     * Reset effectiveness metrics
+     */
+    resetEffectiveness(): void;
 }

@@ -37,4 +37,6 @@ jobs:
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
       env:
         SKIP_CROSS_LEVEL_DEDUP: true
+        LOG_LEVEL: INFO
+        LOG_TIMESTAMPS: true
     
