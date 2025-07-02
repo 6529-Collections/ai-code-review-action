@@ -6,17 +6,24 @@ import { GitService } from './services/git-service';
 import { ThemeService } from './services/theme-service';
 import { ThemeFormatter } from './utils/theme-formatter';
 import { logger } from './utils/logger';
+import { performanceTracker } from './utils/performance-tracker';
 
 export async function run(): Promise<void> {
   try {
+    // Reset performance tracker for this run
+    performanceTracker.reset();
+    performanceTracker.startTiming('Total AI Code Review');
+
     const inputs = validateInputs();
 
     // Set Anthropic API key for Claude CLI
     process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
 
+    performanceTracker.startTiming('Setup');
+
     // Install Claude Code CLI
     logInfo('Installing Claude Code CLI...');
-    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
+    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
     logInfo('Claude Code CLI installed successfully');
 
     // Initialize Claude CLI configuration to avoid JSON config errors
@@ -31,8 +38,10 @@ export async function run(): Promise<void> {
     await exec.exec('bash', [
       '-c',
       `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
-    ]);
+    ], { silent: true });
     logInfo('Claude CLI configuration initialized');
+
+    performanceTracker.endTiming('Setup');
 
     logInfo('Starting AI code review analysis...');
 
@@ -47,9 +56,13 @@ export async function run(): Promise<void> {
 
     logInfo('Using AI-driven theme expansion for natural hierarchy depth');
 
+    performanceTracker.startTiming('Git Operations');
+    
     // Get PR context and changed files
     const prContext = await gitService.getPullRequestContext();
     const changedFiles = await gitService.getChangedFiles();
+
+    performanceTracker.endTiming('Git Operations');
 
     // Log dev mode info
     if (prContext && prContext.number === 0) {
@@ -70,9 +83,11 @@ export async function run(): Promise<void> {
     }
 
     // Analyze themes
+    performanceTracker.startTiming('Theme Analysis');
     logInfo('Analyzing code themes...');
     const themeAnalysis =
       await themeService.analyzeThemesWithEnhancedContext(gitService);
+    performanceTracker.endTiming('Theme Analysis');
 
     // Debug: Log theme analysis result
     logger.debug('MAIN', `Theme analysis completed: ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
@@ -86,6 +101,7 @@ export async function run(): Promise<void> {
     }
 
     // Output results using enhanced formatter
+    performanceTracker.startTiming('Output Generation');
     try {
       logger.debug('MAIN', 'Starting output formatting...');
 
@@ -122,6 +138,7 @@ export async function run(): Promise<void> {
       core.setOutput('themes', 'No themes found');
       core.setOutput('summary', 'Output generation failed');
     }
+    performanceTracker.endTiming('Output Generation');
 
     logger.info('MAIN', `Analysis complete: Found ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
 
@@ -138,80 +155,15 @@ export async function run(): Promise<void> {
       );
     }
 
-    // Generate performance summary report
-    await generatePerformanceSummary(themeService, themeAnalysis);
+    // End total timing and generate comprehensive performance report
+    performanceTracker.endTiming('Total AI Code Review');
+    performanceTracker.generateReport();
+
   } catch (error) {
     handleError(error);
   }
 }
 
-/**
- * Generate comprehensive performance summary report
- */
-async function generatePerformanceSummary(
-  themeService: ThemeService, 
-  themeAnalysis: any
-): Promise<void> {
-  try {
-    logger.info('PERFORMANCE', '=== AI Code Review Performance Summary ===');
-    
-    // Get metrics from theme service components
-    const similarityMetrics = themeService.getSimilarityEffectiveness?.() || null;
-    const expansionMetrics = themeService.getExpansionEffectiveness?.() || null;
-    const hierarchicalMetrics = themeService.getHierarchicalEffectiveness?.() || null;
-    
-    // Overall processing metrics
-    logger.info('PERFORMANCE', `Total Processing Time: ${themeAnalysis.processingTime || 'N/A'}ms`);
-    logger.info('PERFORMANCE', `Total Themes Found: ${themeAnalysis.totalThemes || 0}`);
-    
-    // AI Call metrics (from various services)
-    let totalAICalls = 0;
-    let totalAITime = 0;
-    
-    if (similarityMetrics) {
-      totalAICalls += similarityMetrics.aiCallsUsed;
-      totalAITime += similarityMetrics.processingTime;
-      logger.info('PERFORMANCE', `Similarity Analysis: ${similarityMetrics.pairsAnalyzed} pairs, ${similarityMetrics.mergesDecided} merges (${similarityMetrics.mergeRate.toFixed(1)}% rate)`);
-      logger.info('PERFORMANCE', `  - AI Calls: ${similarityMetrics.aiCallsUsed}, Time: ${similarityMetrics.processingTime}ms`);
-    }
-    
-    if (expansionMetrics) {
-      totalAICalls += expansionMetrics.aiCallsUsed;
-      totalAITime += expansionMetrics.processingTime;
-      logger.info('PERFORMANCE', `Theme Expansion: ${expansionMetrics.themesEvaluated} evaluated, ${expansionMetrics.themesExpanded} expanded (${expansionMetrics.expansionRate.toFixed(1)}% rate)`);
-      logger.info('PERFORMANCE', `  - Max Depth: ${expansionMetrics.maxDepthReached}, Atomic Themes: ${expansionMetrics.atomicThemesIdentified}`);
-      logger.info('PERFORMANCE', `  - AI Calls: ${expansionMetrics.aiCallsUsed}, Time: ${expansionMetrics.processingTime}ms`);
-    }
-    
-    if (hierarchicalMetrics) {
-      totalAICalls += hierarchicalMetrics.aiCallsUsed;
-      totalAITime += hierarchicalMetrics.processingTime;
-      logger.info('PERFORMANCE', `Hierarchical Analysis: ${hierarchicalMetrics.crossLevelComparisonsGenerated} comparisons (${hierarchicalMetrics.filteringReduction.toFixed(1)}% filtered)`);
-      logger.info('PERFORMANCE', `  - Duplicates Found: ${hierarchicalMetrics.duplicatesFound}, Overlaps Resolved: ${hierarchicalMetrics.overlapsResolved}`);
-      logger.info('PERFORMANCE', `  - AI Calls: ${hierarchicalMetrics.aiCallsUsed}, Time: ${hierarchicalMetrics.processingTime}ms`);
-    }
-    
-    // Summary totals
-    logger.info('PERFORMANCE', `Total AI Calls: ${totalAICalls}`);
-    if (totalAICalls > 0) {
-      logger.info('PERFORMANCE', `Average AI Call Time: ${(totalAITime / totalAICalls).toFixed(1)}ms`);
-    }
-    
-    // Performance insights
-    if (totalAICalls > 100) {
-      logger.warn('PERFORMANCE', `High AI usage detected (${totalAICalls} calls) - consider optimizing batch sizes or filtering`);
-    }
-    
-    if (themeAnalysis.processingTime > 120000) { // 2 minutes
-      logger.warn('PERFORMANCE', `Long processing time detected (${(themeAnalysis.processingTime / 1000).toFixed(1)}s) - consider reducing complexity`);
-    }
-    
-    logger.info('PERFORMANCE', '=== End Performance Summary ===');
-    
-  } catch (error) {
-    logger.error('PERFORMANCE', `Failed to generate performance summary: ${error}`);
-  }
-}
 
 if (require.main === module) {
   run();

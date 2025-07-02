@@ -1,6 +1,8 @@
 import * as crypto from 'crypto';
 import { GenericCache } from './generic-cache';
 import { CodeChange } from './ai-code-analyzer';
+import { logger } from './logger';
+import { performanceTracker } from './performance-tracker';
 
 /**
  * Specialized cache for AI-based code analysis results
@@ -38,22 +40,18 @@ export class CodeAnalysisCache extends GenericCache {
     const cached = this.get(key) as CodeChange;
 
     if (cached) {
-      console.log(
-        `[CODE-ANALYSIS-CACHE] Cache HIT for ${filename} (key: ${key})`
-      );
+      logger.trace('CACHE', `Hit: ${filename}`);
+      performanceTracker.trackCache(true);
       return cached;
     }
 
-    console.log(
-      `[CODE-ANALYSIS-CACHE] Cache MISS for ${filename} (key: ${key}) - analyzing with AI`
-    );
+    logger.trace('CACHE', `Miss: ${filename}`);
+    performanceTracker.trackCache(false);
     const result = await processor();
 
     // Store in cache with default TTL
     this.set(key, result);
-    console.log(
-      `[CODE-ANALYSIS-CACHE] Cached result for ${filename} (key: ${key})`
-    );
+    logger.trace('CACHE', `Cached: ${filename}`);
 
     return result;
   }

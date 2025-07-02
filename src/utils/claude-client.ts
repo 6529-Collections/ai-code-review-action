@@ -1,5 +1,6 @@
 import * as exec from '@actions/exec';
 import { SecureFileNamer } from './secure-file-namer';
+import { performanceTracker } from './performance-tracker';
 
 /**
  * Performance tracking for AI calls
@@ -36,7 +37,7 @@ export class ClaudeClient {
   constructor(private readonly anthropicApiKey: string) {
     // Set the API key for Claude CLI
     process.env.ANTHROPIC_API_KEY = this.anthropicApiKey;
-    
+
     // Initialize metrics
     this.metrics = {
       totalCalls: 0,
@@ -44,11 +45,15 @@ export class ClaudeClient {
       errors: 0,
       callsByContext: new Map(),
       timeByContext: new Map(),
-      errorsByContext: new Map()
+      errorsByContext: new Map(),
     };
   }
 
-  async callClaude(prompt: string, context: string = 'unknown'): Promise<string> {
+  async callClaude(
+    prompt: string,
+    context: string = 'unknown',
+    operation?: string
+  ): Promise<string> {
     const startTime = Date.now();
     this.metrics.totalCalls++;
     this.updateContextCounter(this.metrics.callsByContext, context);
@@ -56,11 +61,14 @@ export class ClaudeClient {
     try {
       const result = await this.executeClaudeCall(prompt);
       const duration = Date.now() - startTime;
-      
+
       // Track successful call metrics
       this.metrics.totalTime += duration;
       this.updateContextCounter(this.metrics.timeByContext, context, duration);
-      
+
+      // Track with performance tracker
+      performanceTracker.trackAICall(context, duration, operation);
+
       return result;
     } catch (error) {
       // Track error metrics
@@ -80,10 +88,12 @@ export class ClaudeClient {
         prompt
       );
       tempFile = filePath;
+      performanceTracker.trackTempFile(true);
 
       let output = '';
       try {
         await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          silent: true, // Suppress command logging
           listeners: {
             stdout: (data: Buffer) => {
               output += data.toString();
@@ -94,13 +104,18 @@ export class ClaudeClient {
         return output.trim();
       } finally {
         cleanup(); // Use secure cleanup
+        performanceTracker.trackTempFile(false);
       }
     } catch (error) {
       throw new Error(`Claude API call failed: ${error}`);
     }
   }
 
-  private updateContextCounter(map: Map<string, number>, context: string, value: number = 1): void {
+  private updateContextCounter(
+    map: Map<string, number>,
+    context: string,
+    value: number = 1
+  ): void {
     const current = map.get(context) || 0;
     map.set(context, current + value);
   }
@@ -112,11 +127,14 @@ export class ClaudeClient {
     return {
       totalCalls: this.metrics.totalCalls,
       totalTime: this.metrics.totalTime,
-      averageTime: this.metrics.totalCalls > 0 ? this.metrics.totalTime / this.metrics.totalCalls : 0,
+      averageTime:
+        this.metrics.totalCalls > 0
+          ? this.metrics.totalTime / this.metrics.totalCalls
+          : 0,
       errors: this.metrics.errors,
       callsByContext: new Map(this.metrics.callsByContext),
       timeByContext: new Map(this.metrics.timeByContext),
-      errorsByContext: new Map(this.metrics.errorsByContext)
+      errorsByContext: new Map(this.metrics.errorsByContext),
     };
   }
 
@@ -130,6 +148,5 @@ export class ClaudeClient {
     this.metrics.callsByContext.clear();
     this.metrics.timeByContext.clear();
     this.metrics.errorsByContext.clear();
-  }
   }
 }

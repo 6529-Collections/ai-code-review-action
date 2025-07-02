@@ -38,7 +38,7 @@ export class BusinessDomainService {
       {
         concurrencyLimit: 3, // Fewer concurrent batches since each is larger
         maxRetries: 2,
-        enableLogging: true,
+        enableLogging: false,
         onProgress: (completed, total) => {
           const themesCompleted = completed * batchSize;
           const totalThemes = themes.length;
@@ -275,6 +275,7 @@ export class BusinessDomainService {
       let output = '';
       try {
         await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+          silent: true,
           listeners: {
             stdout: (data: Buffer) => {
               output += data.toString();

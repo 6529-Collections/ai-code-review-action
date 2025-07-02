@@ -41,7 +41,7 @@ export class ThemeSimilarityService {
     mergesDecided: 0,
     mergeRate: 0,
     processingTime: 0,
-    aiCallsUsed: 0
+    aiCallsUsed: 0,
   };
 
   constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>) {
@@ -63,7 +63,8 @@ export class ThemeSimilarityService {
     this.businessDomainService = new BusinessDomainService(anthropicApiKey);
     this.themeNamingService = new ThemeNamingService();
 
-    logger.info('SIMILARITY', 
+    logger.info(
+      'SIMILARITY',
       `Config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`
     );
   }
@@ -77,18 +78,14 @@ export class ThemeSimilarityService {
     // Check if already calculating
     const pending = this.pendingCalculations.get(cacheKey);
     if (pending) {
-      console.log(
-        `[PENDING] Waiting for pending calculation: "${theme1.name}" vs "${theme2.name}"`
-      );
+      logger.trace('SIMILARITY', `Pending: ${theme1.name} vs ${theme2.name}`);
       return pending;
     }
 
     // Check cache
     const cached = this.similarityCache.getCachedSimilarity(cacheKey);
     if (cached) {
-      console.log(
-        `[CACHE] Using cached similarity for "${theme1.name}" vs "${theme2.name}"`
-      );
+      logger.trace('SIMILARITY', `Cache hit: ${theme1.name} vs ${theme2.name}`);
       return cached.similarity;
     }
 
@@ -125,8 +122,9 @@ export class ThemeSimilarityService {
 
     // Skip only if NO file overlap AND completely different names
     if (fileOverlap === 0 && nameSimilarity < 0.1) {
-      console.log(
-        `[SKIP] No file overlap and different names for "${theme1.name}" vs "${theme2.name}"`
+      logger.trace(
+        'SIMILARITY',
+        `Skip: no overlap - ${theme1.name} vs ${theme2.name}`
       );
       const result = {
         combinedScore: 0,
@@ -168,7 +166,9 @@ export class ThemeSimilarityService {
     if (themes.length === 0) return [];
 
     const startTime = Date.now();
-    const initialAICalls = this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls;
+    const initialAICalls = this.aiSimilarityService
+      .getClaudeClient()
+      .getMetrics().totalCalls;
 
     // Step 1: Find merge candidates
     logger.info('SIMILARITY', 'Step 1: Finding merge candidates');
@@ -181,21 +181,33 @@ export class ThemeSimilarityService {
       mergeGroups,
       themes
     );
-    logger.info('SIMILARITY', `Created ${consolidated.length} consolidated themes`);
+    logger.info(
+      'SIMILARITY',
+      `Created ${consolidated.length} consolidated themes`
+    );
 
     // Step 3: Build hierarchies
     logger.info('SIMILARITY', 'Step 3: Building hierarchies');
     const hierarchical = await this.buildHierarchies(consolidated);
-    
+
     // Update effectiveness metrics
     this.effectiveness.processingTime = Date.now() - startTime;
-    this.effectiveness.aiCallsUsed = this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls - initialAICalls;
-    this.effectiveness.mergeRate = this.effectiveness.pairsAnalyzed > 0 
-      ? (this.effectiveness.mergesDecided / this.effectiveness.pairsAnalyzed) * 100 
-      : 0;
-    
-    const reductionPercent = ((themes.length - hierarchical.length) / themes.length * 100).toFixed(1);
-    logger.info('SIMILARITY', 
+    this.effectiveness.aiCallsUsed =
+      this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls -
+      initialAICalls;
+    this.effectiveness.mergeRate =
+      this.effectiveness.pairsAnalyzed > 0
+        ? (this.effectiveness.mergesDecided /
+            this.effectiveness.pairsAnalyzed) *
+          100
+        : 0;
+
+    const reductionPercent = (
+      ((themes.length - hierarchical.length) / themes.length) *
+      100
+    ).toFixed(1);
+    logger.info(
+      'SIMILARITY',
       `Final result: ${hierarchical.length} themes (${reductionPercent}% reduction, ${this.effectiveness.mergeRate.toFixed(1)}% merge rate)`
     );
 
@@ -218,14 +230,17 @@ export class ThemeSimilarityService {
       mergesDecided: 0,
       mergeRate: 0,
       processingTime: 0,
-      aiCallsUsed: 0
+      aiCallsUsed: 0,
     };
   }
 
   private async findMergeGroups(
     themes: Theme[]
   ): Promise<Map<string, string[]>> {
-    logger.debug('SIMILARITY', `Using batch processing for ${themes.length} themes`);
+    logger.debug(
+      'SIMILARITY',
+      `Using batch processing for ${themes.length} themes`
+    );
 
     // Step 1: Collect all theme pairs that need comparison
     const allPairs: ThemePair[] = [];
@@ -255,16 +270,15 @@ export class ThemeSimilarityService {
     const similarities = new Map<string, SimilarityMetrics>();
 
     // Use batch AI processing for significant performance improvement
-    console.log(
-      `[SIMILARITY-BATCH] Processing ${pairs.length} pairs with batch AI calls`
-    );
+    logger.debug('SIMILARITY', `Processing ${pairs.length} pairs in batches`);
 
     // Split into batches for optimal processing
     const batchSize = this.calculateOptimalBatchSize(pairs.length);
     const batches = this.createPairBatches(pairs, batchSize);
 
-    console.log(
-      `[SIMILARITY-BATCH] Split into ${batches.length} batches of ~${batchSize} pairs each`
+    logger.debug(
+      'SIMILARITY',
+      `${batches.length} batches of ~${batchSize} pairs each`
     );
 
     // Process batches concurrently
@@ -276,17 +290,22 @@ export class ThemeSimilarityService {
       {
         concurrencyLimit: 3, // Fewer concurrent batches since each is larger
         maxRetries: 2,
-        enableLogging: true,
+        enableLogging: false,
         onProgress: (completed, total) => {
-          const pairsCompleted = completed * batchSize;
-          const totalPairs = pairs.length;
-          console.log(
-            `[SIMILARITY-BATCH] Progress: ${pairsCompleted}/${totalPairs} pairs processed (${completed}/${total} batches)`
-          );
+          // Only log major progress milestones to reduce noise
+          if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
+            const pairsCompleted = completed * batchSize;
+            const totalPairs = pairs.length;
+            logger.debug(
+              'SIMILARITY',
+              `Progress: ${pairsCompleted}/${totalPairs} pairs (${Math.round((completed / total) * 100)}%)`
+            );
+          }
         },
         onError: (error, batch, retryCount) => {
-          console.warn(
-            `[SIMILARITY-BATCH] Retry ${retryCount} for batch of ${batch.length} pairs: ${error.message}`
+          logger.warn(
+            'SIMILARITY',
+            `Retry ${retryCount} for batch: ${error.message}`
           );
         },
       }
@@ -311,8 +330,9 @@ export class ThemeSimilarityService {
       }
     }
 
-    console.log(
-      `[SIMILARITY] Completed: ${successCount} successful, ${failedCount} failed`
+    logger.info(
+      'SIMILARITY',
+      `Batch processing: ${successCount} successful, ${failedCount} failed`
     );
     return similarities;
   }
@@ -345,8 +365,9 @@ export class ThemeSimilarityService {
         ) {
           group.push(otherTheme.id);
           processed.add(otherTheme.id);
-          console.log(
-            `[MERGE] "${theme.name}" + "${otherTheme.name}" (score: ${similarity.combinedScore.toFixed(2)})`
+          logger.trace(
+            'SIMILARITY',
+            `Merge: ${theme.name} + ${otherTheme.name} (${similarity.combinedScore.toFixed(2)})`
           );
         }
       }
