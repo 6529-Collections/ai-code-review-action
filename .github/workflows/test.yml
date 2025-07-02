@@ -29,11 +29,12 @@ jobs:
       id: review
       with:
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-        # Enable maximum expansion by reducing aggressive deduplication
-        skip-second-pass-dedup: 'true'
-        cross-level-dedup-threshold: '0.98'
+        # Balanced: Preserve expansion but catch clear duplicates
+        skip-second-pass-dedup: 'false'
+        cross-level-dedup-threshold: '0.95'
         allow-overlap-merging: 'false'
-        min-themes-for-cross-level-dedup: '30'
+        min-themes-for-cross-level-dedup: '5'
+        min-themes-for-second-pass-dedup: '5'
         verbose-dedup-logging: 'true'
       env:
         LOG_LEVEL: INFO

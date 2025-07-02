@@ -32639,7 +32639,8 @@ class HierarchicalSimilarityService {
             const meetsThreshold = similarity.similarityScore > similarityThreshold;
             const isStrictDuplicate = similarity.relationshipType === 'duplicate';
             const isOverlap = similarity.relationshipType === 'overlap';
-            const shouldMerge = meetsThreshold && (isStrictDuplicate || (allowOverlapMerging && isOverlap));
+            const shouldMerge = meetsThreshold &&
+                (isStrictDuplicate || (allowOverlapMerging && isOverlap));
             // Log detailed deduplication decisions
             if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
                 console.log(`[CROSS-LEVEL-DEDUP] Similarity: ${similarity.similarityScore.toFixed(3)} (threshold: ${similarityThreshold})`);
@@ -33498,7 +33499,9 @@ class ThemeExpansionService {
         // Skip if disabled via environment variable or theme count is too small
         const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
         const minThemesForSecondPass = parseInt(process.env.MIN_THEMES_FOR_SECOND_PASS_DEDUP || '10');
-        if (finalThemes.length > 1 && !skipSecondPass && finalThemes.length >= minThemesForSecondPass) {
+        if (finalThemes.length > 1 &&
+            !skipSecondPass &&
+            finalThemes.length >= minThemesForSecondPass) {
             logger_1.logger.info('EXPANSION', `Running second pass deduplication on ${finalThemes.length} themes`);
             const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
@@ -33672,14 +33675,14 @@ CRITICAL: Respond with ONLY valid JSON.
                 }
             });
             // Log batch deduplication results
-            const mergedCount = groups.filter(g => g.length > 1).length;
-            const keptSeparate = groups.filter(g => g.length === 1).length;
+            const mergedCount = groups.filter((g) => g.length > 1).length;
+            const keptSeparate = groups.filter((g) => g.length === 1).length;
             if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
                 console.log(`[BATCH-DEDUP] Processed ${themes.length} themes into ${groups.length} groups`);
                 console.log(`[BATCH-DEDUP] ${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
                 groups.forEach((group, idx) => {
                     if (group.length > 1) {
-                        console.log(`[BATCH-DEDUP] Group ${idx + 1}: Merging ${group.length} themes: ${group.map(t => `"${t.name}"`).join(', ')}`);
+                        console.log(`[BATCH-DEDUP] Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`);
                     }
                 });
             }
@@ -34736,7 +34739,8 @@ class ThemeService {
                     console.log(`[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`);
                     // Apply cross-level deduplication
                     const minThemesForCrossLevel = parseInt(process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20');
-                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' && expandedThemes.length >= minThemesForCrossLevel) {
+                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
+                        expandedThemes.length >= minThemesForCrossLevel) {
                         performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
                         console.log('[THEME-SERVICE] Running cross-level deduplication...');
                         const beforeDedup = expandedThemes.length;

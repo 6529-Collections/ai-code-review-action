@@ -8,7 +8,24 @@ The theme expansion was taking ~3 hours but achieving 0% effectiveness (3→3 th
 
 ## Quick Start Examples
 
-### Maximum Expansion (Recommended for detailed theme analysis)
+### Balanced Approach (Recommended - preserves expansion but catches duplicates)
+
+```yaml
+- name: AI Code Review with Balanced Deduplication
+  uses: your-org/ai-code-review-action@v1
+  with:
+    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    # Preserve expansion but catch clear duplicates
+    skip-second-pass-dedup: 'false'
+    cross-level-dedup-threshold: '0.95'
+    allow-overlap-merging: 'false'
+    min-themes-for-cross-level-dedup: '5'
+    min-themes-for-second-pass-dedup: '5'
+    # Enable logging to monitor behavior
+    verbose-dedup-logging: 'true'
+```
+
+### Maximum Expansion (For when you want absolutely no merging)
 
 ```yaml
 - name: AI Code Review with Maximum Expansion
@@ -19,17 +36,17 @@ The theme expansion was taking ~3 hours but achieving 0% effectiveness (3→3 th
     skip-batch-dedup: 'true'
     skip-second-pass-dedup: 'true'
     # Make cross-level deduplication very strict
-    cross-level-dedup-threshold: '0.98'
+    cross-level-dedup-threshold: '0.99'
     allow-overlap-merging: 'false'
     min-themes-for-cross-level-dedup: '50'
     # Enable logging to monitor behavior
     verbose-dedup-logging: 'true'
 ```
 
-### Balanced Approach (Some deduplication but preserving expansion)
+### Conservative (Minimal changes from original behavior)
 
 ```yaml
-- name: AI Code Review with Balanced Deduplication
+- name: AI Code Review with Conservative Deduplication
   uses: your-org/ai-code-review-action@v1
   with:
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
