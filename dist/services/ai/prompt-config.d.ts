@@ -95,20 +95,20 @@ export declare const ResponseSchemas: {
     }, "strip", z.ZodTypeAny, {
         confidence: number;
         reasoning: string;
-        shouldMerge: boolean;
         nameScore: number;
         descriptionScore: number;
         patternScore: number;
         businessScore: number;
+        shouldMerge: boolean;
         semanticScore: number;
     }, {
         confidence: number;
         reasoning: string;
-        shouldMerge: boolean;
         nameScore: number;
         descriptionScore: number;
         patternScore: number;
         businessScore: number;
+        shouldMerge: boolean;
         semanticScore: number;
     }>;
     theme_expansion: z.ZodObject<{
@@ -121,14 +121,14 @@ export declare const ResponseSchemas: {
             affectedComponents: z.ZodArray<z.ZodString, "many">;
             relatedFiles: z.ZodArray<z.ZodString, "many">;
         }, "strip", z.ZodTypeAny, {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
         }, {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
@@ -137,8 +137,8 @@ export declare const ResponseSchemas: {
     }, "strip", z.ZodTypeAny, {
         confidence: number;
         subThemes: {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
@@ -148,8 +148,8 @@ export declare const ResponseSchemas: {
     }, {
         confidence: number;
         subThemes: {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
@@ -214,14 +214,14 @@ export declare const ResponseSchemas: {
                 business: z.ZodNumber;
                 semantic: z.ZodNumber;
             }, "strip", z.ZodTypeAny, {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
             }, {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -231,8 +231,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -242,8 +242,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -255,8 +255,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -268,8 +268,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;

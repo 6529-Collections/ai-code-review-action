@@ -122,4 +122,16 @@ export declare class ThemeService {
      * Check if theme has multiple aspects that could be separated
      */
     private hasMultipleAspects;
+    /**
+     * Get effectiveness metrics from similarity service
+     */
+    getSimilarityEffectiveness(): import("./theme-similarity").SimilarityEffectiveness;
+    /**
+     * Get effectiveness metrics from expansion service
+     */
+    getExpansionEffectiveness(): import("./theme-expansion").ExpansionEffectiveness;
+    /**
+     * Get effectiveness metrics from hierarchical similarity service
+     */
+    getHierarchicalEffectiveness(): import("./hierarchical-similarity").HierarchicalEffectiveness;
 }

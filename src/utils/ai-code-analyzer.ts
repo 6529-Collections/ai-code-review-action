@@ -3,6 +3,7 @@ import { ClaudeClient } from './claude-client';
 import { JsonExtractor } from './json-extractor';
 import { CodeAnalysisCache } from './code-analysis-cache';
 import { ConcurrencyManager } from './concurrency-manager';
+import { logger } from './logger';
 
 // Re-export interfaces for compatibility
 export interface CodeChange {
@@ -85,9 +86,7 @@ export class AICodeAnalyzer {
    * Replaces the static analyzeCodeChanges method
    */
   async analyzeCodeChanges(changes: CodeChange[]): Promise<SmartContext> {
-    console.log(
-      `[AI-CODE-ANALYZER] Analyzing ${changes.length} code changes with AI aggregation`
-    );
+    logger.debug('CODE-ANALYSIS', `Analyzing ${changes.length} code changes`);
 
     const fileMetrics = this.analyzeFileMetrics(changes);
     const changePatterns = this.extractChangePatterns(changes);
@@ -117,9 +116,7 @@ export class AICodeAnalyzer {
     linesAdded: number,
     linesRemoved: number
   ): Promise<CodeChange> {
-    console.log(
-      `[AI-CODE-ANALYZER] Processing ${filename} (${changeType}) with AI`
-    );
+    logger.trace('CODE-ANALYSIS', `Processing ${filename} (${changeType})`);
 
     return await this.cache.getOrAnalyze(filename, diffPatch, async () => {
       try {
@@ -175,9 +172,7 @@ export class AICodeAnalyzer {
       linesRemoved: number;
     }>
   ): Promise<CodeChange[]> {
-    console.log(
-      `[AI-CODE-ANALYZER] Processing ${files.length} files concurrently`
-    );
+    logger.debug('CODE-ANALYSIS', `Processing ${files.length} files`);
 
     const results = await ConcurrencyManager.processConcurrentlyWithLimit(
       files,
@@ -193,14 +188,20 @@ export class AICodeAnalyzer {
       {
         concurrencyLimit: 5,
         maxRetries: 3,
-        enableLogging: true,
-        onProgress: (completed, total) =>
-          console.log(
-            `[AI-CODE-ANALYZER] Progress: ${completed}/${total} files analyzed`
-          ),
+        enableLogging: false, // Disable ConcurrencyManager's own logging
+        onProgress: (completed, total) => {
+          // Only log major milestones
+          if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
+            logger.debug(
+              'CODE-ANALYSIS',
+              `Progress: ${completed}/${total} files`
+            );
+          }
+        },
         onError: (error, item, retryCount) =>
-          console.warn(
-            `[AI-CODE-ANALYZER] Retry ${retryCount} for ${item.filename}: ${error.message}`
+          logger.warn(
+            'CODE-ANALYSIS',
+            `Retry ${retryCount} for ${item.filename}: ${error.message}`
           ),
       }
     );
@@ -208,18 +209,18 @@ export class AICodeAnalyzer {
     const { successful, failed } = ConcurrencyManager.separateResults(results);
 
     if (failed.length > 0) {
-      console.warn(
-        `[AI-CODE-ANALYZER] ${failed.length} files failed all retry attempts`
-      );
+      logger.warn('CODE-ANALYSIS', `${failed.length} files failed analysis`);
       for (const failure of failed) {
-        console.warn(
-          `[AI-CODE-ANALYZER] Failed: ${failure.item.filename} - ${failure.error.message}`
+        logger.warn(
+          'CODE-ANALYSIS',
+          `Failed: ${failure.item.filename} - ${failure.error.message}`
         );
       }
     }
 
-    console.log(
-      `[AI-CODE-ANALYZER] Successfully analyzed ${successful.length}/${files.length} files`
+    logger.info(
+      'CODE-ANALYSIS',
+      `Analyzed ${successful.length}/${files.length} files`
     );
     return successful;
   }

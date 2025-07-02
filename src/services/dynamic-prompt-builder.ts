@@ -35,7 +35,8 @@ export class DynamicPromptBuilder {
     const examplesSection = this.buildExamplesSection(codeAnalysis);
     const decisionSection = this.buildDecisionSection(
       currentDepth,
-      codeAnalysis
+      codeAnalysis,
+      theme
     );
 
     return `${contextSection}
@@ -117,33 +118,12 @@ ${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
     const achievements = this.identifyAchievements(currentDepth, codeAnalysis);
     const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
 
-    let section = `EXPANSION GUIDANCE:`;
-
-    if (currentDepth === 0) {
-      section += `
-Level ${currentDepth} Focus: Identify major functional areas and capabilities
-- Look for distinct business features or technical components
-- Consider architectural boundaries and user-facing functionality
-- Each theme should represent a coherent area of change`;
-    } else if (currentDepth <= 2) {
-      section += `
-Level ${currentDepth} Focus: Break down capabilities into specific concerns
-- Identify distinct responsibilities within larger themes
+    let section = `EXPANSION GUIDANCE:
+Focus: Identify distinct functional concerns that could be independently tested or reviewed
 - Look for changes that address different requirements or use cases
-- Consider separating different types of modifications (logic vs config vs UI)`;
-    } else if (currentDepth <= 4) {
-      section += `
-Level ${currentDepth} Focus: Identify specific implementation units
-- Look for changes that could be reviewed or tested independently
 - Consider separating different functions, classes, or logical units
-- Focus on reviewability and understanding`;
-    } else {
-      section += `
-Level ${currentDepth} Focus: Atomic, focused changes
-- Each theme should represent a single, specific modification
-- Look for the smallest meaningful units of change
-- Consider if different aspects could be tested separately`;
-    }
+- Each theme should represent a coherent concern that could have its own unit test
+- Consider if different aspects could be tested or reviewed separately`;
 
     if (achievements.length > 0) {
       section += `
@@ -192,57 +172,57 @@ Why this worked: ${example.reasoning}`;
    */
   private buildDecisionSection(
     currentDepth: number,
-    codeAnalysis: CodeStructureAnalysis
+    codeAnalysis: CodeStructureAnalysis,
+    theme: ConsolidatedTheme
   ): string {
     const questions = this.generateDecisionQuestions(
       currentDepth,
       codeAnalysis
     );
 
-    let section = `DECISION NEEDED:
-Should this theme be broken down into sub-themes?
+    let section = `You are building a hierarchical mindmap per PRD requirements.
+Goal: Natural depth (2-30 levels) based on code complexity.
+
+CURRENT THEME: "${theme.name}"
+Current depth: ${currentDepth} (no limits - let complexity guide)
+Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.join('\n').split('\n').length} lines
+
+EXPANSION DECISION FRAMEWORK (from PRD):
+
+Create child nodes when:
+1. Multiple concerns present
+2. Not independently testable at this level
+3. Too complex for atomic understanding
+4. Mixed audiences (technical vs business)
+
+Stop expansion only when ALL true:
+1. Atomic: 5-15 lines of focused change
+2. Unit-testable as-is
+3. Single responsibility
+4. Natural code boundary
 
 CONSIDER THESE QUESTIONS:
-${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
-
-EXPANSION BENEFITS:
-- More granular code review and understanding
-- Better change tracking and impact analysis
-- Clearer separation of concerns
-- Easier testing and validation
-
-NATURAL STOPPING POINTS:
-- When further breakdown would add noise without clarity
-- When the change represents a single, focused responsibility
-- When sub-themes would be too small to be meaningful`;
-
-    // Add atomic check guidance only at deeper levels
-    if (currentDepth >= 4) {
-      section += `
-
-ATOMIC EVALUATION:
-Consider this atomic if it represents a single logical operation that:
-- Has one clear purpose or responsibility
-- Would be tested as a single unit
-- Cannot be meaningfully separated without losing coherence
-- Represents the natural granularity for review`;
-    }
+${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
 
     section += `
 
-RESPOND WITH JSON:
+RESPOND WITH PRD-COMPLIANT JSON:
 {
   "shouldExpand": boolean,
-  "isAtomic": boolean,
-  "reasoning": "Clear explanation why (max 50 words)",
+  "reasoning": "why (max 30 words)",
+  "businessContext": "user value (max 20 words)",
+  "technicalContext": "what it does (max 20 words)",
+  "testabilityAssessment": "how to test (max 15 words)",
   "suggestedSubThemes": [
     {
-      "name": "What this accomplishes (max 10 words)",
-      "description": "What changes (max 20 words)",
-      "files": ["relevant", "files"],
-      "rationale": "Why this is a separate concern (max 15 words)"
+      "name": "Clear title (max 8 words)",
+      "description": "1-3 sentences",
+      "businessContext": "Why this matters",
+      "technicalContext": "What this does",
+      "estimatedLines": number,
+      "rationale": "Why separate concern"
     }
-  ] or null if shouldExpand is false
+  ] or null
 }`;
 
     return section;

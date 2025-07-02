@@ -5,17 +5,25 @@ import { handleError, logInfo } from './utils';
 import { GitService } from './services/git-service';
 import { ThemeService } from './services/theme-service';
 import { ThemeFormatter } from './utils/theme-formatter';
+import { logger } from './utils/logger';
+import { performanceTracker } from './utils/performance-tracker';
 
 export async function run(): Promise<void> {
   try {
+    // Reset performance tracker for this run
+    performanceTracker.reset();
+    performanceTracker.startTiming('Total AI Code Review');
+
     const inputs = validateInputs();
 
     // Set Anthropic API key for Claude CLI
     process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
 
+    performanceTracker.startTiming('Setup');
+
     // Install Claude Code CLI
     logInfo('Installing Claude Code CLI...');
-    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
+    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
     logInfo('Claude Code CLI installed successfully');
 
     // Initialize Claude CLI configuration to avoid JSON config errors
@@ -30,8 +38,10 @@ export async function run(): Promise<void> {
     await exec.exec('bash', [
       '-c',
       `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
-    ]);
+    ], { silent: true });
     logInfo('Claude CLI configuration initialized');
+
+    performanceTracker.endTiming('Setup');
 
     logInfo('Starting AI code review analysis...');
 
@@ -46,9 +56,13 @@ export async function run(): Promise<void> {
 
     logInfo('Using AI-driven theme expansion for natural hierarchy depth');
 
+    performanceTracker.startTiming('Git Operations');
+    
     // Get PR context and changed files
     const prContext = await gitService.getPullRequestContext();
     const changedFiles = await gitService.getChangedFiles();
+
+    performanceTracker.endTiming('Git Operations');
 
     // Log dev mode info
     if (prContext && prContext.number === 0) {
@@ -69,52 +83,43 @@ export async function run(): Promise<void> {
     }
 
     // Analyze themes
+    performanceTracker.startTiming('Theme Analysis');
     logInfo('Analyzing code themes...');
     const themeAnalysis =
       await themeService.analyzeThemesWithEnhancedContext(gitService);
+    performanceTracker.endTiming('Theme Analysis');
 
     // Debug: Log theme analysis result
-    console.log(`[DEBUG] Theme analysis completed:`);
-    console.log(`[DEBUG] - Total themes: ${themeAnalysis.totalThemes}`);
-    console.log(
-      `[DEBUG] - Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`
-    );
-    console.log(`[DEBUG] - Processing time: ${themeAnalysis.processingTime}ms`);
-    console.log(
-      `[DEBUG] - Has expansion stats: ${!!themeAnalysis.expansionStats}`
-    );
+    logger.debug('MAIN', `Theme analysis completed: ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
+    logger.debug('MAIN', `Themes array length: ${themeAnalysis.themes?.length || 'undefined'}`);
+    logger.debug('MAIN', `Has expansion stats: ${!!themeAnalysis.expansionStats}`);
 
     if (themeAnalysis.themes) {
-      console.log(
-        `[DEBUG] - Theme names: ${themeAnalysis.themes.map((t) => t.name).join(', ')}`
-      );
+      logger.debug('MAIN', `Theme names: ${themeAnalysis.themes.map((t) => t.name).join(', ')}`);
     } else {
-      console.log(`[DEBUG] - Themes is null/undefined!`);
+      logger.warn('MAIN', 'Themes is null/undefined!');
     }
 
     // Output results using enhanced formatter
+    performanceTracker.startTiming('Output Generation');
     try {
-      console.log(`[DEBUG] Starting output formatting...`);
+      logger.debug('MAIN', 'Starting output formatting...');
 
       // Use the new ThemeFormatter for better hierarchical display
       const detailedThemes = ThemeFormatter.formatThemesForOutput(
         themeAnalysis.themes
       );
-      console.log(
-        `[DEBUG] Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`
-      );
+      logger.debug('MAIN', `Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
 
       const safeSummary = ThemeFormatter.createThemeSummary(
         themeAnalysis.themes
       );
-      console.log(
-        `[DEBUG] Summary created, length: ${safeSummary?.length || 'undefined'}`
-      );
+      logger.debug('MAIN', `Summary created, length: ${safeSummary?.length || 'undefined'}`);
 
-      console.log(`[DEBUG] Setting outputs...`);
+      logger.debug('MAIN', 'Setting outputs...');
       core.setOutput('themes', detailedThemes);
       core.setOutput('summary', safeSummary);
-      console.log(`[DEBUG] Outputs set successfully`);
+      logger.debug('MAIN', 'Outputs set successfully');
 
       logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
 
@@ -125,28 +130,40 @@ export async function run(): Promise<void> {
         );
       }
     } catch (error) {
-      console.error(`[DEBUG] Error in output formatting:`, error);
-      console.error(
-        `[DEBUG] Error stack:`,
-        error instanceof Error ? error.stack : 'No stack trace'
-      );
-      logInfo(`Failed to set outputs: ${error}`);
+      logger.error('MAIN', `Error in output formatting: ${error}`);
+      if (error instanceof Error && error.stack) {
+        logger.debug('MAIN', `Error stack: ${error.stack}`);
+      }
+      logger.error('MAIN', `Failed to set outputs: ${error}`);
       core.setOutput('themes', 'No themes found');
       core.setOutput('summary', 'Output generation failed');
     }
+    performanceTracker.endTiming('Output Generation');
 
-    logInfo(`Analysis complete: Found ${themeAnalysis.totalThemes} themes`);
-    logInfo(`Processing time: ${themeAnalysis.processingTime}ms`);
+    logger.info('MAIN', `Analysis complete: Found ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
 
     // Log theme names only (not full JSON)
     if (themeAnalysis.themes.length > 0) {
       const themeNames = themeAnalysis.themes.map((t) => t.name).join(', ');
-      logInfo(`Themes: ${themeNames}`);
+      logger.info('MAIN', `Themes: ${themeNames}`);
     }
+
+    // Log expansion statistics if available
+    if (themeAnalysis.expansionStats) {
+      logger.info('MAIN', 
+        `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`
+      );
+    }
+
+    // End total timing and generate comprehensive performance report
+    performanceTracker.endTiming('Total AI Code Review');
+    performanceTracker.generateReport();
+
   } catch (error) {
     handleError(error);
   }
 }
+
 
 if (require.main === module) {
   run();
