@@ -32,7 +32,9 @@
     "test:act": "act -j test -W .github/workflows/local-test.yml --secret-file .env",
     "test:local": "yarn build && echo 'Local test - use test:act for full GitHub Actions simulation'",
     "dev": "yarn lint && yarn test && yarn build",
-    "ci": "yarn lint && yarn test && yarn build"
+    "ci": "yarn lint && yarn test && yarn build",
+    "prepare": "yarn build",
+    "precommit": "yarn build"
   },
   "dependencies": {
     "@actions/core": "^1.10.0",

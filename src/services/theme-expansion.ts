@@ -1622,7 +1622,8 @@ ANALYSIS QUESTIONS:
 - Does it have exactly one responsibility?
 - Can it be understood and tested independently?
 
-Respond with JSON:
+You must respond with ONLY valid JSON. No explanatory text before or after.
+
 {
   "isAtomic": boolean,
   "reasoning": "detailed explanation",
@@ -1633,13 +1634,43 @@ Respond with JSON:
 
     try {
       const response = await this.claudeClient.callClaude(prompt);
-      const result = JSON.parse(response);
 
-      return {
-        isAtomic: result.isAtomic || false,
-        reason: result.reasoning || 'Unknown',
-        canDecompose: !result.isAtomic,
-      };
+      // Use JsonExtractor instead of direct JSON.parse
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        []
+      );
+
+      if (extractionResult.success) {
+        const result = extractionResult.data as {
+          isAtomic?: boolean;
+          reasoning?: string;
+          singleResponsibility?: boolean;
+          unitTestable?: boolean;
+          hasNaturalBoundary?: boolean;
+        };
+
+        return {
+          isAtomic: result.isAtomic || false,
+          reason: result.reasoning || 'Unknown',
+          canDecompose: !result.isAtomic,
+        };
+      } else {
+        console.warn(
+          `[ATOMIC-VERIFICATION] JSON parsing failed: ${extractionResult.error}`
+        );
+        console.warn(
+          `[ATOMIC-VERIFICATION] Raw response: ${response.substring(0, 500)}`
+        );
+
+        // Conservative fallback for atomic verification
+        return {
+          isAtomic: false,
+          reason: `JSON parsing failed: ${extractionResult.error}`,
+          canDecompose: true,
+        };
+      }
     } catch (error) {
       return {
         isAtomic: false,
