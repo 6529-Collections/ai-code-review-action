@@ -465,6 +465,28 @@ export class ThemeExpansionService {
       return subThemes;
     }
 
+    // Check if batch deduplication is disabled
+    const skipBatchDedup = process.env.SKIP_BATCH_DEDUP === 'true';
+    const minThemesForBatchDedup = parseInt(
+      process.env.MIN_THEMES_FOR_BATCH_DEDUP || '5'
+    );
+
+    if (skipBatchDedup) {
+      logger.info(
+        'EXPANSION',
+        `Skipping batch deduplication (SKIP_BATCH_DEDUP=true)`
+      );
+      return subThemes;
+    }
+
+    if (subThemes.length < minThemesForBatchDedup) {
+      logger.info(
+        'EXPANSION',
+        `Skipping batch deduplication: ${subThemes.length} themes < minimum ${minThemesForBatchDedup}`
+      );
+      return subThemes;
+    }
+
     logger.info(
       'EXPANSION',
       `Deduplicating ${subThemes.length} sub-themes using AI`
@@ -544,7 +566,17 @@ export class ThemeExpansionService {
 
     // Second pass: check if any of the final themes are still duplicates
     // This handles cases where duplicates were in different batches
-    if (finalThemes.length > 1) {
+    // Skip if disabled via environment variable or theme count is too small
+    const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
+    const minThemesForSecondPass = parseInt(
+      process.env.MIN_THEMES_FOR_SECOND_PASS_DEDUP || '10'
+    );
+
+    if (
+      finalThemes.length > 1 &&
+      !skipSecondPass &&
+      finalThemes.length >= minThemesForSecondPass
+    ) {
       logger.info(
         'EXPANSION',
         `Running second pass deduplication on ${finalThemes.length} themes`
@@ -556,6 +588,16 @@ export class ThemeExpansionService {
         `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`
       );
       return secondPassResult;
+    } else if (skipSecondPass) {
+      logger.info(
+        'EXPANSION',
+        `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`
+      );
+    } else if (finalThemes.length < minThemesForSecondPass) {
+      logger.info(
+        'EXPANSION',
+        `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`
+      );
     }
 
     return finalThemes;
@@ -569,8 +611,13 @@ export class ThemeExpansionService {
   ): Promise<ConsolidatedTheme[]> {
     // Create a single batch with all themes for comprehensive comparison
     const prompt = `
-These themes have already been deduplicated within their groups, but there might still be duplicates across groups.
-Please do a final check to identify any remaining duplicates:
+These themes have already been deduplicated within their groups. Only identify EXACT duplicates across groups.
+
+CRITICAL REQUIREMENTS for identifying duplicates:
+- Themes must represent IDENTICAL code changes (not just similar)
+- Themes must affect the exact same files AND same functionality
+- Themes must have the same business purpose
+- When in doubt, DO NOT merge - preserving granularity is more important than consolidation
 
 ${themes
   .map(
@@ -579,11 +626,12 @@ Theme ${index + 1}: "${theme.name}"
 Description: ${theme.description}
 ${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
 Files: ${theme.affectedFiles.join(', ')}
+Business Impact: ${theme.businessImpact || 'N/A'}
 `
   )
   .join('\n')}
 
-Only identify themes that are CLEARLY duplicates. Be conservative.
+Only identify themes that are EXACT duplicates. Be extremely conservative.
 
 CRITICAL: Respond with ONLY valid JSON.
 
@@ -669,7 +717,13 @@ If no duplicates found, return: {"duplicateGroups": []}`;
     themes: ConsolidatedTheme[]
   ): Promise<ConsolidatedTheme[][]> {
     const prompt = `
-Analyze these sub-themes and identify which ones describe the same change or functionality:
+Analyze these sub-themes and identify which ones describe IDENTICAL changes (not just related functionality).
+
+IMPORTANT: Only group themes that are truly duplicates - representing exactly the same code change.
+- Themes that touch related but different functionality should NOT be merged
+- Themes with different business purposes should NOT be merged
+- Themes affecting different files or different parts of files should NOT be merged
+- When in doubt, keep themes separate to preserve granularity
 
 ${themes
   .map(
@@ -756,6 +810,31 @@ CRITICAL: Respond with ONLY valid JSON.
           groups.push([theme]);
         }
       });
+
+      // Log batch deduplication results
+      const mergedCount = groups.filter((g) => g.length > 1).length;
+      const keptSeparate = groups.filter((g) => g.length === 1).length;
+
+      if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
+        console.log(
+          `[BATCH-DEDUP] Processed ${themes.length} themes into ${groups.length} groups`
+        );
+        console.log(
+          `[BATCH-DEDUP] ${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`
+        );
+        groups.forEach((group, idx) => {
+          if (group.length > 1) {
+            console.log(
+              `[BATCH-DEDUP] Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`
+            );
+          }
+        });
+      } else {
+        logger.info(
+          'EXPANSION',
+          `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`
+        );
+      }
 
       return groups;
     } catch (error) {

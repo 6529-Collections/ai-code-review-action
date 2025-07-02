@@ -788,7 +788,13 @@ export class ThemeService {
           );
 
           // Apply cross-level deduplication
-          if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
+          const minThemesForCrossLevel = parseInt(
+            process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20'
+          );
+          if (
+            process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
+            expandedThemes.length >= minThemesForCrossLevel
+          ) {
             performanceTracker.startTiming('Cross-Level Deduplication');
             console.log('[THEME-SERVICE] Running cross-level deduplication...');
             const beforeDedup = expandedThemes.length;
@@ -807,9 +813,13 @@ export class ThemeService {
             );
 
             performanceTracker.endTiming('Cross-Level Deduplication');
-          } else {
+          } else if (process.env.SKIP_CROSS_LEVEL_DEDUP === 'true') {
             console.log(
               '[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)'
+            );
+          } else {
+            console.log(
+              `[THEME-SERVICE] Skipping cross-level deduplication: ${expandedThemes.length} themes < minimum ${minThemesForCrossLevel}`
             );
           }
 

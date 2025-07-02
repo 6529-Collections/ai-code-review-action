@@ -32632,8 +32632,27 @@ class HierarchicalSimilarityService {
     async deduplicateHierarchy(hierarchy) {
         const crossLevelSimilarities = await this.analyzeCrossLevelSimilarity(hierarchy);
         // Filter for high-similarity themes that should be merged
-        const duplicates = crossLevelSimilarities.filter((similarity) => similarity.similarityScore > 0.85 &&
-            ['duplicate', 'overlap'].includes(similarity.relationshipType));
+        // Use environment variable to control threshold (default: more strict 0.95 vs original 0.85)
+        const similarityThreshold = parseFloat(process.env.CROSS_LEVEL_DEDUP_THRESHOLD || '0.95');
+        const allowOverlapMerging = process.env.ALLOW_OVERLAP_MERGING !== 'false';
+        const duplicates = crossLevelSimilarities.filter((similarity) => {
+            const meetsThreshold = similarity.similarityScore > similarityThreshold;
+            const isStrictDuplicate = similarity.relationshipType === 'duplicate';
+            const isOverlap = similarity.relationshipType === 'overlap';
+            const shouldMerge = meetsThreshold && (isStrictDuplicate || (allowOverlapMerging && isOverlap));
+            // Log detailed deduplication decisions
+            if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
+                console.log(`[CROSS-LEVEL-DEDUP] Similarity: ${similarity.similarityScore.toFixed(3)} (threshold: ${similarityThreshold})`);
+                console.log(`[CROSS-LEVEL-DEDUP] Relationship: ${similarity.relationshipType}`);
+                console.log(`[CROSS-LEVEL-DEDUP] Theme1: "${similarity.theme1.name}"`);
+                console.log(`[CROSS-LEVEL-DEDUP] Theme2: "${similarity.theme2.name}"`);
+                console.log(`[CROSS-LEVEL-DEDUP] Decision: ${shouldMerge ? 'MERGE' : 'KEEP_SEPARATE'}`);
+                console.log(`[CROSS-LEVEL-DEDUP] Reasoning: ${similarity.reasoning}`);
+                console.log('---');
+            }
+            return shouldMerge;
+        });
+        console.log(`[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (threshold: ${similarityThreshold}, allowOverlap: ${allowOverlapMerging})`);
         const mergedThemes = [];
         const processedIds = new Set();
         let duplicatesRemoved = 0;
@@ -33408,6 +33427,17 @@ class ThemeExpansionService {
         if (subThemes.length <= 1) {
             return subThemes;
         }
+        // Check if batch deduplication is disabled
+        const skipBatchDedup = process.env.SKIP_BATCH_DEDUP === 'true';
+        const minThemesForBatchDedup = parseInt(process.env.MIN_THEMES_FOR_BATCH_DEDUP || '5');
+        if (skipBatchDedup) {
+            logger_1.logger.info('EXPANSION', `Skipping batch deduplication (SKIP_BATCH_DEDUP=true)`);
+            return subThemes;
+        }
+        if (subThemes.length < minThemesForBatchDedup) {
+            logger_1.logger.info('EXPANSION', `Skipping batch deduplication: ${subThemes.length} themes < minimum ${minThemesForBatchDedup}`);
+            return subThemes;
+        }
         logger_1.logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
         // Calculate optimal batch size based on theme count
         const batchSize = this.calculateOptimalBatchSize(subThemes.length);
@@ -33465,11 +33495,20 @@ class ThemeExpansionService {
         logger_1.logger.info('EXPANSION', `Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`);
         // Second pass: check if any of the final themes are still duplicates
         // This handles cases where duplicates were in different batches
-        if (finalThemes.length > 1) {
+        // Skip if disabled via environment variable or theme count is too small
+        const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
+        const minThemesForSecondPass = parseInt(process.env.MIN_THEMES_FOR_SECOND_PASS_DEDUP || '10');
+        if (finalThemes.length > 1 && !skipSecondPass && finalThemes.length >= minThemesForSecondPass) {
             logger_1.logger.info('EXPANSION', `Running second pass deduplication on ${finalThemes.length} themes`);
             const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
             return secondPassResult;
+        }
+        else if (skipSecondPass) {
+            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`);
+        }
+        else if (finalThemes.length < minThemesForSecondPass) {
+            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`);
         }
         return finalThemes;
     }
@@ -33479,8 +33518,13 @@ class ThemeExpansionService {
     async runSecondPassDeduplication(themes) {
         // Create a single batch with all themes for comprehensive comparison
         const prompt = `
-These themes have already been deduplicated within their groups, but there might still be duplicates across groups.
-Please do a final check to identify any remaining duplicates:
+These themes have already been deduplicated within their groups. Only identify EXACT duplicates across groups.
+
+CRITICAL REQUIREMENTS for identifying duplicates:
+- Themes must represent IDENTICAL code changes (not just similar)
+- Themes must affect the exact same files AND same functionality
+- Themes must have the same business purpose
+- When in doubt, DO NOT merge - preserving granularity is more important than consolidation
 
 ${themes
             .map((theme, index) => `
@@ -33488,10 +33532,11 @@ Theme ${index + 1}: "${theme.name}"
 Description: ${theme.description}
 ${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
 Files: ${theme.affectedFiles.join(', ')}
+Business Impact: ${theme.businessImpact || 'N/A'}
 `)
             .join('\n')}
 
-Only identify themes that are CLEARLY duplicates. Be conservative.
+Only identify themes that are EXACT duplicates. Be extremely conservative.
 
 CRITICAL: Respond with ONLY valid JSON.
 
@@ -33555,7 +33600,13 @@ If no duplicates found, return: {"duplicateGroups": []}`;
      */
     async deduplicateBatch(themes) {
         const prompt = `
-Analyze these sub-themes and identify which ones describe the same change or functionality:
+Analyze these sub-themes and identify which ones describe IDENTICAL changes (not just related functionality).
+
+IMPORTANT: Only group themes that are truly duplicates - representing exactly the same code change.
+- Themes that touch related but different functionality should NOT be merged
+- Themes with different business purposes should NOT be merged
+- Themes affecting different files or different parts of files should NOT be merged
+- When in doubt, keep themes separate to preserve granularity
 
 ${themes
             .map((theme, index) => `
@@ -33620,6 +33671,21 @@ CRITICAL: Respond with ONLY valid JSON.
                     groups.push([theme]);
                 }
             });
+            // Log batch deduplication results
+            const mergedCount = groups.filter(g => g.length > 1).length;
+            const keptSeparate = groups.filter(g => g.length === 1).length;
+            if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
+                console.log(`[BATCH-DEDUP] Processed ${themes.length} themes into ${groups.length} groups`);
+                console.log(`[BATCH-DEDUP] ${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
+                groups.forEach((group, idx) => {
+                    if (group.length > 1) {
+                        console.log(`[BATCH-DEDUP] Group ${idx + 1}: Merging ${group.length} themes: ${group.map(t => `"${t.name}"`).join(', ')}`);
+                    }
+                });
+            }
+            else {
+                logger_1.logger.info('EXPANSION', `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`);
+            }
             return groups;
         }
         catch (error) {
@@ -34669,7 +34735,8 @@ class ThemeService {
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
                     console.log(`[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`);
                     // Apply cross-level deduplication
-                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
+                    const minThemesForCrossLevel = parseInt(process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20');
+                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' && expandedThemes.length >= minThemesForCrossLevel) {
                         performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
                         console.log('[THEME-SERVICE] Running cross-level deduplication...');
                         const beforeDedup = expandedThemes.length;
@@ -34679,8 +34746,11 @@ class ThemeService {
                         performance_tracker_1.performanceTracker.trackEffectiveness('Cross-Level Deduplication', beforeDedup, expandedThemes.length, Date.now() - dedupStartTime);
                         performance_tracker_1.performanceTracker.endTiming('Cross-Level Deduplication');
                     }
-                    else {
+                    else if (process.env.SKIP_CROSS_LEVEL_DEDUP === 'true') {
                         console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
+                    }
+                    else {
+                        console.log(`[THEME-SERVICE] Skipping cross-level deduplication: ${expandedThemes.length} themes < minimum ${minThemesForCrossLevel}`);
                     }
                     // Track expansion effectiveness
                     performance_tracker_1.performanceTracker.trackEffectiveness('Theme Expansion', beforeExpansionCount, expandedThemes.length, Date.now() - expansionStartTime);
@@ -36007,7 +36077,7 @@ class ClaudeClient {
             errors: 0,
             callsByContext: new Map(),
             timeByContext: new Map(),
-            errorsByContext: new Map()
+            errorsByContext: new Map(),
         };
     }
     async callClaude(prompt, context = 'unknown', operation) {
@@ -36070,11 +36140,13 @@ class ClaudeClient {
         return {
             totalCalls: this.metrics.totalCalls,
             totalTime: this.metrics.totalTime,
-            averageTime: this.metrics.totalCalls > 0 ? this.metrics.totalTime / this.metrics.totalCalls : 0,
+            averageTime: this.metrics.totalCalls > 0
+                ? this.metrics.totalTime / this.metrics.totalCalls
+                : 0,
             errors: this.metrics.errors,
             callsByContext: new Map(this.metrics.callsByContext),
             timeByContext: new Map(this.metrics.timeByContext),
-            errorsByContext: new Map(this.metrics.errorsByContext)
+            errorsByContext: new Map(this.metrics.errorsByContext),
         };
     }
     /**
@@ -37976,10 +38048,33 @@ function validateInputs() {
     if (!anthropicApiKey.trim()) {
         throw new Error('Anthropic API key is required');
     }
+    // Set deduplication environment variables from inputs
+    setDeduplicationEnvironmentVariables();
     return {
         githubToken,
         anthropicApiKey,
     };
+}
+function setDeduplicationEnvironmentVariables() {
+    // Convert kebab-case input names to SCREAMING_SNAKE_CASE env var names
+    const inputToEnvMap = {
+        'skip-batch-dedup': 'SKIP_BATCH_DEDUP',
+        'skip-second-pass-dedup': 'SKIP_SECOND_PASS_DEDUP',
+        'skip-cross-level-dedup': 'SKIP_CROSS_LEVEL_DEDUP',
+        'cross-level-dedup-threshold': 'CROSS_LEVEL_DEDUP_THRESHOLD',
+        'allow-overlap-merging': 'ALLOW_OVERLAP_MERGING',
+        'min-themes-for-batch-dedup': 'MIN_THEMES_FOR_BATCH_DEDUP',
+        'min-themes-for-second-pass-dedup': 'MIN_THEMES_FOR_SECOND_PASS_DEDUP',
+        'min-themes-for-cross-level-dedup': 'MIN_THEMES_FOR_CROSS_LEVEL_DEDUP',
+        'verbose-dedup-logging': 'VERBOSE_DEDUP_LOGGING'
+    };
+    for (const [inputName, envName] of Object.entries(inputToEnvMap)) {
+        const inputValue = core.getInput(inputName);
+        if (inputValue) {
+            process.env[envName] = inputValue;
+            core.info(`Set ${envName}=${inputValue} from input ${inputName}`);
+        }
+    }
 }
 
 

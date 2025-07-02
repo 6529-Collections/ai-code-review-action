@@ -4,7 +4,7 @@ export interface TimingEntry {
     endTime?: number;
     duration?: number;
     children: TimingEntry[];
-    metadata?: Record<string, any>;
+    metadata?: Record<string, unknown>;
 }
 export interface AICallMetrics {
     context: string;
@@ -63,7 +63,7 @@ export declare class PerformanceTracker {
     /**
      * Start timing an operation
      */
-    startTiming(name: string, metadata?: Record<string, any>): void;
+    startTiming(name: string, metadata?: Record<string, unknown>): void;
     /**
      * End timing an operation
      */
