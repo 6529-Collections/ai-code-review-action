@@ -2,7 +2,6 @@ import { ConsolidatedTheme } from '../types/similarity-types';
 import { GenericCache } from '../utils/generic-cache';
 import { ClaudeClient } from '../utils/claude-client';
 import { JsonExtractor } from '../utils/json-extractor';
-import { logInfo } from '../utils';
 import {
   ConcurrencyManager,
   ConcurrencyOptions,
@@ -94,7 +93,7 @@ export class ThemeExpansionService {
     processingTime: 0,
     aiCallsUsed: 0,
     maxDepthReached: 0,
-    atomicThemesIdentified: 0
+    atomicThemesIdentified: 0,
   };
 
   constructor(anthropicApiKey: string, config: Partial<ExpansionConfig> = {}) {
@@ -147,9 +146,15 @@ export class ThemeExpansionService {
   ): Promise<ConsolidatedTheme[]> {
     const startTime = Date.now();
     const initialAICalls = this.claudeClient.getMetrics().totalCalls;
-    
-    logger.info('EXPANSION', `Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
-    logger.debug('EXPANSION', `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
+
+    logger.info(
+      'EXPANSION',
+      `Starting hierarchical expansion of ${consolidatedThemes.length} themes`
+    );
+    logger.debug(
+      'EXPANSION',
+      `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`
+    );
 
     // Reset effectiveness tracking
     this.resetEffectiveness();
@@ -195,18 +200,27 @@ export class ThemeExpansionService {
       }
     }
 
-    // Update effectiveness metrics  
+    // Update effectiveness metrics
     this.effectiveness.processingTime = Date.now() - startTime;
-    this.effectiveness.aiCallsUsed = this.claudeClient.getMetrics().totalCalls - initialAICalls;
-    this.effectiveness.expansionRate = this.effectiveness.themesEvaluated > 0 
-      ? (this.effectiveness.themesExpanded / this.effectiveness.themesEvaluated) * 100 
-      : 0;
+    this.effectiveness.aiCallsUsed =
+      this.claudeClient.getMetrics().totalCalls - initialAICalls;
+    this.effectiveness.expansionRate =
+      this.effectiveness.themesEvaluated > 0
+        ? (this.effectiveness.themesExpanded /
+            this.effectiveness.themesEvaluated) *
+          100
+        : 0;
 
-    logger.info('EXPANSION', 
+    logger.info(
+      'EXPANSION',
       `Completed expansion: ${expandedThemes.length}/${consolidatedThemes.length} themes (${this.effectiveness.expansionRate.toFixed(1)}% expansion rate)`
     );
-    logger.debug('EXPANSION', `Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`);
-    logger.info('EXPANSION', 
+    logger.debug(
+      'EXPANSION',
+      `Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`
+    );
+    logger.info(
+      'EXPANSION',
       `Max depth reached: ${this.effectiveness.maxDepthReached}, Atomic themes: ${this.effectiveness.atomicThemesIdentified}`
     );
 
@@ -222,11 +236,17 @@ export class ThemeExpansionService {
     parentTheme?: ConsolidatedTheme
   ): Promise<ConsolidatedTheme> {
     // Track depth metrics
-    this.effectiveness.maxDepthReached = Math.max(this.effectiveness.maxDepthReached, currentDepth);
-    
+    this.effectiveness.maxDepthReached = Math.max(
+      this.effectiveness.maxDepthReached,
+      currentDepth
+    );
+
     // PRD: No artificial limits - depth emerges from complexity
     if (currentDepth >= this.config.maxDepth) {
-      logger.info('EXPANSION', `Deep expansion at level ${currentDepth} - complexity demands it`);
+      logger.info(
+        'EXPANSION',
+        `Deep expansion at level ${currentDepth} - complexity demands it`
+      );
     }
 
     // Check if theme is candidate for expansion
@@ -281,7 +301,10 @@ export class ThemeExpansionService {
     const result = await this.processExpansionRequest(expansionRequest);
 
     if (!result.success || !result.expandedTheme) {
-      logger.info('EXPANSION', `Expansion failed for theme ${theme.name}: ${result.error}`);
+      logger.info(
+        'EXPANSION',
+        `Expansion failed for theme ${theme.name}: ${result.error}`
+      );
       return theme;
     }
 
@@ -378,7 +401,7 @@ export class ThemeExpansionService {
   ): Promise<ExpansionCandidate | null> {
     // Track theme evaluation
     this.effectiveness.themesEvaluated++;
-    
+
     // Get sibling themes for context
     const siblingThemes =
       parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
@@ -407,14 +430,16 @@ export class ThemeExpansionService {
       if (expansionDecision.isAtomic) {
         this.effectiveness.atomicThemesIdentified++;
       }
-      
-      logger.info('EXPANSION',
+
+      logger.info(
+        'EXPANSION',
         `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`
       );
 
       // Log PRD metrics
       if (expansionMetrics.atomicSize > 15) {
-        logger.warn('EXPANSION',
+        logger.warn(
+          'EXPANSION',
           `Atomic theme exceeds PRD size (${expansionMetrics.atomicSize} > 15 lines)`
         );
       }
@@ -440,7 +465,10 @@ export class ThemeExpansionService {
       return subThemes;
     }
 
-    logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
+    logger.info(
+      'EXPANSION',
+      `Deduplicating ${subThemes.length} sub-themes using AI`
+    );
 
     // Calculate optimal batch size based on theme count
     const batchSize = this.calculateOptimalBatchSize(subThemes.length);
@@ -509,19 +537,22 @@ export class ThemeExpansionService {
       }
     }
 
-    logger.info('EXPANSION',
+    logger.info(
+      'EXPANSION',
       `Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`
     );
 
     // Second pass: check if any of the final themes are still duplicates
     // This handles cases where duplicates were in different batches
     if (finalThemes.length > 1) {
-      logger.info('EXPANSION',
+      logger.info(
+        'EXPANSION',
         `Running second pass deduplication on ${finalThemes.length} themes`
       );
       const secondPassResult =
         await this.runSecondPassDeduplication(finalThemes);
-      logger.info('EXPANSION',
+      logger.info(
+        'EXPANSION',
         `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`
       );
       return secondPassResult;
@@ -681,7 +712,8 @@ CRITICAL: Respond with ONLY valid JSON.
       );
 
       if (!extractionResult.success) {
-        logger.info('EXPANSION',
+        logger.info(
+          'EXPANSION',
           `Failed to parse deduplication response: ${extractionResult.error}`
         );
         // Return each theme as its own group
@@ -966,7 +998,8 @@ Return JSON with specific sub-themes:
       );
 
       if (!extractionResult.success) {
-        logger.info('EXPANSION',
+        logger.info(
+          'EXPANSION',
           `Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`
         );
         return {
@@ -1005,7 +1038,10 @@ Return JSON with specific sub-themes:
         userFlowPatterns: [],
       };
     } catch (error) {
-      logger.info('EXPANSION', `AI analysis failed for theme ${theme.name}: ${error}`);
+      logger.info(
+        'EXPANSION',
+        `AI analysis failed for theme ${theme.name}: ${error}`
+      );
       return {
         subThemes: [],
         shouldExpand: false,
@@ -1085,7 +1121,7 @@ Return JSON with specific sub-themes:
       processingTime: 0,
       aiCallsUsed: 0,
       maxDepthReached: 0,
-      atomicThemesIdentified: 0
+      atomicThemesIdentified: 0,
     };
   }
 }

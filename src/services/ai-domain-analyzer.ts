@@ -267,7 +267,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
       {
         concurrencyLimit: 5,
         maxRetries: 2,
-        enableLogging: true,
+        enableLogging: false,
         onProgress: (completed, total) => {
           console.log(
             `[AI-DOMAIN] Individual analysis progress: ${completed}/${total}`

@@ -41,7 +41,7 @@ export class ThemeSimilarityService {
     mergesDecided: 0,
     mergeRate: 0,
     processingTime: 0,
-    aiCallsUsed: 0
+    aiCallsUsed: 0,
   };
 
   constructor(anthropicApiKey: string, config?: Partial<ConsolidationConfig>) {
@@ -63,7 +63,8 @@ export class ThemeSimilarityService {
     this.businessDomainService = new BusinessDomainService(anthropicApiKey);
     this.themeNamingService = new ThemeNamingService();
 
-    logger.info('SIMILARITY', 
+    logger.info(
+      'SIMILARITY',
       `Config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`
     );
   }
@@ -121,7 +122,10 @@ export class ThemeSimilarityService {
 
     // Skip only if NO file overlap AND completely different names
     if (fileOverlap === 0 && nameSimilarity < 0.1) {
-      logger.trace('SIMILARITY', `Skip: no overlap - ${theme1.name} vs ${theme2.name}`);
+      logger.trace(
+        'SIMILARITY',
+        `Skip: no overlap - ${theme1.name} vs ${theme2.name}`
+      );
       const result = {
         combinedScore: 0,
         nameScore: 0,
@@ -162,7 +166,9 @@ export class ThemeSimilarityService {
     if (themes.length === 0) return [];
 
     const startTime = Date.now();
-    const initialAICalls = this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls;
+    const initialAICalls = this.aiSimilarityService
+      .getClaudeClient()
+      .getMetrics().totalCalls;
 
     // Step 1: Find merge candidates
     logger.info('SIMILARITY', 'Step 1: Finding merge candidates');
@@ -175,21 +181,33 @@ export class ThemeSimilarityService {
       mergeGroups,
       themes
     );
-    logger.info('SIMILARITY', `Created ${consolidated.length} consolidated themes`);
+    logger.info(
+      'SIMILARITY',
+      `Created ${consolidated.length} consolidated themes`
+    );
 
     // Step 3: Build hierarchies
     logger.info('SIMILARITY', 'Step 3: Building hierarchies');
     const hierarchical = await this.buildHierarchies(consolidated);
-    
+
     // Update effectiveness metrics
     this.effectiveness.processingTime = Date.now() - startTime;
-    this.effectiveness.aiCallsUsed = this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls - initialAICalls;
-    this.effectiveness.mergeRate = this.effectiveness.pairsAnalyzed > 0 
-      ? (this.effectiveness.mergesDecided / this.effectiveness.pairsAnalyzed) * 100 
-      : 0;
-    
-    const reductionPercent = ((themes.length - hierarchical.length) / themes.length * 100).toFixed(1);
-    logger.info('SIMILARITY', 
+    this.effectiveness.aiCallsUsed =
+      this.aiSimilarityService.getClaudeClient().getMetrics().totalCalls -
+      initialAICalls;
+    this.effectiveness.mergeRate =
+      this.effectiveness.pairsAnalyzed > 0
+        ? (this.effectiveness.mergesDecided /
+            this.effectiveness.pairsAnalyzed) *
+          100
+        : 0;
+
+    const reductionPercent = (
+      ((themes.length - hierarchical.length) / themes.length) *
+      100
+    ).toFixed(1);
+    logger.info(
+      'SIMILARITY',
       `Final result: ${hierarchical.length} themes (${reductionPercent}% reduction, ${this.effectiveness.mergeRate.toFixed(1)}% merge rate)`
     );
 
@@ -212,14 +230,17 @@ export class ThemeSimilarityService {
       mergesDecided: 0,
       mergeRate: 0,
       processingTime: 0,
-      aiCallsUsed: 0
+      aiCallsUsed: 0,
     };
   }
 
   private async findMergeGroups(
     themes: Theme[]
   ): Promise<Map<string, string[]>> {
-    logger.debug('SIMILARITY', `Using batch processing for ${themes.length} themes`);
+    logger.debug(
+      'SIMILARITY',
+      `Using batch processing for ${themes.length} themes`
+    );
 
     // Step 1: Collect all theme pairs that need comparison
     const allPairs: ThemePair[] = [];
@@ -255,7 +276,10 @@ export class ThemeSimilarityService {
     const batchSize = this.calculateOptimalBatchSize(pairs.length);
     const batches = this.createPairBatches(pairs, batchSize);
 
-    logger.debug('SIMILARITY', `${batches.length} batches of ~${batchSize} pairs each`);
+    logger.debug(
+      'SIMILARITY',
+      `${batches.length} batches of ~${batchSize} pairs each`
+    );
 
     // Process batches concurrently
     const results = await ConcurrencyManager.processConcurrentlyWithLimit(
@@ -266,17 +290,23 @@ export class ThemeSimilarityService {
       {
         concurrencyLimit: 3, // Fewer concurrent batches since each is larger
         maxRetries: 2,
-        enableLogging: true,
+        enableLogging: false,
         onProgress: (completed, total) => {
           // Only log major progress milestones to reduce noise
           if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
             const pairsCompleted = completed * batchSize;
             const totalPairs = pairs.length;
-            logger.debug('SIMILARITY', `Progress: ${pairsCompleted}/${totalPairs} pairs (${Math.round((completed / total) * 100)}%)`);
+            logger.debug(
+              'SIMILARITY',
+              `Progress: ${pairsCompleted}/${totalPairs} pairs (${Math.round((completed / total) * 100)}%)`
+            );
           }
         },
         onError: (error, batch, retryCount) => {
-          logger.warn('SIMILARITY', `Retry ${retryCount} for batch: ${error.message}`);
+          logger.warn(
+            'SIMILARITY',
+            `Retry ${retryCount} for batch: ${error.message}`
+          );
         },
       }
     );
@@ -300,7 +330,10 @@ export class ThemeSimilarityService {
       }
     }
 
-    logger.info('SIMILARITY', `Batch processing: ${successCount} successful, ${failedCount} failed`);
+    logger.info(
+      'SIMILARITY',
+      `Batch processing: ${successCount} successful, ${failedCount} failed`
+    );
     return similarities;
   }
 
@@ -332,7 +365,10 @@ export class ThemeSimilarityService {
         ) {
           group.push(otherTheme.id);
           processed.add(otherTheme.id);
-          logger.trace('SIMILARITY', `Merge: ${theme.name} + ${otherTheme.name} (${similarity.combinedScore.toFixed(2)})`);
+          logger.trace(
+            'SIMILARITY',
+            `Merge: ${theme.name} + ${otherTheme.name} (${similarity.combinedScore.toFixed(2)})`
+          );
         }
       }
 

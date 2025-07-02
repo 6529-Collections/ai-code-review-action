@@ -7,27 +7,40 @@ export enum LogLevel {
   WARN = 1,
   INFO = 2,
   DEBUG = 3,
-  TRACE = 4
+  TRACE = 4,
 }
 
 export class Logger {
-  private static level: LogLevel = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
+  private static level: LogLevel = Logger.parseLogLevel(
+    process.env.LOG_LEVEL || 'INFO'
+  );
 
   private static parseLogLevel(level: string): LogLevel {
     switch (level.toUpperCase()) {
-      case 'ERROR': return LogLevel.ERROR;
-      case 'WARN': return LogLevel.WARN;
-      case 'INFO': return LogLevel.INFO;
-      case 'DEBUG': return LogLevel.DEBUG;
-      case 'TRACE': return LogLevel.TRACE;
-      default: return LogLevel.INFO;
+      case 'ERROR':
+        return LogLevel.ERROR;
+      case 'WARN':
+        return LogLevel.WARN;
+      case 'INFO':
+        return LogLevel.INFO;
+      case 'DEBUG':
+        return LogLevel.DEBUG;
+      case 'TRACE':
+        return LogLevel.TRACE;
+      default:
+        return LogLevel.INFO;
     }
   }
 
-  private static formatMessage(level: string, service: string, message: string): string {
-    const timestamp = process.env.LOG_TIMESTAMPS === 'true' 
-      ? `[${new Date().toISOString()}] ` 
-      : '';
+  private static formatMessage(
+    level: string,
+    service: string,
+    message: string
+  ): string {
+    const timestamp =
+      process.env.LOG_TIMESTAMPS === 'true'
+        ? `[${new Date().toISOString()}] `
+        : '';
     return `${timestamp}[${level}] [${service}] ${message}`;
   }
 
@@ -72,9 +85,14 @@ export class Logger {
 
 // Export convenience functions
 export const logger = {
-  error: (service: string, message: string) => Logger.error(service, message),
-  warn: (service: string, message: string) => Logger.warn(service, message),
-  info: (service: string, message: string) => Logger.info(service, message),
-  debug: (service: string, message: string) => Logger.debug(service, message),
-  trace: (service: string, message: string) => Logger.trace(service, message)
+  error: (service: string, message: string): void =>
+    Logger.error(service, message),
+  warn: (service: string, message: string): void =>
+    Logger.warn(service, message),
+  info: (service: string, message: string): void =>
+    Logger.info(service, message),
+  debug: (service: string, message: string): void =>
+    Logger.debug(service, message),
+  trace: (service: string, message: string): void =>
+    Logger.trace(service, message),
 };

@@ -23,7 +23,7 @@ export async function run(): Promise<void> {
 
     // Install Claude Code CLI
     logInfo('Installing Claude Code CLI...');
-    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code']);
+    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
     logInfo('Claude Code CLI installed successfully');
 
     // Initialize Claude CLI configuration to avoid JSON config errors
@@ -38,7 +38,7 @@ export async function run(): Promise<void> {
     await exec.exec('bash', [
       '-c',
       `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
-    ]);
+    ], { silent: true });
     logInfo('Claude CLI configuration initialized');
 
     performanceTracker.endTiming('Setup');

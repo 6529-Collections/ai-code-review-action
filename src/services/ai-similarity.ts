@@ -21,17 +21,23 @@ export class AISimilarityService {
     const prompt = this.buildSimilarityPrompt(theme1, theme2);
 
     try {
-      const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
+      const output = await this.claudeClient.callClaude(
+        prompt,
+        'similarity-analysis',
+        `${theme1.name} vs ${theme2.name}`
+      );
       const result = this.parseAISimilarityResponse(output);
-      
-      logger.debug('AI-SIMILARITY', 
+
+      logger.debug(
+        'AI-SIMILARITY',
         `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
       );
       logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
 
       return result;
     } catch (error) {
-      logger.warn('AI-SIMILARITY', 
+      logger.warn(
+        'AI-SIMILARITY',
         `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`
       );
       // Fallback to basic string matching
@@ -220,7 +226,11 @@ CRITICAL: Respond with ONLY valid JSON.
     expectedResults: number
   ): Promise<{ results: unknown[] }> {
     try {
-      const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
+      const response = await this.claudeClient.callClaude(
+        batchPrompt,
+        'batch-similarity',
+        `batch of ${expectedResults} pairs`
+      );
 
       console.log(
         `[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`
@@ -257,9 +267,6 @@ CRITICAL: Respond with ONLY valid JSON.
       return batchData;
     } catch (error) {
       console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
-      console.log(
-        `[AI-BATCH-SIMILARITY] Raw output: ${response.substring(0, 500)}...`
-      );
       throw error;
     }
   }

@@ -35,7 +35,7 @@ export class HierarchicalSimilarityService {
     overlapsResolved: 0,
     processingTime: 0,
     aiCallsUsed: 0,
-    filteringReduction: 0
+    filteringReduction: 0,
   };
 
   constructor(anthropicApiKey: string) {
@@ -52,7 +52,7 @@ export class HierarchicalSimilarityService {
   ): Promise<CrossLevelSimilarity[]> {
     const startTime = Date.now();
     const initialAICalls = this.claudeClient.getMetrics().totalCalls;
-    
+
     logger.info('HIERARCHICAL', 'Starting cross-level similarity analysis');
 
     // Reset effectiveness tracking
@@ -82,20 +82,24 @@ export class HierarchicalSimilarityService {
     // Track pre-filtering effectiveness
     const totalPossibleComparisons =
       (allThemes.length * (allThemes.length - 1)) / 2;
-    this.effectiveness.filteringReduction = (
+    this.effectiveness.filteringReduction =
       ((totalPossibleComparisons - comparisons.length) /
         totalPossibleComparisons) *
-      100
-    );
+      100;
     this.effectiveness.crossLevelComparisonsGenerated = comparisons.length;
 
-    logger.info('HIERARCHICAL', `Generated ${comparisons.length} cross-level comparisons`);
-    logger.info('HIERARCHICAL',
+    logger.info(
+      'HIERARCHICAL',
+      `Generated ${comparisons.length} cross-level comparisons`
+    );
+    logger.info(
+      'HIERARCHICAL',
       `Pre-filtering reduced comparisons by ${this.effectiveness.filteringReduction.toFixed(1)}% (${totalPossibleComparisons} → ${comparisons.length})`
     );
 
     if (comparisons.length > 100) {
-      logger.warn('HIERARCHICAL',
+      logger.warn(
+        'HIERARCHICAL',
         `Too many comparisons (${comparisons.length}), this may cause performance issues`
       );
     }
@@ -113,7 +117,7 @@ export class HierarchicalSimilarityService {
       {
         concurrencyLimit: 5,
         maxRetries: 3,
-        enableLogging: true,
+        enableLogging: false,
         onProgress: (completed, total) => {
           console.log(
             `[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`
@@ -150,9 +154,11 @@ export class HierarchicalSimilarityService {
 
     // Update effectiveness metrics
     this.effectiveness.processingTime = Date.now() - startTime;
-    this.effectiveness.aiCallsUsed = this.claudeClient.getMetrics().totalCalls - initialAICalls;
+    this.effectiveness.aiCallsUsed =
+      this.claudeClient.getMetrics().totalCalls - initialAICalls;
 
-    logger.info('HIERARCHICAL',
+    logger.info(
+      'HIERARCHICAL',
       `Completed cross-level similarity analysis: ${successfulResults.length} successful results in ${this.effectiveness.processingTime}ms`
     );
     return successfulResults;
@@ -787,7 +793,7 @@ Focus on business value and avoid merging themes with distinct business purposes
       overlapsResolved: 0,
       processingTime: 0,
       aiCallsUsed: 0,
-      filteringReduction: 0
+      filteringReduction: 0,
     };
   }
 }
