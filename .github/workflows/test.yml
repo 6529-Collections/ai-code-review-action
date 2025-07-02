@@ -36,6 +36,10 @@ jobs:
         min-themes-for-cross-level-dedup: '5'
         min-themes-for-second-pass-dedup: '5'
         verbose-dedup-logging: 'true'
+        # PRD Compliance
+        max-atomic-size: '15'
+        re-evaluate-after-merge: 'true'
+        strict-atomic-limits: 'true'
       env:
         LOG_LEVEL: INFO
         LOG_TIMESTAMPS: true

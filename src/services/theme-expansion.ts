@@ -81,6 +81,16 @@ export interface ExpansionEffectiveness {
   atomicThemesIdentified: number;
 }
 
+export interface ExpansionStopReason {
+  themeId: string;
+  themeName: string;
+  depth: number;
+  reason: 'atomic' | 'ai-decision' | 'max-depth' | 'error';
+  details: string;
+  fileCount: number;
+  lineCount: number;
+}
+
 export class ThemeExpansionService {
   private claudeClient: ClaudeClient;
   private cache: GenericCache;
@@ -95,6 +105,7 @@ export class ThemeExpansionService {
     maxDepthReached: 0,
     atomicThemesIdentified: 0,
   };
+  private expansionStopReasons: ExpansionStopReason[] = [];
 
   constructor(anthropicApiKey: string, config: Partial<ExpansionConfig> = {}) {
     this.claudeClient = new ClaudeClient(anthropicApiKey);
@@ -223,6 +234,31 @@ export class ThemeExpansionService {
       'EXPANSION',
       `Max depth reached: ${this.effectiveness.maxDepthReached}, Atomic themes: ${this.effectiveness.atomicThemesIdentified}`
     );
+
+    // Log expansion stop reasons for analysis
+    console.log(`[EXPANSION-ANALYSIS] Expansion stop reasons summary:`);
+    console.log(`[EXPANSION-ANALYSIS] Total themes that stopped expanding: ${this.expansionStopReasons.length}`);
+    
+    const reasonCounts = this.expansionStopReasons.reduce((acc, reason) => {
+      acc[reason.reason] = (acc[reason.reason] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    
+    Object.entries(reasonCounts).forEach(([reason, count]) => {
+      console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
+    });
+
+    // Log themes that exceeded PRD limits but were marked atomic
+    const oversizedAtomic = this.expansionStopReasons.filter(r => 
+      r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1)
+    );
+    
+    if (oversizedAtomic.length > 0) {
+      console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
+      oversizedAtomic.forEach(r => {
+        console.log(`  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`);
+      });
+    }
 
     return expandedThemes;
   }
@@ -390,9 +426,16 @@ export class ThemeExpansionService {
     const deduplicatedChildren =
       await this.deduplicateSubThemes(allChildThemes);
 
+    // NEW: Re-evaluate merged themes for potential expansion (PRD compliance)
+    const finalChildren = await this.reEvaluateMergedThemes(
+      deduplicatedChildren,
+      currentDepth + 1,
+      result.expandedTheme
+    );
+
     return {
       ...result.expandedTheme!,
-      childThemes: deduplicatedChildren,
+      childThemes: finalChildren,
       isExpanded: true,
     };
   }
@@ -480,6 +523,17 @@ export class ThemeExpansionService {
         this.effectiveness.atomicThemesIdentified++;
       }
 
+      // Track expansion stop reason
+      this.expansionStopReasons.push({
+        themeId: theme.id,
+        themeName: theme.name,
+        depth: currentDepth,
+        reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
+        details: expansionDecision.reasoning,
+        fileCount: theme.affectedFiles.length,
+        lineCount: theme.codeSnippets.join('\n').split('\n').length
+      });
+
       logger.info(
         'EXPANSION',
         `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`
@@ -502,6 +556,72 @@ export class ThemeExpansionService {
       parentTheme,
       expansionDecision,
     };
+  }
+
+  /**
+   * Re-evaluate merged themes for potential expansion after deduplication
+   * PRD: Ensure merged themes still follow atomic guidelines
+   */
+  private async reEvaluateMergedThemes(
+    themes: ConsolidatedTheme[],
+    currentDepth: number,
+    parentTheme?: ConsolidatedTheme
+  ): Promise<ConsolidatedTheme[]> {
+    // Check if re-evaluation is disabled
+    const reEvaluateAfterMerge = process.env.RE_EVALUATE_AFTER_MERGE !== 'false';
+    if (!reEvaluateAfterMerge) {
+      console.log(`[RE-EVALUATION] Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`);
+      return themes;
+    }
+
+    const reEvaluatedThemes: ConsolidatedTheme[] = [];
+    const maxAtomicSize = parseInt(process.env.MAX_ATOMIC_SIZE || '15');
+    const strictAtomicLimits = process.env.STRICT_ATOMIC_LIMITS !== 'false';
+    
+    for (const theme of themes) {
+      // Check if this was a merged theme (has multiple source themes)
+      if (theme.sourceThemes && theme.sourceThemes.length > 1) {
+        const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+        console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${totalLines} lines, ${theme.affectedFiles.length} files)`);
+        
+        // PRD: If merged theme exceeds atomic size, it should be re-evaluated
+        const exceedsLineLimit = strictAtomicLimits && totalLines > maxAtomicSize;
+        const exceedsFileLimit = strictAtomicLimits && theme.affectedFiles.length > 1;
+        
+        if (exceedsLineLimit || exceedsFileLimit) {
+          console.log(`[RE-EVALUATION] Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`);
+          
+          // Re-evaluate if it should expand
+          const expansionCandidate = await this.evaluateExpansionCandidate(
+            theme,
+            parentTheme,
+            currentDepth
+          );
+          
+          if (expansionCandidate) {
+            console.log(`[RE-EVALUATION] Merged theme "${theme.name}" needs expansion after deduplication`);
+            // Recursively expand the merged theme
+            const expanded = await this.expandThemeRecursively(
+              theme,
+              currentDepth,
+              parentTheme
+            );
+            reEvaluatedThemes.push(expanded);
+          } else {
+            console.log(`[RE-EVALUATION] Merged theme "${theme.name}" remains atomic despite size`);
+            reEvaluatedThemes.push(theme);
+          }
+        } else {
+          console.log(`[RE-EVALUATION] Merged theme "${theme.name}" within atomic limits -> keeping as-is`);
+          reEvaluatedThemes.push(theme);
+        }
+      } else {
+        // Not a merged theme, keep as is
+        reEvaluatedThemes.push(theme);
+      }
+    }
+    
+    return reEvaluatedThemes;
   }
 
   /**
@@ -535,6 +655,13 @@ export class ThemeExpansionService {
       );
       return subThemes;
     }
+
+    // Pre-deduplication state logging
+    console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
+    subThemes.forEach(t => {
+      const lines = t.codeSnippets.join('\n').split('\n').length;
+      console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${lines} lines)`);
+    });
 
     logger.info(
       'EXPANSION',
@@ -636,6 +763,18 @@ export class ThemeExpansionService {
         'EXPANSION',
         `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`
       );
+
+      // Post-deduplication state logging (after second pass)
+      console.log(`[DEDUP-AFTER] Final themes after second pass deduplication:`);
+      secondPassResult.forEach(t => {
+        const lines = t.codeSnippets.join('\n').split('\n').length;
+        if (t.sourceThemes && t.sourceThemes.length > 1) {
+          console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
+        } else {
+          console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${lines} lines)`);
+        }
+      });
+
       return secondPassResult;
     } else if (skipSecondPass) {
       logger.info(
@@ -648,6 +787,17 @@ export class ThemeExpansionService {
         `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`
       );
     }
+
+    // Post-deduplication state logging (no second pass)
+    console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
+    finalThemes.forEach(t => {
+      const lines = t.codeSnippets.join('\n').split('\n').length;
+      if (t.sourceThemes && t.sourceThemes.length > 1) {
+        console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
+      } else {
+        console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${lines} lines)`);
+      }
+    });
 
     return finalThemes;
   }
