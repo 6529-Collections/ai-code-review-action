@@ -88,6 +88,8 @@ export class ThemeNamingService {
       lastAnalysis: new Date(),
       sourceThemes,
       consolidationMethod: 'hierarchy',
+      // Build combined codeContext from children
+      codeContext: this.buildCombinedCodeContext(children),
     };
   }
 
@@ -268,6 +270,46 @@ Respond in this exact JSON format (no other text):
     return {
       name: leadTheme.name,
       description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
+    };
+  }
+
+  /**
+   * Build combined code context from multiple consolidated themes
+   */
+  private buildCombinedCodeContext(
+    children: ConsolidatedTheme[]
+  ): ConsolidatedTheme['codeContext'] {
+    const fileMap = new Map<
+      string,
+      Array<{
+        type: 'added' | 'removed' | 'modified';
+        startLine: number;
+        endLine: number;
+        content: string;
+        diff: string;
+      }>
+    >();
+
+    let totalLinesChanged = 0;
+
+    // Combine code context from all children
+    children.forEach((child) => {
+      child.codeContext.files.forEach((file) => {
+        if (!fileMap.has(file.path)) {
+          fileMap.set(file.path, []);
+        }
+        const changes = fileMap.get(file.path)!;
+        changes.push(...file.changes);
+      });
+      totalLinesChanged += child.codeContext.totalLinesChanged;
+    });
+
+    return {
+      files: Array.from(fileMap.entries()).map(([path, changes]) => ({
+        path,
+        changes,
+      })),
+      totalLinesChanged,
     };
   }
 }

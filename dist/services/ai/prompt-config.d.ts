@@ -95,20 +95,20 @@ export declare const ResponseSchemas: {
     }, "strip", z.ZodTypeAny, {
         confidence: number;
         reasoning: string;
+        shouldMerge: boolean;
         nameScore: number;
         descriptionScore: number;
         patternScore: number;
         businessScore: number;
-        shouldMerge: boolean;
         semanticScore: number;
     }, {
         confidence: number;
         reasoning: string;
+        shouldMerge: boolean;
         nameScore: number;
         descriptionScore: number;
         patternScore: number;
         businessScore: number;
-        shouldMerge: boolean;
         semanticScore: number;
     }>;
     theme_expansion: z.ZodObject<{

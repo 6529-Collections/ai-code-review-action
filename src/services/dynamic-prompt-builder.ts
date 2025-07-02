@@ -185,7 +185,10 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.join('\n').split('\n').length} lines
+Code metrics: ${theme.codeContext.files.length} files, ${theme.codeContext.totalLinesChanged} lines
+
+ACTUAL CODE CHANGES:
+${this.formatCodeContext(theme.codeContext)}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
 
@@ -217,19 +220,33 @@ ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
 
     section += `
 
+IMPORTANT: 
+- Multi-file changes almost always need decomposition
+- Each sub-theme must map to SPECIFIC lines of code
+- Provide file paths and line numbers for each suggested sub-theme
+
 RESPOND WITH PRD-COMPLIANT JSON:
 {
   "shouldExpand": boolean,
-  "reasoning": "why (max 30 words)",
+  "isAtomic": boolean,
+  "reasoning": "detailed explanation",
   "businessContext": "user value (max 20 words)",
   "technicalContext": "what it does (max 20 words)",
   "testabilityAssessment": "how to test (max 15 words)",
+  "atomicityScore": {
+    "lineCount": number,
+    "isSingleResponsibility": boolean,
+    "isUnitTestable": boolean,
+    "hasNaturalBoundary": boolean
+  },
   "suggestedSubThemes": [
     {
-      "name": "Clear title (max 8 words)",
-      "description": "1-3 sentences",
+      "name": "specific theme name",
+      "description": "what this specific code does",
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
+      "files": ["exact/file/paths"],
+      "lineRanges": [{"file": "path", "start": number, "end": number}],
       "estimatedLines": number,
       "rationale": "Why separate concern"
     }
@@ -237,6 +254,33 @@ RESPOND WITH PRD-COMPLIANT JSON:
 }`;
 
     return section;
+  }
+
+  /**
+   * Format code context for AI analysis
+   */
+  private formatCodeContext(
+    codeContext: ConsolidatedTheme['codeContext']
+  ): string {
+    if (!codeContext.files.length) {
+      return 'No specific code changes available';
+    }
+
+    let formatted = '';
+    codeContext.files.forEach((file) => {
+      formatted += `\nFile: ${file.path}\n`;
+      file.changes.forEach((change, index) => {
+        formatted += `  Change ${index + 1} (${change.type}): Lines ${change.startLine}-${change.endLine}\n`;
+        if (change.content) {
+          formatted += `  Content: ${change.content.substring(0, 200)}${change.content.length > 200 ? '...' : ''}\n`;
+        }
+        if (change.diff) {
+          formatted += `  Diff: ${change.diff.substring(0, 200)}${change.diff.length > 200 ? '...' : ''}\n`;
+        }
+      });
+    });
+
+    return formatted;
   }
 
   /**

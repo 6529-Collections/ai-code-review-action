@@ -463,6 +463,8 @@ export class ThemeSimilarityService {
       lastAnalysis: theme.lastAnalysis,
       sourceThemes: [theme.id],
       consolidationMethod: 'single',
+      // Build codeContext from theme's codeChanges
+      codeContext: this.buildCodeContext(theme),
       // Include new detailed fields
       detailedDescription: theme.detailedDescription,
       technicalSummary: theme.technicalSummary,
@@ -472,6 +474,158 @@ export class ThemeSimilarityService {
       mainClassesChanged: theme.mainClassesChanged,
       codeMetrics: theme.codeMetrics,
       codeExamples: theme.codeExamples,
+    };
+  }
+
+  private buildCodeContext(theme: Theme): ConsolidatedTheme['codeContext'] {
+    const fileMap = new Map<
+      string,
+      Array<{
+        type: 'added' | 'removed' | 'modified';
+        startLine: number;
+        endLine: number;
+        content: string;
+        diff: string;
+      }>
+    >();
+
+    let totalLinesChanged = 0;
+
+    // Build file-grouped changes from theme's codeChanges
+    theme.codeChanges.forEach((codeChange) => {
+      if (!fileMap.has(codeChange.file)) {
+        fileMap.set(codeChange.file, []);
+      }
+
+      const changes = fileMap.get(codeChange.file)!;
+
+      // Convert codeChange to our format
+      changes.push({
+        type: this.inferChangeType(codeChange),
+        startLine: 0, // CodeChange doesn't have startLine
+        endLine: 0, // CodeChange doesn't have endLine
+        content: codeChange.semanticDescription || '',
+        diff: codeChange.diffHunk || '',
+      });
+
+      totalLinesChanged += codeChange.linesAdded + codeChange.linesRemoved;
+    });
+
+    // If no codeChanges available, fallback to basic info
+    if (fileMap.size === 0) {
+      theme.affectedFiles.forEach((filePath, index) => {
+        fileMap.set(filePath, [
+          {
+            type: 'modified',
+            startLine: 0,
+            endLine: 0,
+            content: theme.codeSnippets[index] || '',
+            diff: '',
+          },
+        ]);
+      });
+
+      totalLinesChanged =
+        (theme.codeMetrics?.linesAdded || 0) +
+        (theme.codeMetrics?.linesRemoved || 0);
+    }
+
+    return {
+      files: Array.from(fileMap.entries()).map(([path, changes]) => ({
+        path,
+        changes,
+      })),
+      totalLinesChanged,
+    };
+  }
+
+  private inferChangeType(codeChange: {
+    linesAdded: number;
+    linesRemoved: number;
+  }): 'added' | 'removed' | 'modified' {
+    if (codeChange.linesAdded > 0 && codeChange.linesRemoved === 0) {
+      return 'added';
+    } else if (codeChange.linesRemoved > 0 && codeChange.linesAdded === 0) {
+      return 'removed';
+    } else {
+      return 'modified';
+    }
+  }
+
+  private buildMergedCodeContext(
+    themes: Theme[]
+  ): ConsolidatedTheme['codeContext'] {
+    const fileMap = new Map<
+      string,
+      Array<{
+        type: 'added' | 'removed' | 'modified';
+        startLine: number;
+        endLine: number;
+        content: string;
+        diff: string;
+      }>
+    >();
+
+    let totalLinesChanged = 0;
+
+    // Combine codeChanges from all themes
+    themes.forEach((theme) => {
+      theme.codeChanges.forEach((codeChange) => {
+        if (!fileMap.has(codeChange.file)) {
+          fileMap.set(codeChange.file, []);
+        }
+
+        const changes = fileMap.get(codeChange.file)!;
+
+        changes.push({
+          type: this.inferChangeType(codeChange),
+          startLine: 0, // CodeChange doesn't have startLine
+          endLine: 0, // CodeChange doesn't have endLine
+          content: codeChange.semanticDescription || '',
+          diff: codeChange.diffHunk || '',
+        });
+
+        totalLinesChanged += codeChange.linesAdded + codeChange.linesRemoved;
+      });
+    });
+
+    // Fallback to basic info if no codeChanges
+    if (fileMap.size === 0) {
+      const allFiles = new Set<string>();
+      const allSnippets: string[] = [];
+
+      themes.forEach((theme) => {
+        theme.affectedFiles.forEach((file) => allFiles.add(file));
+        allSnippets.push(...theme.codeSnippets);
+      });
+
+      Array.from(allFiles).forEach((filePath, index) => {
+        fileMap.set(filePath, [
+          {
+            type: 'modified',
+            startLine: 0,
+            endLine: 0,
+            content: allSnippets[index] || '',
+            diff: '',
+          },
+        ]);
+      });
+
+      totalLinesChanged = themes.reduce(
+        (total, theme) =>
+          total +
+          (theme.codeMetrics?.linesAdded || 0) +
+          (theme.codeMetrics?.linesRemoved || 0),
+        0
+      );
+    }
+
+    return {
+      files: Array.from(fileMap.entries()).map(([path, changes]) => ({
+        path,
+        changes,
+      })),
+      totalLinesChanged,
     };
   }
 
@@ -542,6 +696,8 @@ export class ThemeSimilarityService {
       lastAnalysis: new Date(),
       sourceThemes: themes.map((t) => t.id),
       consolidationMethod: 'merge',
+      // Build combined codeContext from all themes
+      codeContext: this.buildMergedCodeContext(themes),
 
       // New rich fields
       consolidationSummary: `Merged ${themes.length} similar themes`,

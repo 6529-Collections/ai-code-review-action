@@ -20,4 +20,8 @@ export declare class ThemeNamingService {
     private parseMergedThemeNamingResponse;
     private isValidThemeName;
     private createFallbackMergedThemeName;
+    /**
+     * Build combined code context from multiple consolidated themes
+     */
+    private buildCombinedCodeContext;
 }

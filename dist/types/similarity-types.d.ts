@@ -30,6 +30,19 @@ export interface ConsolidatedTheme {
     codeSnippets: string[];
     context: string;
     lastAnalysis: Date;
+    codeContext: {
+        files: Array<{
+            path: string;
+            changes: Array<{
+                type: 'added' | 'removed' | 'modified';
+                startLine: number;
+                endLine: number;
+                content: string;
+                diff: string;
+            }>;
+        }>;
+        totalLinesChanged: number;
+    };
     sourceThemes: string[];
     consolidationMethod: 'merge' | 'hierarchy' | 'single' | 'expansion';
     isExpanded?: boolean;

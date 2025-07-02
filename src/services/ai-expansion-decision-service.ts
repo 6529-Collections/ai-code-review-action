@@ -93,7 +93,7 @@ export class AIExpansionDecisionService {
     // Only mark as obviously atomic for truly trivial changes
     const totalLines = theme.codeSnippets.join('\n').split('\n').length;
     const description = theme.description.toLowerCase();
-    
+
     // Only mark as obviously atomic if truly trivial
     if (theme.affectedFiles.length === 1 && totalLines <= 5) {
       // Simple one-liners like typo fixes
@@ -104,14 +104,16 @@ export class AIExpansionDecisionService {
         (totalLines <= 2 && !description.includes('multiple'))
       );
     }
-    
+
     // PRD: Multi-file changes are RARELY atomic
     // Any multi-file change should go through AI evaluation
     if (theme.affectedFiles.length > 1) {
-      console.log(`[ATOMIC-CHECK] Multi-file theme "${theme.name}" (${theme.affectedFiles.length} files) -> AI evaluation required`);
+      console.log(
+        `[ATOMIC-CHECK] Multi-file theme "${theme.name}" (${theme.affectedFiles.length} files) -> AI evaluation required`
+      );
       return false;
     }
-    
+
     return false;
   }
 

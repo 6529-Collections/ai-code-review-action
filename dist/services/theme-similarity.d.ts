@@ -38,6 +38,9 @@ export declare class ThemeSimilarityService {
     private createConsolidatedThemes;
     private buildHierarchies;
     private themeToConsolidated;
+    private buildCodeContext;
+    private inferChangeType;
+    private buildMergedCodeContext;
     private mergeThemes;
     /**
      * Calculate optimal batch size based on total pairs and complexity

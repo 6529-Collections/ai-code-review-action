@@ -31843,7 +31843,10 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.join('\n').split('\n').length} lines
+Code metrics: ${theme.codeContext.files.length} files, ${theme.codeContext.totalLinesChanged} lines
+
+ACTUAL CODE CHANGES:
+${this.formatCodeContext(theme.codeContext)}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
 
@@ -31874,25 +31877,61 @@ CONSIDER THESE QUESTIONS:
 ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
         section += `
 
+IMPORTANT: 
+- Multi-file changes almost always need decomposition
+- Each sub-theme must map to SPECIFIC lines of code
+- Provide file paths and line numbers for each suggested sub-theme
+
 RESPOND WITH PRD-COMPLIANT JSON:
 {
   "shouldExpand": boolean,
-  "reasoning": "why (max 30 words)",
+  "isAtomic": boolean,
+  "reasoning": "detailed explanation",
   "businessContext": "user value (max 20 words)",
   "technicalContext": "what it does (max 20 words)",
   "testabilityAssessment": "how to test (max 15 words)",
+  "atomicityScore": {
+    "lineCount": number,
+    "isSingleResponsibility": boolean,
+    "isUnitTestable": boolean,
+    "hasNaturalBoundary": boolean
+  },
   "suggestedSubThemes": [
     {
-      "name": "Clear title (max 8 words)",
-      "description": "1-3 sentences",
+      "name": "specific theme name",
+      "description": "what this specific code does",
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
+      "files": ["exact/file/paths"],
+      "lineRanges": [{"file": "path", "start": number, "end": number}],
       "estimatedLines": number,
       "rationale": "Why separate concern"
     }
   ] or null
 }`;
         return section;
+    }
+    /**
+     * Format code context for AI analysis
+     */
+    formatCodeContext(codeContext) {
+        if (!codeContext.files.length) {
+            return 'No specific code changes available';
+        }
+        let formatted = '';
+        codeContext.files.forEach((file) => {
+            formatted += `\nFile: ${file.path}\n`;
+            file.changes.forEach((change, index) => {
+                formatted += `  Change ${index + 1} (${change.type}): Lines ${change.startLine}-${change.endLine}\n`;
+                if (change.content) {
+                    formatted += `  Content: ${change.content.substring(0, 200)}${change.content.length > 200 ? '...' : ''}\n`;
+                }
+                if (change.diff) {
+                    formatted += `  Diff: ${change.diff.substring(0, 200)}${change.diff.length > 200 ? '...' : ''}\n`;
+                }
+            });
+        });
+        return formatted;
     }
     /**
      * Format complexity indicators for display
@@ -33311,10 +33350,10 @@ class ThemeExpansionService {
             console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
         });
         // Log themes that exceeded PRD limits but were marked atomic
-        const oversizedAtomic = this.expansionStopReasons.filter(r => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
+        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
         if (oversizedAtomic.length > 0) {
             console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
-            oversizedAtomic.forEach(r => {
+            oversizedAtomic.forEach((r) => {
                 console.log(`  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`);
             });
         }
@@ -33380,6 +33419,8 @@ class ThemeExpansionService {
                 }
             },
         });
+        // After expansion, verify all leaf nodes are atomic
+        await this.verifyAtomicLeaves(result.subThemes, currentDepth + 1);
         // Extract successful sub-themes
         const expandedSubThemes = [];
         for (const subResult of subThemeResults) {
@@ -33428,6 +33469,11 @@ class ThemeExpansionService {
     async evaluateExpansionCandidate(theme, parentTheme, currentDepth = 0) {
         // Track theme evaluation
         this.effectiveness.themesEvaluated++;
+        // Validate code context accuracy
+        if (!this.validateThemeCodeContext(theme)) {
+            console.warn(`[CONTEXT-VALIDATION] Theme "${theme.name}" has invalid code context, skipping expansion`);
+            return null;
+        }
         // Get sibling themes for context
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
         // Let AI decide based on full context
@@ -33475,7 +33521,7 @@ class ThemeExpansionService {
                 reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
                 details: expansionDecision.reasoning,
                 fileCount: theme.affectedFiles.length,
-                lineCount: theme.codeSnippets.join('\n').split('\n').length
+                lineCount: theme.codeSnippets.join('\n').split('\n').length,
             });
             logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
             // Log PRD metrics
@@ -33541,6 +33587,40 @@ class ThemeExpansionService {
         return reEvaluatedThemes;
     }
     /**
+     * Validate that theme's code context matches its claimed files
+     */
+    validateThemeCodeContext(theme) {
+        // Check if codeContext exists
+        if (!theme.codeContext || !theme.codeContext.files) {
+            console.warn(`[CONTEXT-VALIDATION] Theme "${theme.name}" missing codeContext`);
+            return false;
+        }
+        // Ensure claimed files match actual code context
+        const contextFiles = new Set(theme.codeContext.files.map((f) => f.path));
+        const claimedFiles = new Set(theme.affectedFiles);
+        // Check for file count mismatch
+        if (contextFiles.size !== claimedFiles.size) {
+            console.warn(`[CONTEXT-VALIDATION] File count mismatch for theme "${theme.name}": context=${contextFiles.size}, claimed=${claimedFiles.size}`);
+            return false;
+        }
+        // Verify each claimed file has actual changes
+        for (const file of claimedFiles) {
+            if (!contextFiles.has(file)) {
+                console.warn(`[CONTEXT-VALIDATION] Theme "${theme.name}" claims file "${file}" but no changes found in codeContext`);
+                return false;
+            }
+        }
+        // Check for empty changes
+        const hasValidChanges = theme.codeContext.files.some((file) => file.changes.length > 0 &&
+            file.changes.some((change) => change.content || change.diff));
+        if (!hasValidChanges) {
+            console.warn(`[CONTEXT-VALIDATION] Theme "${theme.name}" has no valid code changes`);
+            return false;
+        }
+        console.log(`[CONTEXT-VALIDATION] Theme "${theme.name}" passed validation: ${contextFiles.size} files, ${theme.codeContext.totalLinesChanged} lines`);
+        return true;
+    }
+    /**
      * Deduplicate sub-themes using AI to identify duplicates
      */
     async deduplicateSubThemes(subThemes) {
@@ -33560,7 +33640,7 @@ class ThemeExpansionService {
         }
         // Pre-deduplication state logging
         console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
-        subThemes.forEach(t => {
+        subThemes.forEach((t) => {
             const lines = t.codeSnippets.join('\n').split('\n').length;
             console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${lines} lines)`);
         });
@@ -33632,7 +33712,7 @@ class ThemeExpansionService {
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
             // Post-deduplication state logging (after second pass)
             console.log(`[DEDUP-AFTER] Final themes after second pass deduplication:`);
-            secondPassResult.forEach(t => {
+            secondPassResult.forEach((t) => {
                 const lines = t.codeSnippets.join('\n').split('\n').length;
                 if (t.sourceThemes && t.sourceThemes.length > 1) {
                     console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
@@ -33651,7 +33731,7 @@ class ThemeExpansionService {
         }
         // Post-deduplication state logging (no second pass)
         console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
-        finalThemes.forEach(t => {
+        finalThemes.forEach((t) => {
             const lines = t.codeSnippets.join('\n').split('\n').length;
             if (t.sourceThemes && t.sourceThemes.length > 1) {
                 console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
@@ -34091,9 +34171,149 @@ Return JSON with specific sub-themes:
                 lastAnalysis: new Date(),
                 sourceThemes: [parentTheme.id],
                 consolidationMethod: 'expansion',
+                // Extract relevant code context for this sub-theme
+                codeContext: this.extractSubThemeCodeContext(parentTheme, validFiles),
                 isAtomic: parentTheme.level >= 3, // Deeper levels likely atomic
             };
         });
+    }
+    /**
+     * Extract code context for a sub-theme from parent theme
+     */
+    extractSubThemeCodeContext(parentTheme, relevantFiles) {
+        // If no specific files, inherit a subset of parent's context
+        if (relevantFiles.length === 0) {
+            return {
+                files: parentTheme.codeContext.files.slice(0, 1), // Take first file as fallback
+                totalLinesChanged: Math.ceil(parentTheme.codeContext.totalLinesChanged / 3), // Estimate 1/3 of parent
+            };
+        }
+        // Filter parent's code context to only include relevant files
+        const relevantFileSet = new Set(relevantFiles);
+        const filteredFiles = parentTheme.codeContext.files.filter((file) => relevantFileSet.has(file.path));
+        const totalLines = filteredFiles.reduce((sum, file) => sum +
+            file.changes.reduce((fileSum, change) => fileSum + (change.endLine - change.startLine + 1), 0), 0);
+        return {
+            files: filteredFiles,
+            totalLinesChanged: totalLines,
+        };
+    }
+    /**
+     * Verify that all leaf nodes in a theme hierarchy are truly atomic
+     */
+    async verifyAtomicLeaves(themes, currentDepth) {
+        for (const theme of themes) {
+            // Check if this is a leaf node (no child themes)
+            if (theme.childThemes.length === 0) {
+                const atomicCheck = await this.verifyAtomicTheme(theme);
+                if (!atomicCheck.isAtomic) {
+                    console.warn(`[ATOMIC-VIOLATION] Leaf theme "${theme.name}" at depth ${currentDepth} is not atomic`);
+                    console.warn(`[ATOMIC-VIOLATION] Reason: ${atomicCheck.reason}`);
+                    console.warn(`[ATOMIC-VIOLATION] Files: ${theme.codeContext.files.length}, Lines: ${theme.codeContext.totalLinesChanged}`);
+                    // Track this violation
+                    this.expansionStopReasons.push({
+                        themeId: theme.id,
+                        themeName: theme.name,
+                        depth: currentDepth,
+                        reason: 'error',
+                        details: `Non-atomic leaf: ${atomicCheck.reason}`,
+                        fileCount: theme.codeContext.files.length,
+                        lineCount: theme.codeContext.totalLinesChanged,
+                    });
+                }
+                else {
+                    console.log(`[ATOMIC-VERIFICATION] ✅ Leaf theme "${theme.name}" is properly atomic`);
+                }
+            }
+            else {
+                // Recursively check child themes
+                await this.verifyAtomicLeaves(theme.childThemes, currentDepth + 1);
+            }
+        }
+    }
+    /**
+     * Verify if a single theme meets atomic criteria
+     */
+    async verifyAtomicTheme(theme) {
+        const maxAtomicSize = parseInt(process.env.MAX_ATOMIC_SIZE || '15');
+        const strictAtomicLimits = process.env.STRICT_ATOMIC_LIMITS !== 'false';
+        // Check basic atomic criteria
+        const exceedsLineLimit = theme.codeContext.totalLinesChanged > maxAtomicSize;
+        const exceedsFileLimit = theme.codeContext.files.length > 1;
+        if (strictAtomicLimits) {
+            if (exceedsLineLimit) {
+                return {
+                    isAtomic: false,
+                    reason: `Exceeds PRD atomic size limit: ${theme.codeContext.totalLinesChanged} > ${maxAtomicSize} lines`,
+                    canDecompose: true,
+                };
+            }
+            if (exceedsFileLimit) {
+                return {
+                    isAtomic: false,
+                    reason: `Multi-file change: ${theme.codeContext.files.length} files (atomic = 1 file)`,
+                    canDecompose: true,
+                };
+            }
+        }
+        // Check for single responsibility using AI
+        const prompt = `
+Verify if this theme is TRULY ATOMIC per PRD requirements:
+
+THEME: "${theme.name}"
+DESCRIPTION: ${theme.description}
+
+CODE CHANGES:
+${this.formatCodeContextForAnalysis(theme.codeContext)}
+
+ATOMIC REQUIREMENTS (PRD):
+1. 5-15 lines of focused change (current: ${theme.codeContext.totalLinesChanged} lines)
+2. Single unit test could cover it
+3. Does exactly ONE thing
+4. Natural code boundary
+
+ANALYSIS QUESTIONS:
+- Is this a single, unit-testable change?
+- Does it have exactly one responsibility?
+- Can it be understood and tested independently?
+
+Respond with JSON:
+{
+  "isAtomic": boolean,
+  "reasoning": "detailed explanation",
+  "singleResponsibility": boolean,
+  "unitTestable": boolean,
+  "hasNaturalBoundary": boolean
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const result = JSON.parse(response);
+            return {
+                isAtomic: result.isAtomic || false,
+                reason: result.reasoning || 'Unknown',
+                canDecompose: !result.isAtomic,
+            };
+        }
+        catch (error) {
+            return {
+                isAtomic: false,
+                reason: `AI verification failed: ${error}`,
+                canDecompose: false,
+            };
+        }
+    }
+    formatCodeContextForAnalysis(codeContext) {
+        let formatted = '';
+        codeContext.files.forEach((file) => {
+            formatted += `\nFile: ${file.path}\n`;
+            file.changes.forEach((change) => {
+                formatted += `  ${change.type.toUpperCase()}: Lines ${change.startLine}-${change.endLine}\n`;
+                if (change.content && change.content.trim()) {
+                    formatted += `  ${change.content.substring(0, 300)}${change.content.length > 300 ? '...' : ''}\n`;
+                }
+            });
+        });
+        return formatted;
     }
     /**
      * Get effectiveness metrics for this expansion analysis
@@ -34233,6 +34453,8 @@ class ThemeNamingService {
             lastAnalysis: new Date(),
             sourceThemes,
             consolidationMethod: 'hierarchy',
+            // Build combined codeContext from children
+            codeContext: this.buildCombinedCodeContext(children),
         };
     }
     generateMergedThemeNameWithContext(themes, enhancedContext) {
@@ -34360,6 +34582,31 @@ Respond in this exact JSON format (no other text):
         return {
             name: leadTheme.name,
             description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
+        };
+    }
+    /**
+     * Build combined code context from multiple consolidated themes
+     */
+    buildCombinedCodeContext(children) {
+        const fileMap = new Map();
+        let totalLinesChanged = 0;
+        // Combine code context from all children
+        children.forEach((child) => {
+            child.codeContext.files.forEach((file) => {
+                if (!fileMap.has(file.path)) {
+                    fileMap.set(file.path, []);
+                }
+                const changes = fileMap.get(file.path);
+                changes.push(...file.changes);
+            });
+            totalLinesChanged += child.codeContext.totalLinesChanged;
+        });
+        return {
+            files: Array.from(fileMap.entries()).map(([path, changes]) => ({
+                path,
+                changes,
+            })),
+            totalLinesChanged,
         };
     }
 }
@@ -34961,6 +35208,22 @@ class ThemeService {
                 businessImpact: theme.description,
                 sourceThemes: [theme.id],
                 consolidationMethod: 'single',
+                // Add minimal codeContext for fallback themes
+                codeContext: {
+                    files: theme.affectedFiles.map((path) => ({
+                        path,
+                        changes: [
+                            {
+                                type: 'modified',
+                                startLine: 0,
+                                endLine: 0,
+                                content: 'Fallback analysis - manual review needed',
+                                diff: '',
+                            },
+                        ],
+                    })),
+                    totalLinesChanged: 1,
+                },
             }));
             analysisResult.totalThemes = analysisResult.themes.length;
         }
@@ -35439,6 +35702,8 @@ class ThemeSimilarityService {
             lastAnalysis: theme.lastAnalysis,
             sourceThemes: [theme.id],
             consolidationMethod: 'single',
+            // Build codeContext from theme's codeChanges
+            codeContext: this.buildCodeContext(theme),
             // Include new detailed fields
             detailedDescription: theme.detailedDescription,
             technicalSummary: theme.technicalSummary,
@@ -35448,6 +35713,112 @@ class ThemeSimilarityService {
             mainClassesChanged: theme.mainClassesChanged,
             codeMetrics: theme.codeMetrics,
             codeExamples: theme.codeExamples,
+        };
+    }
+    buildCodeContext(theme) {
+        const fileMap = new Map();
+        let totalLinesChanged = 0;
+        // Build file-grouped changes from theme's codeChanges
+        theme.codeChanges.forEach((codeChange) => {
+            if (!fileMap.has(codeChange.file)) {
+                fileMap.set(codeChange.file, []);
+            }
+            const changes = fileMap.get(codeChange.file);
+            // Convert codeChange to our format
+            changes.push({
+                type: this.inferChangeType(codeChange),
+                startLine: 0, // CodeChange doesn't have startLine
+                endLine: 0, // CodeChange doesn't have endLine
+                content: codeChange.semanticDescription || '',
+                diff: codeChange.diffHunk || '',
+            });
+            totalLinesChanged += codeChange.linesAdded + codeChange.linesRemoved;
+        });
+        // If no codeChanges available, fallback to basic info
+        if (fileMap.size === 0) {
+            theme.affectedFiles.forEach((filePath, index) => {
+                fileMap.set(filePath, [
+                    {
+                        type: 'modified',
+                        startLine: 0,
+                        endLine: 0,
+                        content: theme.codeSnippets[index] || '',
+                        diff: '',
+                    },
+                ]);
+            });
+            totalLinesChanged =
+                (theme.codeMetrics?.linesAdded || 0) +
+                    (theme.codeMetrics?.linesRemoved || 0);
+        }
+        return {
+            files: Array.from(fileMap.entries()).map(([path, changes]) => ({
+                path,
+                changes,
+            })),
+            totalLinesChanged,
+        };
+    }
+    inferChangeType(codeChange) {
+        if (codeChange.linesAdded > 0 && codeChange.linesRemoved === 0) {
+            return 'added';
+        }
+        else if (codeChange.linesRemoved > 0 && codeChange.linesAdded === 0) {
+            return 'removed';
+        }
+        else {
+            return 'modified';
+        }
+    }
+    buildMergedCodeContext(themes) {
+        const fileMap = new Map();
+        let totalLinesChanged = 0;
+        // Combine codeChanges from all themes
+        themes.forEach((theme) => {
+            theme.codeChanges.forEach((codeChange) => {
+                if (!fileMap.has(codeChange.file)) {
+                    fileMap.set(codeChange.file, []);
+                }
+                const changes = fileMap.get(codeChange.file);
+                changes.push({
+                    type: this.inferChangeType(codeChange),
+                    startLine: 0, // CodeChange doesn't have startLine
+                    endLine: 0, // CodeChange doesn't have endLine
+                    content: codeChange.semanticDescription || '',
+                    diff: codeChange.diffHunk || '',
+                });
+                totalLinesChanged += codeChange.linesAdded + codeChange.linesRemoved;
+            });
+        });
+        // Fallback to basic info if no codeChanges
+        if (fileMap.size === 0) {
+            const allFiles = new Set();
+            const allSnippets = [];
+            themes.forEach((theme) => {
+                theme.affectedFiles.forEach((file) => allFiles.add(file));
+                allSnippets.push(...theme.codeSnippets);
+            });
+            Array.from(allFiles).forEach((filePath, index) => {
+                fileMap.set(filePath, [
+                    {
+                        type: 'modified',
+                        startLine: 0,
+                        endLine: 0,
+                        content: allSnippets[index] || '',
+                        diff: '',
+                    },
+                ]);
+            });
+            totalLinesChanged = themes.reduce((total, theme) => total +
+                (theme.codeMetrics?.linesAdded || 0) +
+                (theme.codeMetrics?.linesRemoved || 0), 0);
+        }
+        return {
+            files: Array.from(fileMap.entries()).map(([path, changes]) => ({
+                path,
+                changes,
+            })),
+            totalLinesChanged,
         };
     }
     async mergeThemes(themes) {
@@ -35505,6 +35876,8 @@ class ThemeSimilarityService {
             lastAnalysis: new Date(),
             sourceThemes: themes.map((t) => t.id),
             consolidationMethod: 'merge',
+            // Build combined codeContext from all themes
+            codeContext: this.buildMergedCodeContext(themes),
             // New rich fields
             consolidationSummary: `Merged ${themes.length} similar themes`,
             combinedTechnicalDetails: combinedTechnicalDetails || undefined,

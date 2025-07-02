@@ -90,6 +90,10 @@ export declare class ThemeExpansionService {
      */
     private reEvaluateMergedThemes;
     /**
+     * Validate that theme's code context matches its claimed files
+     */
+    private validateThemeCodeContext;
+    /**
      * Deduplicate sub-themes using AI to identify duplicates
      */
     private deduplicateSubThemes;
@@ -121,6 +125,19 @@ export declare class ThemeExpansionService {
      * Convert suggested sub-themes to ConsolidatedTheme objects
      */
     private convertSuggestedToConsolidatedThemes;
+    /**
+     * Extract code context for a sub-theme from parent theme
+     */
+    private extractSubThemeCodeContext;
+    /**
+     * Verify that all leaf nodes in a theme hierarchy are truly atomic
+     */
+    private verifyAtomicLeaves;
+    /**
+     * Verify if a single theme meets atomic criteria
+     */
+    private verifyAtomicTheme;
+    private formatCodeContextForAnalysis;
     /**
      * Get effectiveness metrics for this expansion analysis
      */

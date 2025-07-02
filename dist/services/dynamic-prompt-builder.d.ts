@@ -31,6 +31,10 @@ export declare class DynamicPromptBuilder {
      */
     private buildDecisionSection;
     /**
+     * Format code context for AI analysis
+     */
+    private formatCodeContext;
+    /**
      * Format complexity indicators for display
      */
     private formatComplexityIndicators;

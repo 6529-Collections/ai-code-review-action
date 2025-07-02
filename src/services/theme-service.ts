@@ -905,6 +905,22 @@ export class ThemeService {
         businessImpact: theme.description,
         sourceThemes: [theme.id],
         consolidationMethod: 'single' as const,
+        // Add minimal codeContext for fallback themes
+        codeContext: {
+          files: theme.affectedFiles.map((path) => ({
+            path,
+            changes: [
+              {
+                type: 'modified' as const,
+                startLine: 0,
+                endLine: 0,
+                content: 'Fallback analysis - manual review needed',
+                diff: '',
+              },
+            ],
+          })),
+          totalLinesChanged: 1,
+        },
       }));
       analysisResult.totalThemes = analysisResult.themes.length;
     }

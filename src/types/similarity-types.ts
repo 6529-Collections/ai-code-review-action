@@ -36,6 +36,21 @@ export interface ConsolidatedTheme {
   context: string;
   lastAnalysis: Date;
 
+  // NEW: Actual code changes for THIS theme specifically
+  codeContext: {
+    files: Array<{
+      path: string;
+      changes: Array<{
+        type: 'added' | 'removed' | 'modified';
+        startLine: number;
+        endLine: number;
+        content: string;
+        diff: string; // The actual diff for this change
+      }>;
+    }>;
+    totalLinesChanged: number;
+  };
+
   // Consolidation metadata
   sourceThemes: string[]; // IDs of original themes
   consolidationMethod: 'merge' | 'hierarchy' | 'single' | 'expansion';
