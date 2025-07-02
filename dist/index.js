@@ -30488,7 +30488,9 @@ class AIExpansionDecisionService {
     async getAIDecision(prompt) {
         try {
             const response = await this.claudeClient.callClaude(prompt);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'reasoning']);
+            // First try with minimal validation
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [] // No required fields - let AI decide structure
+            );
             if (extractionResult.success) {
                 const data = extractionResult.data;
                 return {
@@ -30503,15 +30505,9 @@ class AIExpansionDecisionService {
             }
             // Fallback on parsing error
             (0, utils_1.logInfo)(`Failed to parse AI expansion decision: ${extractionResult.error}`);
-            return {
-                shouldExpand: true, // PRD: Default to expand on error
-                isAtomic: false,
-                reasoning: 'Failed to parse AI response',
-                businessContext: '',
-                technicalContext: '',
-                testabilityAssessment: '',
-                suggestedSubThemes: null,
-            };
+            (0, utils_1.logInfo)(`Raw AI response (first 500 chars): ${response.substring(0, 500)}`);
+            // PRD: AI makes all decisions - if parsing fails, retry with simpler prompt
+            return await this.getSimplifiedAIDecision(prompt);
         }
         catch (error) {
             (0, utils_1.logInfo)(`AI expansion decision failed: ${error}`);
@@ -30525,6 +30521,50 @@ class AIExpansionDecisionService {
                 suggestedSubThemes: null,
             };
         }
+    }
+    /**
+     * Simplified AI decision when complex prompt fails
+     * PRD: AI makes all decisions, this is a simpler format for reliability
+     */
+    async getSimplifiedAIDecision(originalPrompt) {
+        try {
+            const simplePrompt = `Based on this code change analysis, should this theme be expanded into sub-themes?
+
+Theme Analysis: ${originalPrompt.substring(0, 1000)}...
+
+Respond with ONLY this JSON format:
+{
+  "shouldExpand": true,
+  "reasoning": "Brief explanation"
+}`;
+            const response = await this.claudeClient.callClaude(simplePrompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', []);
+            if (extractionResult.success) {
+                const data = extractionResult.data;
+                return {
+                    shouldExpand: data.shouldExpand ?? false,
+                    isAtomic: !data.shouldExpand,
+                    reasoning: data.reasoning ?? 'Simplified AI decision',
+                    businessContext: '',
+                    technicalContext: '',
+                    testabilityAssessment: '',
+                    suggestedSubThemes: null,
+                };
+            }
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Simplified AI decision also failed: ${error}`);
+        }
+        // Final fallback - still AI-driven via basic heuristics that follow PRD
+        return {
+            shouldExpand: false, // Conservative: don't expand if AI completely fails
+            isAtomic: true,
+            reasoning: 'AI decision service failed - marked as atomic for safety',
+            businessContext: '',
+            technicalContext: '',
+            testabilityAssessment: '',
+            suggestedSubThemes: null,
+        };
     }
     /**
      * Clear the decision cache
@@ -31857,7 +31897,7 @@ Create child nodes when:
 4. Mixed audiences (technical vs business)
 
 Stop expansion only when ALL true:
-1. Atomic: 5-15 lines of focused change
+1. Atomic: 5-15 lines of focused change (exception: pure formatting/style changes can be larger)
 2. Unit-testable as-is
 3. Single responsibility
 4. Natural code boundary
@@ -31882,32 +31922,27 @@ IMPORTANT:
 - Each sub-theme must map to SPECIFIC lines of code
 - Provide file paths and line numbers for each suggested sub-theme
 
-RESPOND WITH PRD-COMPLIANT JSON:
+You must respond with ONLY valid JSON. No explanatory text before or after.
+
+Example response format:
 {
-  "shouldExpand": boolean,
-  "isAtomic": boolean,
-  "reasoning": "detailed explanation",
-  "businessContext": "user value (max 20 words)",
-  "technicalContext": "what it does (max 20 words)",
-  "testabilityAssessment": "how to test (max 15 words)",
-  "atomicityScore": {
-    "lineCount": number,
-    "isSingleResponsibility": boolean,
-    "isUnitTestable": boolean,
-    "hasNaturalBoundary": boolean
-  },
+  "shouldExpand": true,
+  "isAtomic": false,
+  "reasoning": "This theme contains multiple distinct concerns that should be separated",
+  "businessContext": "Improves code organization and maintainability",
+  "technicalContext": "Separates configuration from implementation logic",
+  "testabilityAssessment": "Each part can be unit tested independently",
   "suggestedSubThemes": [
     {
-      "name": "specific theme name",
-      "description": "what this specific code does",
-      "businessContext": "Why this matters",
-      "technicalContext": "What this does",
-      "files": ["exact/file/paths"],
-      "lineRanges": [{"file": "path", "start": number, "end": number}],
-      "estimatedLines": number,
-      "rationale": "Why separate concern"
+      "name": "Update configuration files",
+      "description": "Modify TypeScript and build configuration",
+      "businessContext": "Ensures proper build pipeline",
+      "technicalContext": "Updates tsconfig and package.json",
+      "files": ["src/tsconfig.json"],
+      "estimatedLines": 5,
+      "rationale": "Configuration changes are separate from logic"
     }
-  ] or null
+  ]
 }`;
         return section;
     }

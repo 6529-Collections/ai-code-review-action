@@ -199,7 +199,7 @@ Create child nodes when:
 4. Mixed audiences (technical vs business)
 
 Stop expansion only when ALL true:
-1. Atomic: 5-15 lines of focused change
+1. Atomic: 5-15 lines of focused change (exception: pure formatting/style changes can be larger)
 2. Unit-testable as-is
 3. Single responsibility
 4. Natural code boundary
@@ -225,32 +225,27 @@ IMPORTANT:
 - Each sub-theme must map to SPECIFIC lines of code
 - Provide file paths and line numbers for each suggested sub-theme
 
-RESPOND WITH PRD-COMPLIANT JSON:
+You must respond with ONLY valid JSON. No explanatory text before or after.
+
+Example response format:
 {
-  "shouldExpand": boolean,
-  "isAtomic": boolean,
-  "reasoning": "detailed explanation",
-  "businessContext": "user value (max 20 words)",
-  "technicalContext": "what it does (max 20 words)",
-  "testabilityAssessment": "how to test (max 15 words)",
-  "atomicityScore": {
-    "lineCount": number,
-    "isSingleResponsibility": boolean,
-    "isUnitTestable": boolean,
-    "hasNaturalBoundary": boolean
-  },
+  "shouldExpand": true,
+  "isAtomic": false,
+  "reasoning": "This theme contains multiple distinct concerns that should be separated",
+  "businessContext": "Improves code organization and maintainability",
+  "technicalContext": "Separates configuration from implementation logic",
+  "testabilityAssessment": "Each part can be unit tested independently",
   "suggestedSubThemes": [
     {
-      "name": "specific theme name",
-      "description": "what this specific code does",
-      "businessContext": "Why this matters",
-      "technicalContext": "What this does",
-      "files": ["exact/file/paths"],
-      "lineRanges": [{"file": "path", "start": number, "end": number}],
-      "estimatedLines": number,
-      "rationale": "Why separate concern"
+      "name": "Update configuration files",
+      "description": "Modify TypeScript and build configuration",
+      "businessContext": "Ensures proper build pipeline",
+      "technicalContext": "Updates tsconfig and package.json",
+      "files": ["src/tsconfig.json"],
+      "estimatedLines": 5,
+      "rationale": "Configuration changes are separate from logic"
     }
-  ] or null
+  ]
 }`;
 
     return section;

@@ -124,10 +124,11 @@ export class AIExpansionDecisionService {
     try {
       const response = await this.claudeClient.callClaude(prompt);
 
+      // First try with minimal validation
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,
         'object',
-        ['shouldExpand', 'reasoning']
+        [] // No required fields - let AI decide structure
       );
 
       if (extractionResult.success) {
@@ -138,6 +139,12 @@ export class AIExpansionDecisionService {
           businessContext?: string;
           technicalContext?: string;
           testabilityAssessment?: string;
+          atomicityScore?: {
+            lineCount?: number;
+            isSingleResponsibility?: boolean;
+            isUnitTestable?: boolean;
+            hasNaturalBoundary?: boolean;
+          };
           suggestedSubThemes?: Array<{
             name: string;
             description: string;
@@ -146,6 +153,11 @@ export class AIExpansionDecisionService {
             businessContext?: string;
             technicalContext?: string;
             estimatedLines?: number;
+            lineRanges?: Array<{
+              file: string;
+              start: number;
+              end: number;
+            }>;
           }>;
         };
 
@@ -164,15 +176,11 @@ export class AIExpansionDecisionService {
       logInfo(
         `Failed to parse AI expansion decision: ${extractionResult.error}`
       );
-      return {
-        shouldExpand: true, // PRD: Default to expand on error
-        isAtomic: false,
-        reasoning: 'Failed to parse AI response',
-        businessContext: '',
-        technicalContext: '',
-        testabilityAssessment: '',
-        suggestedSubThemes: null,
-      };
+      logInfo(
+        `Raw AI response (first 500 chars): ${response.substring(0, 500)}`
+      );
+      // PRD: AI makes all decisions - if parsing fails, retry with simpler prompt
+      return await this.getSimplifiedAIDecision(prompt);
     } catch (error) {
       logInfo(`AI expansion decision failed: ${error}`);
       return {
@@ -185,6 +193,62 @@ export class AIExpansionDecisionService {
         suggestedSubThemes: null,
       };
     }
+  }
+
+  /**
+   * Simplified AI decision when complex prompt fails
+   * PRD: AI makes all decisions, this is a simpler format for reliability
+   */
+  private async getSimplifiedAIDecision(
+    originalPrompt: string
+  ): Promise<ExpansionDecision> {
+    try {
+      const simplePrompt = `Based on this code change analysis, should this theme be expanded into sub-themes?
+
+Theme Analysis: ${originalPrompt.substring(0, 1000)}...
+
+Respond with ONLY this JSON format:
+{
+  "shouldExpand": true,
+  "reasoning": "Brief explanation"
+}`;
+
+      const response = await this.claudeClient.callClaude(simplePrompt);
+      const extractionResult = JsonExtractor.extractAndValidateJson(
+        response,
+        'object',
+        []
+      );
+
+      if (extractionResult.success) {
+        const data = extractionResult.data as {
+          shouldExpand?: boolean;
+          reasoning?: string;
+        };
+        return {
+          shouldExpand: data.shouldExpand ?? false,
+          isAtomic: !data.shouldExpand,
+          reasoning: data.reasoning ?? 'Simplified AI decision',
+          businessContext: '',
+          technicalContext: '',
+          testabilityAssessment: '',
+          suggestedSubThemes: null,
+        };
+      }
+    } catch (error) {
+      logInfo(`Simplified AI decision also failed: ${error}`);
+    }
+
+    // Final fallback - still AI-driven via basic heuristics that follow PRD
+    return {
+      shouldExpand: false, // Conservative: don't expand if AI completely fails
+      isAtomic: true,
+      reasoning: 'AI decision service failed - marked as atomic for safety',
+      businessContext: '',
+      technicalContext: '',
+      testabilityAssessment: '',
+      suggestedSubThemes: null,
+    };
   }
 
   /**

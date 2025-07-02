@@ -27,6 +27,11 @@ export declare class AIExpansionDecisionService {
      */
     private getAIDecision;
     /**
+     * Simplified AI decision when complex prompt fails
+     * PRD: AI makes all decisions, this is a simpler format for reliability
+     */
+    private getSimplifiedAIDecision;
+    /**
      * Clear the decision cache
      */
     clearCache(): void;
