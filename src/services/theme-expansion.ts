@@ -1422,16 +1422,36 @@ Return JSON with specific sub-themes:
   ): ConsolidatedTheme[] {
     return suggestedThemes.map((suggested, index) => {
       const relevantFiles = suggested.files || suggested.relevantFiles || [];
+      
+      // Validate that AI provided files
+      if (relevantFiles.length === 0) {
+        console.error(`[ERROR] AI did not provide files for sub-theme "${suggested.name}"`);
+        console.error(`[ERROR] Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+        throw new Error(
+          `AI failed to provide files for sub-theme "${suggested.name}". ` +
+          `Parent theme has ${parentTheme.affectedFiles.length} files. ` +
+          `AI must specify which files each sub-theme affects.`
+        );
+      }
+      
       const validFiles = relevantFiles.filter((file) =>
         parentTheme.affectedFiles.includes(file)
       );
       
-      console.log(`[DEBUG-FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
-      console.log(`  - AI suggested files: ${JSON.stringify(relevantFiles)}`);
-      console.log(`  - Parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
-      console.log(`  - Valid files: ${JSON.stringify(validFiles)}`);
-      console.log(`  - Will use: ${validFiles.length > 0 ? JSON.stringify(validFiles) : JSON.stringify([parentTheme.affectedFiles[0]])}`);
+      // Validate that provided files are valid
+      if (validFiles.length === 0) {
+        console.error(`[ERROR] AI provided invalid files for sub-theme "${suggested.name}"`);
+        console.error(`[ERROR] AI suggested: ${JSON.stringify(relevantFiles)}`);
+        console.error(`[ERROR] Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+        throw new Error(
+          `AI provided invalid files for sub-theme "${suggested.name}". ` +
+          `Suggested files ${JSON.stringify(relevantFiles)} are not in parent's files: ${JSON.stringify(parentTheme.affectedFiles)}`
+        );
+      }
       
+      console.log(`[FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
+      console.log(`  - AI suggested files: ${JSON.stringify(relevantFiles)}`);
+      console.log(`  - Valid files assigned: ${JSON.stringify(validFiles)}`);
 
       return {
         id: SecureFileNamer.generateHierarchicalId(
@@ -1444,8 +1464,7 @@ Return JSON with specific sub-themes:
         level: parentTheme.level + 1,
         parentId: parentTheme.id,
         childThemes: [],
-        affectedFiles:
-          validFiles.length > 0 ? validFiles : [parentTheme.affectedFiles[0]], // Fallback to first parent file
+        affectedFiles: validFiles,
         confidence: 0.8,
         businessImpact:
           suggested.businessImpact ||

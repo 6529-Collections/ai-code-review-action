@@ -187,6 +187,7 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
 Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
+Files affected by this theme: ${theme.affectedFiles.map(f => `"${f}"`).join(', ')}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
 
@@ -216,7 +217,12 @@ Multi-file themes should expand unless they are:
 CONSIDER THESE QUESTIONS:
 ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
-IMPORTANT: When suggesting sub-themes, assign specific files from the parent theme's file list to each sub-theme based on what that sub-theme actually modifies.`;
+CRITICAL FILE ASSIGNMENT RULES:
+1. Each sub-theme MUST have "files" array populated
+2. Files MUST be selected from the parent theme's files listed above
+3. Each file should typically belong to only ONE sub-theme (no duplication unless truly needed)
+4. If a sub-theme doesn't modify any specific files, it shouldn't exist
+5. The "files" field is REQUIRED - omitting it will cause an error`;
 
     section += `
 
@@ -233,7 +239,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
       "description": "1-3 sentences",
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
-      "files": ["list of specific files this sub-theme affects"],
+      "files": ["REQUIRED: list files from parent theme that this sub-theme modifies"],
       "estimatedLines": number,
       "rationale": "Why separate concern"
     }

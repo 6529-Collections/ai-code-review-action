@@ -19,9 +19,9 @@ export declare class AIExpansionDecisionService {
      */
     private getAnalysisHash;
     /**
-     * Simple check for obviously atomic changes - extremely conservative
+     * Calculate total lines from code snippets (which contain full file patches)
      */
-    private isObviouslyAtomic;
+    private calculateTotalLines;
     /**
      * Get AI decision from Claude
      */
