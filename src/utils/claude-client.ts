@@ -60,7 +60,7 @@ export class ClaudeClient {
   private static isProcessing = false;
   private static lastRequestTime = 0;
   private static processingPromise: Promise<void> | null = null;
-  
+
   // Static metrics for monitoring
   private static queueMetrics = {
     totalQueued: 0,
@@ -174,7 +174,8 @@ export class ClaudeClient {
       if (
         ClaudeClient.requestQueue.length > 0 &&
         ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS &&
-        Date.now() - ClaudeClient.lastRequestTime >= ClaudeClient.MIN_REQUEST_INTERVAL
+        Date.now() - ClaudeClient.lastRequestTime >=
+          ClaudeClient.MIN_REQUEST_INTERVAL
       ) {
         const queueItem = ClaudeClient.requestQueue.shift()!;
         ClaudeClient.activeRequests++;
@@ -197,26 +198,38 @@ export class ClaudeClient {
    */
   private static async processRequest(queueItem: QueueItem): Promise<void> {
     const startTime = Date.now();
-    
+
     try {
       // Create a temporary client instance for execution
       const tempClient = new ClaudeClient(process.env.ANTHROPIC_API_KEY || '');
       const result = await tempClient.executeClaudeCall(queueItem.prompt);
-      
+
       // Track successful metrics
       const duration = Date.now() - startTime;
       ClaudeClient.queueMetrics.totalProcessed++;
-      ClaudeClient.queueMetrics.totalWaitTime += startTime - queueItem.timestamp;
+      ClaudeClient.queueMetrics.totalWaitTime +=
+        startTime - queueItem.timestamp;
       ClaudeClient.queueMetrics.consecutiveRateLimitErrors = 0;
 
       // Track instance metrics
       tempClient.metrics.totalCalls++;
       tempClient.metrics.totalTime += duration;
-      tempClient.updateContextCounter(tempClient.metrics.callsByContext, queueItem.context);
-      tempClient.updateContextCounter(tempClient.metrics.timeByContext, queueItem.context, duration);
+      tempClient.updateContextCounter(
+        tempClient.metrics.callsByContext,
+        queueItem.context
+      );
+      tempClient.updateContextCounter(
+        tempClient.metrics.timeByContext,
+        queueItem.context,
+        duration
+      );
 
       // Track with performance tracker
-      performanceTracker.trackAICall(queueItem.context, duration, queueItem.operation);
+      performanceTracker.trackAICall(
+        queueItem.context,
+        duration,
+        queueItem.operation
+      );
 
       queueItem.resolve(result);
     } catch (error) {
@@ -229,7 +242,10 @@ export class ClaudeClient {
   /**
    * Handle request errors with retry logic
    */
-  private static async handleRequestError(queueItem: QueueItem, error: any): Promise<void> {
+  private static async handleRequestError(
+    queueItem: QueueItem,
+    error: unknown
+  ): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const isRateLimitError = ClaudeClient.isRateLimitError(errorMessage);
 
@@ -247,15 +263,15 @@ export class ClaudeClient {
       if (queueItem.retryCount < 3) {
         queueItem.retryCount++;
         const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s
-        
+
         console.error(
           `[CLAUDE-RATE-LIMIT] Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/3)`
         );
-        
+
         setTimeout(() => {
           ClaudeClient.requestQueue.unshift(queueItem); // Add back to front of queue
         }, backoffDelay);
-        
+
         return;
       }
     }
@@ -276,18 +292,18 @@ export class ClaudeClient {
       'too many requests',
       'quota exceeded',
       '429',
-      'throttled'
+      'throttled',
     ];
-    
+
     const lowerError = errorMessage.toLowerCase();
-    return rateLimitPatterns.some(pattern => lowerError.includes(pattern));
+    return rateLimitPatterns.some((pattern) => lowerError.includes(pattern));
   }
 
   /**
    * Sleep utility
    */
   private static sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async executeClaudeCall(prompt: string): Promise<string> {
@@ -404,9 +420,11 @@ export class ClaudeClient {
       activeRequests: ClaudeClient.activeRequests,
       totalProcessed: ClaudeClient.queueMetrics.totalProcessed,
       totalFailed: ClaudeClient.queueMetrics.totalFailed,
-      averageWaitTime: ClaudeClient.queueMetrics.totalProcessed > 0 
-        ? ClaudeClient.queueMetrics.totalWaitTime / ClaudeClient.queueMetrics.totalProcessed 
-        : 0,
+      averageWaitTime:
+        ClaudeClient.queueMetrics.totalProcessed > 0
+          ? ClaudeClient.queueMetrics.totalWaitTime /
+            ClaudeClient.queueMetrics.totalProcessed
+          : 0,
       maxQueueLength: ClaudeClient.queueMetrics.maxQueueLength,
       isProcessing: ClaudeClient.isProcessing,
     };
@@ -417,15 +435,15 @@ export class ClaudeClient {
    */
   static clearQueue(): void {
     // Reject all pending requests
-    ClaudeClient.requestQueue.forEach(item => {
+    ClaudeClient.requestQueue.forEach((item) => {
       item.reject(new Error('Queue cleared'));
     });
-    
+
     ClaudeClient.requestQueue = [];
     ClaudeClient.activeRequests = 0;
     ClaudeClient.isProcessing = false;
     ClaudeClient.processingPromise = null;
-    
+
     // Reset metrics
     ClaudeClient.queueMetrics = {
       totalQueued: 0,
@@ -443,7 +461,13 @@ export class ClaudeClient {
    */
   static setMaxConcurrency(limit: number): void {
     if (limit > 0 && limit <= 20) {
-      (ClaudeClient as any).MAX_CONCURRENT_REQUESTS = limit;
+      // Use object property assignment to modify readonly property
+      Object.defineProperty(ClaudeClient, 'MAX_CONCURRENT_REQUESTS', {
+        value: limit,
+        writable: false,
+        enumerable: true,
+        configurable: true,
+      });
       console.log(`[CLAUDE-QUEUE] Max concurrency set to ${limit}`);
     } else {
       console.warn(`[CLAUDE-QUEUE] Invalid concurrency limit: ${limit}`);

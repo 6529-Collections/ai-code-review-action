@@ -36369,7 +36369,8 @@ class ClaudeClient {
             // Check if we can start new request
             if (ClaudeClient.requestQueue.length > 0 &&
                 ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS &&
-                Date.now() - ClaudeClient.lastRequestTime >= ClaudeClient.MIN_REQUEST_INTERVAL) {
+                Date.now() - ClaudeClient.lastRequestTime >=
+                    ClaudeClient.MIN_REQUEST_INTERVAL) {
                 const queueItem = ClaudeClient.requestQueue.shift();
                 ClaudeClient.activeRequests++;
                 ClaudeClient.lastRequestTime = Date.now();
@@ -36396,7 +36397,8 @@ class ClaudeClient {
             // Track successful metrics
             const duration = Date.now() - startTime;
             ClaudeClient.queueMetrics.totalProcessed++;
-            ClaudeClient.queueMetrics.totalWaitTime += startTime - queueItem.timestamp;
+            ClaudeClient.queueMetrics.totalWaitTime +=
+                startTime - queueItem.timestamp;
             ClaudeClient.queueMetrics.consecutiveRateLimitErrors = 0;
             // Track instance metrics
             tempClient.metrics.totalCalls++;
@@ -36454,16 +36456,16 @@ class ClaudeClient {
             'too many requests',
             'quota exceeded',
             '429',
-            'throttled'
+            'throttled',
         ];
         const lowerError = errorMessage.toLowerCase();
-        return rateLimitPatterns.some(pattern => lowerError.includes(pattern));
+        return rateLimitPatterns.some((pattern) => lowerError.includes(pattern));
     }
     /**
      * Sleep utility
      */
     static sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
+        return new Promise((resolve) => setTimeout(resolve, ms));
     }
     async executeClaudeCall(prompt) {
         let tempFile = null;
@@ -36555,7 +36557,8 @@ class ClaudeClient {
             totalProcessed: ClaudeClient.queueMetrics.totalProcessed,
             totalFailed: ClaudeClient.queueMetrics.totalFailed,
             averageWaitTime: ClaudeClient.queueMetrics.totalProcessed > 0
-                ? ClaudeClient.queueMetrics.totalWaitTime / ClaudeClient.queueMetrics.totalProcessed
+                ? ClaudeClient.queueMetrics.totalWaitTime /
+                    ClaudeClient.queueMetrics.totalProcessed
                 : 0,
             maxQueueLength: ClaudeClient.queueMetrics.maxQueueLength,
             isProcessing: ClaudeClient.isProcessing,
@@ -36566,7 +36569,7 @@ class ClaudeClient {
      */
     static clearQueue() {
         // Reject all pending requests
-        ClaudeClient.requestQueue.forEach(item => {
+        ClaudeClient.requestQueue.forEach((item) => {
             item.reject(new Error('Queue cleared'));
         });
         ClaudeClient.requestQueue = [];
@@ -36589,7 +36592,13 @@ class ClaudeClient {
      */
     static setMaxConcurrency(limit) {
         if (limit > 0 && limit <= 20) {
-            ClaudeClient.MAX_CONCURRENT_REQUESTS = limit;
+            // Use object property assignment to modify readonly property
+            Object.defineProperty(ClaudeClient, 'MAX_CONCURRENT_REQUESTS', {
+                value: limit,
+                writable: false,
+                enumerable: true,
+                configurable: true,
+            });
             console.log(`[CLAUDE-QUEUE] Max concurrency set to ${limit}`);
         }
         else {
