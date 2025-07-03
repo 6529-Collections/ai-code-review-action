@@ -1197,6 +1197,12 @@ CRITICAL: Respond with ONLY valid JSON.
 
     // We already have the expansion decision from evaluateExpansionCandidate
     if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
+      // Debug: Log what AI provided
+      console.log(`[DEBUG-SUBTHEMES] AI suggested ${expansionCandidate.expansionDecision.suggestedSubThemes.length} sub-themes:`);
+      expansionCandidate.expansionDecision.suggestedSubThemes.forEach((st, i) => {
+        console.log(`  ${i+1}. "${st.name}" - files: ${st.files ? JSON.stringify(st.files) : 'UNDEFINED'}`);
+      });
+      
       // Convert suggested sub-themes to ConsolidatedThemes
       const subThemes = this.convertSuggestedToConsolidatedThemes(
         expansionCandidate.expansionDecision.suggestedSubThemes,
@@ -1350,6 +1356,13 @@ Return JSON with specific sub-themes:
       const validFiles = relevantFiles.filter((file) =>
         parentTheme.affectedFiles.includes(file)
       );
+      
+      console.log(`[DEBUG-FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
+      console.log(`  - AI suggested files: ${JSON.stringify(relevantFiles)}`);
+      console.log(`  - Parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+      console.log(`  - Valid files: ${JSON.stringify(validFiles)}`);
+      console.log(`  - Will use: ${validFiles.length > 0 ? JSON.stringify(validFiles) : JSON.stringify([parentTheme.affectedFiles[0]])}`);
+      
 
       return {
         id: SecureFileNamer.generateHierarchicalId(
