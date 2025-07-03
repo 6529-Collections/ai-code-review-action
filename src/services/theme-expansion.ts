@@ -392,37 +392,46 @@ export class ThemeExpansionService {
       }
     }
 
-    // Also expand existing child themes
-    const existingChildResults = await this.processConcurrentlyWithLimit(
-      result.expandedTheme!.childThemes,
-      (child: ConsolidatedTheme) =>
-        this.expandThemeRecursively(
-          child,
-          currentDepth + 1,
-          result.expandedTheme
-        ),
-      {
-        onProgress: (completed, total) => {
-          if (this.config.enableProgressLogging && total > 1) {
-            console.log(
-              `[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`
-            );
-          }
-        },
-      }
-    );
+    // Process existing children only if we didn't create new sub-themes
+    let expandedExistingChildren: ConsolidatedTheme[] = [];
+    
+    if (result.subThemes.length === 0) {
+      // Only process existing children if we didn't create new sub-themes
+      const existingChildResults = await this.processConcurrentlyWithLimit(
+        result.expandedTheme!.childThemes,
+        (child: ConsolidatedTheme) =>
+          this.expandThemeRecursively(
+            child,
+            currentDepth + 1,
+            result.expandedTheme
+          ),
+        {
+          onProgress: (completed, total) => {
+            if (this.config.enableProgressLogging && total > 1) {
+              console.log(
+                `[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`
+              );
+            }
+          },
+        }
+      );
 
-    // Extract successful existing children
-    const expandedExistingChildren: ConsolidatedTheme[] = [];
-    for (const childResult of existingChildResults) {
-      if ('error' in childResult) {
-        console.warn(
-          `[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`
-        );
-        expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
-      } else {
-        expandedExistingChildren.push(childResult);
+      // Extract successful existing children
+      for (const childResult of existingChildResults) {
+        if ('error' in childResult) {
+          console.warn(
+            `[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`
+          );
+          expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
+        } else {
+          expandedExistingChildren.push(childResult);
+        }
       }
+    } else {
+      // We created new sub-themes, so skip existing children to avoid duplicates
+      console.log(
+        `[EXPANSION-FLOW] Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`
+      );
     }
 
     // Combine all child themes
