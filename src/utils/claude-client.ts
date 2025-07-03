@@ -93,34 +93,40 @@ export class ClaudeClient {
       let output = '';
       let errorOutput = '';
       let exitCode = 0;
-      
+
       try {
-        exitCode = await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-          silent: true, // Suppress command logging
-          listeners: {
-            stdout: (data: Buffer) => {
-              output += data.toString();
+        exitCode = await exec.exec(
+          'bash',
+          ['-c', `cat "${tempFile}" | claude --print`],
+          {
+            silent: true, // Suppress command logging
+            listeners: {
+              stdout: (data: Buffer) => {
+                output += data.toString();
+              },
+              stderr: (data: Buffer) => {
+                errorOutput += data.toString();
+              },
             },
-            stderr: (data: Buffer) => {
-              errorOutput += data.toString();
-            },
-          },
-          ignoreReturnCode: true,
-        });
+            ignoreReturnCode: true,
+          }
+        );
 
         if (exitCode !== 0) {
           // Log prompt size and first few lines for debugging
           const promptLines = prompt.split('\n');
           const promptPreview = promptLines.slice(0, 5).join('\n');
           console.error(`[CLAUDE-ERROR] Exit code: ${exitCode}`);
-          console.error(`[CLAUDE-ERROR] Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
+          console.error(
+            `[CLAUDE-ERROR] Prompt size: ${prompt.length} chars, ${promptLines.length} lines`
+          );
           console.error(`[CLAUDE-ERROR] Prompt preview: ${promptPreview}...`);
           console.error(`[CLAUDE-ERROR] Error output: ${errorOutput}`);
-          
+
           throw new Error(
             `Claude CLI failed with exit code ${exitCode}. ` +
-            `Error: ${errorOutput || 'No error output'}. ` +
-            `Prompt was ${prompt.length} chars.`
+              `Error: ${errorOutput || 'No error output'}. ` +
+              `Prompt was ${prompt.length} chars.`
           );
         }
 

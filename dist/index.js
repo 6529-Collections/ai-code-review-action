@@ -31852,10 +31852,16 @@ ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 CRITICAL FILE ASSIGNMENT RULES:
 1. Each sub-theme MUST have "files" array populated
-2. Files MUST be selected from the parent theme's files listed above
-3. Each file should typically belong to only ONE sub-theme (no duplication unless truly needed)
-4. If a sub-theme doesn't modify any specific files, it shouldn't exist
-5. The "files" field is REQUIRED - omitting it will cause an error`;
+2. Files MUST be selected ONLY from the parent theme's files listed above
+3. You CANNOT suggest files that are not in the parent theme's file list
+4. If parent has only 1 file, ALL sub-themes must use that SAME file
+5. Each file should typically belong to only ONE sub-theme (unless parent has only 1 file)
+6. If a sub-theme doesn't modify any specific files, it shouldn't exist
+7. The "files" field is REQUIRED - omitting it will cause an error
+
+EXAMPLE: If parent theme affects ["src/services/theme-expansion.ts"], then ALL sub-themes 
+must have "files": ["src/services/theme-expansion.ts"]. You CANNOT suggest files like 
+"src/utils/concurrency-manager.ts" that are not in the parent's file list.`;
         section += `
 
 RESPOND WITH PRD-COMPLIANT JSON:
@@ -33355,6 +33361,13 @@ class ThemeExpansionService {
         // Process expansion
         const result = await this.processExpansionRequest(expansionRequest);
         if (!result.success || !result.expandedTheme) {
+            // Log expansion request context on failure
+            console.error(`[EXPANSION-REQUEST-FAILED] Theme: "${theme.name}" (ID: ${theme.id})`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Request ID: ${expansionRequest.id}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Depth: ${currentDepth}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Parent: ${parentTheme?.name || 'none'}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Error: ${result.error}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Processing time: ${result.processingTime}ms`);
             logger_1.logger.info('EXPANSION', `Expansion failed for theme ${theme.name}: ${result.error}`);
             return theme;
         }
@@ -34097,6 +34110,17 @@ Return JSON with specific sub-themes:
             };
         }
         catch (error) {
+            // Log detailed context on error
+            console.error(`[EXPANSION-ERROR] AI analysis failed for theme "${theme.name}"`);
+            console.error(`[EXPANSION-ERROR] Theme ID: ${theme.id}`);
+            console.error(`[EXPANSION-ERROR] Parent theme: ${parentTheme?.name || 'none'} (ID: ${parentTheme?.id || 'N/A'})`);
+            console.error(`[EXPANSION-ERROR] Current depth: ${depth}`);
+            console.error(`[EXPANSION-ERROR] Theme level: ${theme.level}`);
+            console.error(`[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`);
+            console.error(`[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`);
+            console.error(`[EXPANSION-ERROR] Total code lines: ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)}`);
+            console.error(`[EXPANSION-ERROR] Error: ${error}`);
+            console.error(`[EXPANSION-ERROR] Stack trace:`, error instanceof Error ? error.stack : 'No stack trace available');
             logger_1.logger.info('EXPANSION', `AI analysis failed for theme ${theme.name}: ${error}`);
             return {
                 subThemes: [],
@@ -36320,15 +36344,36 @@ class ClaudeClient {
             tempFile = filePath;
             performance_tracker_1.performanceTracker.trackTempFile(true);
             let output = '';
+            let errorOutput = '';
+            let exitCode = 0;
             try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                exitCode = await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                     silent: true, // Suppress command logging
                     listeners: {
                         stdout: (data) => {
                             output += data.toString();
                         },
+                        stderr: (data) => {
+                            errorOutput += data.toString();
+                        },
                     },
+                    ignoreReturnCode: true,
                 });
+                if (exitCode !== 0) {
+                    // Log prompt size and first few lines for debugging
+                    const promptLines = prompt.split('\n');
+                    const promptPreview = promptLines.slice(0, 5).join('\n');
+                    console.error(`[CLAUDE-ERROR] Exit code: ${exitCode}`);
+                    console.error(`[CLAUDE-ERROR] Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
+                    console.error(`[CLAUDE-ERROR] Prompt preview: ${promptPreview}...`);
+                    console.error(`[CLAUDE-ERROR] Error output: ${errorOutput}`);
+                    throw new Error(`Claude CLI failed with exit code ${exitCode}. ` +
+                        `Error: ${errorOutput || 'No error output'}. ` +
+                        `Prompt was ${prompt.length} chars.`);
+                }
+                if (!output || output.trim().length === 0) {
+                    throw new Error('Claude returned empty response');
+                }
                 return output.trim();
             }
             finally {
