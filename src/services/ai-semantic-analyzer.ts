@@ -189,7 +189,7 @@ RESPOND WITH ONLY VALID JSON:
         data.technicalNature || 'Code modifications',
         15
       ),
-      affectedCapabilities: (data.affectedCapabilities || []).slice(0, 5),
+      affectedCapabilities: data.affectedCapabilities || [],
       confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
       reasoning: this.trimToWordLimit(
         data.reasoning || 'Standard code modification',
@@ -199,7 +199,7 @@ RESPOND WITH ONLY VALID JSON:
         data.filePurpose || 'System component',
         10
       ),
-      relatedChanges: (data.relatedChanges || []).slice(0, 3),
+      relatedChanges: data.relatedChanges || [],
     };
   }
 
@@ -326,10 +326,7 @@ RESPOND WITH ONLY VALID JSON:
     content: string,
     context?: string
   ): string {
-    const truncatedContent =
-      content.length > 2000
-        ? content.substring(0, 2000) + '\n... (truncated)'
-        : content;
+    const truncatedContent = content; // Use full content - modern AI can handle it
 
     return `You are analyzing a file to understand its actual purpose and role in the system.
 
@@ -501,7 +498,7 @@ RESPOND WITH ONLY VALID JSON:
         (ctx, i) => `
 CHANGE ${i}:
 File: ${ctx.filePath}
-Diff: ${ctx.completeDiff.substring(0, 300)}...
+Diff: ${ctx.completeDiff}
 ${ctx.commitMessage ? `Commit: ${ctx.commitMessage}` : ''}
 `
       )
