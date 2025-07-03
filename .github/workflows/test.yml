@@ -29,8 +29,9 @@ jobs:
       id: review
       with:
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-        # Balanced: Preserve expansion but catch clear duplicates
-        skip-second-pass-dedup: 'false'
+        # Use defaults from action.yml which skip child deduplication
+        # skip-batch-dedup: 'true' (default)
+        # skip-second-pass-dedup: 'true' (default)
         cross-level-dedup-threshold: '0.95'
         allow-overlap-merging: 'false'
         min-themes-for-cross-level-dedup: '5'
