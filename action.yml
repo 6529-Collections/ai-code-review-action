@@ -58,7 +58,7 @@ inputs:
   re-evaluate-after-merge:
     description: 'Re-evaluate merged themes for expansion'
     required: false
-    default: 'true'
+    default: 'false'
     
   strict-atomic-limits:
     description: 'Enforce PRD atomic size limits strictly'

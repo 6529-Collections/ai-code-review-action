@@ -39,7 +39,7 @@ jobs:
         verbose-dedup-logging: 'true'
         # PRD Compliance
         max-atomic-size: '15'
-        re-evaluate-after-merge: 'true'
+        # re-evaluate-after-merge: 'false' (default)
         strict-atomic-limits: 'true'
       env:
         LOG_LEVEL: INFO
