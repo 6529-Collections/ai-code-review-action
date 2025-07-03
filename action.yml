@@ -10,6 +10,66 @@ inputs:
   anthropic-api-key:
     description: 'Anthropic API key for Claude access'
     required: true
+  
+  # Deduplication Controls
+  skip-batch-dedup:
+    description: 'Skip batch deduplication during theme expansion'
+    required: false
+    default: 'false'
+  skip-second-pass-dedup:
+    description: 'Skip second-pass deduplication across batches'
+    required: false
+    default: 'false'
+  skip-cross-level-dedup:
+    description: 'Skip cross-level hierarchical deduplication'
+    required: false
+    default: 'false'
+  
+  # Threshold Controls
+  cross-level-dedup-threshold:
+    description: 'Similarity threshold for cross-level deduplication (0.0-1.0)'
+    required: false
+    default: '0.95'
+  allow-overlap-merging:
+    description: 'Allow merging themes with overlap relationship (not just duplicates)'
+    required: false
+    default: 'true'
+  
+  # Minimum Theme Count Controls
+  min-themes-for-batch-dedup:
+    description: 'Minimum theme count to trigger batch deduplication'
+    required: false
+    default: '5'
+  min-themes-for-second-pass-dedup:
+    description: 'Minimum theme count to trigger second-pass deduplication'
+    required: false
+    default: '10'
+  min-themes-for-cross-level-dedup:
+    description: 'Minimum theme count to trigger cross-level deduplication'
+    required: false
+    default: '20'
+  
+  # PRD Compliance Controls
+  max-atomic-size:
+    description: 'Maximum lines for atomic theme (from PRD)'
+    required: false
+    default: '15'
+  
+  re-evaluate-after-merge:
+    description: 'Re-evaluate merged themes for expansion'
+    required: false
+    default: 'true'
+    
+  strict-atomic-limits:
+    description: 'Enforce PRD atomic size limits strictly'
+    required: false
+    default: 'true'
+  
+  # Logging Controls
+  verbose-dedup-logging:
+    description: 'Enable detailed logging of deduplication decisions'
+    required: false
+    default: 'false'
 
 outputs:
   themes:

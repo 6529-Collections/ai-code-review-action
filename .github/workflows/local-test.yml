@@ -35,8 +35,12 @@ jobs:
       with:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+        # Conservative settings for local testing
+        cross-level-dedup-threshold: '0.95'
+        min-themes-for-batch-dedup: '10'
+        min-themes-for-second-pass-dedup: '20'
+        verbose-dedup-logging: 'true'
       env:
-        SKIP_CROSS_LEVEL_DEDUP: true
         LOG_LEVEL: INFO
         LOG_TIMESTAMPS: true
     

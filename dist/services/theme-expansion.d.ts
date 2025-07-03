@@ -51,12 +51,22 @@ export interface ExpansionEffectiveness {
     maxDepthReached: number;
     atomicThemesIdentified: number;
 }
+export interface ExpansionStopReason {
+    themeId: string;
+    themeName: string;
+    depth: number;
+    reason: 'atomic' | 'ai-decision' | 'max-depth' | 'error';
+    details: string;
+    fileCount: number;
+    lineCount: number;
+}
 export declare class ThemeExpansionService {
     private claudeClient;
     private cache;
     private config;
     private aiDecisionService;
     private effectiveness;
+    private expansionStopReasons;
     constructor(anthropicApiKey: string, config?: Partial<ExpansionConfig>);
     /**
      * Process items concurrently with limit and retry logic
@@ -74,6 +84,11 @@ export declare class ThemeExpansionService {
      * Evaluate if a theme is a candidate for expansion using AI-driven decisions
      */
     private evaluateExpansionCandidate;
+    /**
+     * Re-evaluate merged themes for potential expansion after deduplication
+     * PRD: Ensure merged themes still follow atomic guidelines
+     */
+    private reEvaluateMergedThemes;
     /**
      * Deduplicate sub-themes using AI to identify duplicates
      */

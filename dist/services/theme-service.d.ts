@@ -125,13 +125,13 @@ export declare class ThemeService {
     /**
      * Get effectiveness metrics from similarity service
      */
-    getSimilarityEffectiveness(): import("./theme-similarity").SimilarityEffectiveness;
+    getSimilarityEffectiveness(): unknown;
     /**
      * Get effectiveness metrics from expansion service
      */
-    getExpansionEffectiveness(): import("./theme-expansion").ExpansionEffectiveness;
+    getExpansionEffectiveness(): unknown;
     /**
      * Get effectiveness metrics from hierarchical similarity service
      */
-    getHierarchicalEffectiveness(): import("./hierarchical-similarity").HierarchicalEffectiveness;
+    getHierarchicalEffectiveness(): unknown;
 }
