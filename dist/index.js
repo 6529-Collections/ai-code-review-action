@@ -33260,6 +33260,11 @@ class ThemeExpansionService {
         const initialAICalls = this.claudeClient.getMetrics().totalCalls;
         logger_1.logger.info('EXPANSION', `Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
         logger_1.logger.debug('EXPANSION', `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
+        // DEBUG: Log all input themes with IDs
+        console.log(`[INPUT-THEMES] Starting with ${consolidatedThemes.length} root themes:`);
+        consolidatedThemes.forEach((theme, i) => {
+            console.log(`  [INPUT-THEME-${i}] "${theme.name}" (ID: ${theme.id})`);
+        });
         // Reset effectiveness tracking
         this.resetEffectiveness();
         // Process themes with concurrency limit and retry logic
@@ -33394,31 +33399,49 @@ class ThemeExpansionService {
                 expandedSubThemes.push(subResult);
             }
         }
-        // Also expand existing child themes
-        const existingChildResults = await this.processConcurrentlyWithLimit(result.expandedTheme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme), {
-            onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging && total > 1) {
-                    console.log(`[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`);
+        // Process existing children only if we didn't create new sub-themes
+        let expandedExistingChildren = [];
+        if (result.subThemes.length === 0) {
+            // Only process existing children if we didn't create new sub-themes
+            const existingChildResults = await this.processConcurrentlyWithLimit(result.expandedTheme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme), {
+                onProgress: (completed, total) => {
+                    if (this.config.enableProgressLogging && total > 1) {
+                        console.log(`[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`);
+                    }
+                },
+            });
+            // Extract successful existing children
+            for (const childResult of existingChildResults) {
+                if ('error' in childResult) {
+                    console.warn(`[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`);
+                    expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
                 }
-            },
-        });
-        // Extract successful existing children
-        const expandedExistingChildren = [];
-        for (const childResult of existingChildResults) {
-            if ('error' in childResult) {
-                console.warn(`[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`);
-                expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
+                else {
+                    expandedExistingChildren.push(childResult);
+                }
             }
-            else {
-                expandedExistingChildren.push(childResult);
-            }
+        }
+        else {
+            // We created new sub-themes, so skip existing children to avoid duplicates
+            console.log(`[EXPANSION-FLOW] Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`);
         }
         // Combine all child themes
         const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
+        // DEBUG: Log theme combination details
+        console.log(`[COMBINE] Parent: "${result.expandedTheme.name}" (ID: ${result.expandedTheme.id})`);
+        console.log(`[COMBINE] Existing children: ${expandedExistingChildren.length}`);
+        expandedExistingChildren.forEach((child, i) => console.log(`  [EXISTING-${i}] "${child.name}" (ID: ${child.id})`));
+        console.log(`[COMBINE] New sub-themes: ${expandedSubThemes.length}`);
+        expandedSubThemes.forEach((child, i) => console.log(`  [NEW-${i}] "${child.name}" (ID: ${child.id})`));
+        console.log(`[COMBINE] Total after combination: ${allChildThemes.length}`);
+        allChildThemes.forEach((child, i) => console.log(`  [TOTAL-${i}] "${child.name}" (ID: ${child.id})`));
         // Deduplicate child themes using AI
         const deduplicatedChildren = await this.deduplicateSubThemes(allChildThemes);
         // NEW: Re-evaluate merged themes for potential expansion (PRD compliance)
         const finalChildren = await this.reEvaluateMergedThemes(deduplicatedChildren, currentDepth + 1, result.expandedTheme);
+        // DEBUG: Log final theme assembly
+        console.log(`[FINAL-ASSEMBLY] Theme "${result.expandedTheme.name}" (ID: ${result.expandedTheme.id}) final children: ${finalChildren.length}`);
+        finalChildren.forEach((child, i) => console.log(`  [FINAL-CHILD-${i}] "${child.name}" (ID: ${child.id})`));
         return {
             ...result.expandedTheme,
             childThemes: finalChildren,
@@ -33547,7 +33570,11 @@ class ThemeExpansionService {
      * Deduplicate sub-themes using AI to identify duplicates
      */
     async deduplicateSubThemes(subThemes) {
+        // DEBUG: Log deduplication input
+        console.log(`[DEDUP-IN] Processing ${subThemes.length} sub-themes:`);
+        subThemes.forEach((theme, i) => console.log(`  [DEDUP-IN-${i}] "${theme.name}" (ID: ${theme.id})`));
         if (subThemes.length <= 1) {
+            console.log(`[DEDUP-OUT] Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
             return subThemes;
         }
         // Check if batch deduplication is disabled
@@ -33663,6 +33690,9 @@ class ThemeExpansionService {
                 console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${lines} lines)`);
             }
         });
+        // DEBUG: Log deduplication output
+        console.log(`[DEDUP-OUT] Returning ${finalThemes.length} sub-themes:`);
+        finalThemes.forEach((theme, i) => console.log(`  [DEDUP-OUT-${i}] "${theme.name}" (ID: ${theme.id})`));
         return finalThemes;
     }
     /**
@@ -33978,7 +34008,18 @@ CRITICAL: Respond with ONLY valid JSON.
         // We already have the expansion decision from evaluateExpansionCandidate
         if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
             // Convert suggested sub-themes to ConsolidatedThemes
-            const subThemes = this.convertSuggestedToConsolidatedThemes(expansionCandidate.expansionDecision.suggestedSubThemes, theme);
+            const suggestedSubThemes = expansionCandidate.expansionDecision.suggestedSubThemes;
+            // DEBUG: Log AI-generated sub-themes before conversion
+            console.log(`[AI-SUBTHEMES] Parent: "${theme.name}" (ID: ${theme.id}) AI generated ${suggestedSubThemes.length} sub-themes:`);
+            suggestedSubThemes.forEach((suggested, i) => {
+                console.log(`  [AI-SUBTHEME-${i}] "${suggested.name}"`);
+            });
+            const subThemes = this.convertSuggestedToConsolidatedThemes(suggestedSubThemes, theme);
+            // DEBUG: Log converted sub-themes
+            console.log(`[AI-CONVERTED] Converted to ${subThemes.length} ConsolidatedThemes:`);
+            subThemes.forEach((converted, i) => {
+                console.log(`  [AI-CONVERTED-${i}] "${converted.name}" (ID: ${converted.id})`);
+            });
             return {
                 subThemes,
                 shouldExpand: true,
