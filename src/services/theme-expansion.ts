@@ -524,9 +524,21 @@ export class ThemeExpansionService {
       console.log(
         `[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`
       );
+      const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
       console.log(
-        `[EXPANSION-DECISION] Code lines: ${theme.codeSnippets.join('\n').split('\n').length}`
+        `[EXPANSION-DECISION] Code lines: ${totalLines}`
       );
+      // Debug: Log first few lines of each snippet
+      if (totalLines <= 10 && theme.codeSnippets.length > 0) {
+        console.log(`[EXPANSION-DECISION] DEBUG - snippets count: ${theme.codeSnippets.length}`);
+        theme.codeSnippets.forEach((snippet, idx) => {
+          const lines = snippet.split('\n');
+          console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx}: ${lines.length} lines`);
+          if (lines.length <= 3) {
+            console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx} content: ${JSON.stringify(snippet)}`);
+          }
+        });
+      }
       console.log(
         `[EXPANSION-DECISION] AI Decision: shouldExpand=${expansionDecision.shouldExpand}, isAtomic=${expansionDecision.isAtomic}`
       );
@@ -563,7 +575,7 @@ export class ThemeExpansionService {
         reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
         details: expansionDecision.reasoning,
         fileCount: theme.affectedFiles.length,
-        lineCount: theme.codeSnippets.join('\n').split('\n').length
+        lineCount: theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)
       });
 
       logger.info(
@@ -613,7 +625,7 @@ export class ThemeExpansionService {
     for (const theme of themes) {
       // Check if this was a merged theme (has multiple source themes)
       if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-        const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+        const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
         console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${totalLines} lines, ${theme.affectedFiles.length} files)`);
         
         // PRD: If merged theme exceeds atomic size, it should be re-evaluated
