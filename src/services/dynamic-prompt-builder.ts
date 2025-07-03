@@ -186,7 +186,7 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.join('\n').split('\n').length} lines
+Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
 
 EXPANSION DECISION FRAMEWORK (from PRD):
 
