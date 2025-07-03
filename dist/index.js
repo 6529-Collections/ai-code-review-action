@@ -31820,6 +31820,7 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
 Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
+Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
 
@@ -31849,7 +31850,12 @@ Multi-file themes should expand unless they are:
 CONSIDER THESE QUESTIONS:
 ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
-IMPORTANT: When suggesting sub-themes, assign specific files from the parent theme's file list to each sub-theme based on what that sub-theme actually modifies.`;
+CRITICAL FILE ASSIGNMENT RULES:
+1. Each sub-theme MUST have "files" array populated
+2. Files MUST be selected from the parent theme's files listed above
+3. Each file should typically belong to only ONE sub-theme (no duplication unless truly needed)
+4. If a sub-theme doesn't modify any specific files, it shouldn't exist
+5. The "files" field is REQUIRED - omitting it will cause an error`;
         section += `
 
 RESPOND WITH PRD-COMPLIANT JSON:
@@ -31865,7 +31871,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
       "description": "1-3 sentences",
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
-      "files": ["list of specific files this sub-theme affects"],
+      "files": ["REQUIRED: list files from parent theme that this sub-theme modifies"],
       "estimatedLines": number,
       "rationale": "Why separate concern"
     }
@@ -31983,8 +31989,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
      * Select relevant examples based on code patterns
      */
     selectRelevantExamples(codeAnalysis) {
-        return this.expansionExamples
-            .filter((example) => this.isExampleRelevant(example, codeAnalysis)); // Include all relevant examples
+        return this.expansionExamples.filter((example) => this.isExampleRelevant(example, codeAnalysis)); // Include all relevant examples
     }
     /**
      * Check if an example is relevant to current analysis
@@ -33294,10 +33299,10 @@ class ThemeExpansionService {
             console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
         });
         // Log themes that exceeded PRD limits but were marked atomic
-        const oversizedAtomic = this.expansionStopReasons.filter(r => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
+        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
         if (oversizedAtomic.length > 0) {
             console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
-            oversizedAtomic.forEach(r => {
+            oversizedAtomic.forEach((r) => {
                 console.log(`  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`);
             });
         }
@@ -33375,7 +33380,7 @@ class ThemeExpansionService {
             }
         }
         // Process existing children only if we didn't create new sub-themes
-        let expandedExistingChildren = [];
+        const expandedExistingChildren = [];
         if (result.subThemes.length === 0) {
             // Only process existing children if we didn't create new sub-themes
             const existingChildResults = await this.processConcurrentlyWithLimit(result.expandedTheme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme), {
@@ -33488,7 +33493,7 @@ class ThemeExpansionService {
                 reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
                 details: expansionDecision.reasoning,
                 fileCount: theme.affectedFiles.length,
-                lineCount: theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)
+                lineCount: theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0),
             });
             logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
             // Log PRD metrics
@@ -33577,7 +33582,7 @@ class ThemeExpansionService {
         }
         // Pre-deduplication state logging
         console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
-        subThemes.forEach(t => {
+        subThemes.forEach((t) => {
             const lines = t.codeSnippets.join('\n').split('\n').length;
             console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${lines} lines)`);
         });
@@ -33649,7 +33654,7 @@ class ThemeExpansionService {
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
             // Post-deduplication state logging (after second pass)
             console.log(`[DEDUP-AFTER] Final themes after second pass deduplication:`);
-            secondPassResult.forEach(t => {
+            secondPassResult.forEach((t) => {
                 const lines = t.codeSnippets.join('\n').split('\n').length;
                 if (t.sourceThemes && t.sourceThemes.length > 1) {
                     console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
@@ -33668,7 +33673,7 @@ class ThemeExpansionService {
         }
         // Post-deduplication state logging (no second pass)
         console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
-        finalThemes.forEach(t => {
+        finalThemes.forEach((t) => {
             const lines = t.codeSnippets.join('\n').split('\n').length;
             if (t.sourceThemes && t.sourceThemes.length > 1) {
                 console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
@@ -34109,12 +34114,26 @@ Return JSON with specific sub-themes:
     convertSuggestedToConsolidatedThemes(suggestedThemes, parentTheme) {
         return suggestedThemes.map((suggested, index) => {
             const relevantFiles = suggested.files || suggested.relevantFiles || [];
+            // Validate that AI provided files
+            if (relevantFiles.length === 0) {
+                console.error(`[ERROR] AI did not provide files for sub-theme "${suggested.name}"`);
+                console.error(`[ERROR] Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                throw new Error(`AI failed to provide files for sub-theme "${suggested.name}". ` +
+                    `Parent theme has ${parentTheme.affectedFiles.length} files. ` +
+                    `AI must specify which files each sub-theme affects.`);
+            }
             const validFiles = relevantFiles.filter((file) => parentTheme.affectedFiles.includes(file));
-            console.log(`[DEBUG-FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
+            // Validate that provided files are valid
+            if (validFiles.length === 0) {
+                console.error(`[ERROR] AI provided invalid files for sub-theme "${suggested.name}"`);
+                console.error(`[ERROR] AI suggested: ${JSON.stringify(relevantFiles)}`);
+                console.error(`[ERROR] Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                throw new Error(`AI provided invalid files for sub-theme "${suggested.name}". ` +
+                    `Suggested files ${JSON.stringify(relevantFiles)} are not in parent's files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+            }
+            console.log(`[FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
             console.log(`  - AI suggested files: ${JSON.stringify(relevantFiles)}`);
-            console.log(`  - Parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
-            console.log(`  - Valid files: ${JSON.stringify(validFiles)}`);
-            console.log(`  - Will use: ${validFiles.length > 0 ? JSON.stringify(validFiles) : JSON.stringify([parentTheme.affectedFiles[0]])}`);
+            console.log(`  - Valid files assigned: ${JSON.stringify(validFiles)}`);
             return {
                 id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', parentTheme.id, index),
                 name: suggested.name,
@@ -34122,7 +34141,7 @@ Return JSON with specific sub-themes:
                 level: parentTheme.level + 1,
                 parentId: parentTheme.id,
                 childThemes: [],
-                affectedFiles: validFiles.length > 0 ? validFiles : [parentTheme.affectedFiles[0]], // Fallback to first parent file
+                affectedFiles: validFiles,
                 confidence: 0.8,
                 businessImpact: suggested.businessImpact ||
                     suggested.rationale ||

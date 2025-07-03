@@ -187,7 +187,7 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
 Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
-Files affected by this theme: ${theme.affectedFiles.map(f => `"${f}"`).join(', ')}
+Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
 
@@ -415,9 +415,9 @@ RESPOND WITH PRD-COMPLIANT JSON:
   private selectRelevantExamples(
     codeAnalysis: CodeStructureAnalysis
   ): ExpansionExample[] {
-    return this.expansionExamples
-      .filter((example) => this.isExampleRelevant(example, codeAnalysis))
-      ; // Include all relevant examples
+    return this.expansionExamples.filter((example) =>
+      this.isExampleRelevant(example, codeAnalysis)
+    ); // Include all relevant examples
   }
 
   /**
