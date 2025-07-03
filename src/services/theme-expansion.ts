@@ -1199,7 +1199,7 @@ CRITICAL: Respond with ONLY valid JSON.
         // Create expanded theme with new sub-themes
         const expandedTheme: ConsolidatedTheme = {
           ...request.theme,
-          childThemes: [...request.theme.childThemes, ...analysis.subThemes],
+          childThemes: analysis.subThemes,
         };
 
         return {
