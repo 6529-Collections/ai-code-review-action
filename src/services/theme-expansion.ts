@@ -361,21 +361,13 @@ export class ThemeExpansionService {
 
     if (!result.success || !result.expandedTheme) {
       // Log expansion request context on failure
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Theme: "${theme.name}" (ID: ${theme.id})`
-      );
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Request ID: ${expansionRequest.id}`
-      );
+      console.error(`[EXPANSION-REQUEST-FAILED] Theme: "${theme.name}" (ID: ${theme.id})`);
+      console.error(`[EXPANSION-REQUEST-FAILED] Request ID: ${expansionRequest.id}`);
       console.error(`[EXPANSION-REQUEST-FAILED] Depth: ${currentDepth}`);
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Parent: ${parentTheme?.name || 'none'}`
-      );
+      console.error(`[EXPANSION-REQUEST-FAILED] Parent: ${parentTheme?.name || 'none'}`);
       console.error(`[EXPANSION-REQUEST-FAILED] Error: ${result.error}`);
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Processing time: ${result.processingTime}ms`
-      );
-
+      console.error(`[EXPANSION-REQUEST-FAILED] Processing time: ${result.processingTime}ms`);
+      
       logger.info(
         'EXPANSION',
         `Expansion failed for theme ${theme.name}: ${result.error}`
@@ -1486,29 +1478,16 @@ Return JSON with specific sub-themes:
       };
     } catch (error) {
       // Log detailed context on error
-      console.error(
-        `[EXPANSION-ERROR] AI analysis failed for theme "${theme.name}"`
-      );
+      console.error(`[EXPANSION-ERROR] AI analysis failed for theme "${theme.name}"`);
       console.error(`[EXPANSION-ERROR] Theme ID: ${theme.id}`);
-      console.error(
-        `[EXPANSION-ERROR] Parent theme: ${parentTheme?.name || 'none'} (ID: ${parentTheme?.id || 'N/A'})`
-      );
+      console.error(`[EXPANSION-ERROR] Parent theme: ${parentTheme?.name || 'none'} (ID: ${parentTheme?.id || 'N/A'})`);
       console.error(`[EXPANSION-ERROR] Current depth: ${depth}`);
       console.error(`[EXPANSION-ERROR] Theme level: ${theme.level}`);
-      console.error(
-        `[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`
-      );
-      console.error(
-        `[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`
-      );
-      console.error(
-        `[EXPANSION-ERROR] Total code lines: ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)}`
-      );
+      console.error(`[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`);
+      console.error(`[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`);
+      console.error(`[EXPANSION-ERROR] Total code lines: ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)}`);
       console.error(`[EXPANSION-ERROR] Error: ${error}`);
-      console.error(
-        `[EXPANSION-ERROR] Stack trace:`,
-        error instanceof Error ? error.stack : 'No stack trace available'
-      );
+      console.error(`[EXPANSION-ERROR] Stack trace:`, error instanceof Error ? error.stack : 'No stack trace available');
 
       logger.info(
         'EXPANSION',
