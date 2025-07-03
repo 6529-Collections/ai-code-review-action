@@ -30214,8 +30214,8 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
             businessCapability: this.trimToWordLimit(data.businessCapability || 'Enable users to accomplish tasks', 15),
             confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
             reasoning: this.trimToWordLimit(data.reasoning || 'Standard code modification', 20),
-            subDomains: data.subDomains?.slice(0, 3) || [], // Limit to 3 sub-domains
-            crossCuttingConcerns: data.crossCuttingConcerns?.slice(0, 2) || [], // Limit to 2 concerns
+            subDomains: data.subDomains || [], // Include all sub-domains
+            crossCuttingConcerns: data.crossCuttingConcerns || [], // Include all concerns
         };
     }
     /**
@@ -32005,8 +32005,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
      */
     selectRelevantExamples(codeAnalysis) {
         return this.expansionExamples
-            .filter((example) => this.isExampleRelevant(example, codeAnalysis))
-            .slice(0, 2); // Limit to 2 most relevant examples
+            .filter((example) => this.isExampleRelevant(example, codeAnalysis)); // Include all relevant examples
     }
     /**
      * Check if an example is relevant to current analysis
@@ -34009,7 +34008,7 @@ ${siblingThemes.map((s) => `- ${s.name}`).join('\n')}
             : ''}
 
 CODE TO ANALYZE:
-${theme.codeSnippets.slice(0, 5).join('\n---\n')}
+${theme.codeSnippets.join('\n---\n')}
 
 CREATE SUB-THEMES:
 ${depth < 3
@@ -34228,7 +34227,7 @@ class ThemeNamingService {
             affectedFiles: Array.from(allFiles),
             confidence: totalConfidence / children.length,
             businessImpact: `Umbrella theme covering ${children.length} related changes in ${domain.toLowerCase()}`,
-            codeSnippets: allSnippets.slice(0, 10), // Limit snippets
+            codeSnippets: allSnippets, // Include all snippets
             context: children.map((c) => c.context).join('\n'),
             lastAnalysis: new Date(),
             sourceThemes,
@@ -35519,7 +35518,7 @@ class ThemeSimilarityService {
                     filesChanged: allFiles.size,
                 }
                 : undefined,
-            codeExamples: allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
+            codeExamples: allCodeExamples.length > 0 ? allCodeExamples : undefined, // Include all examples
         };
     }
     /**

@@ -66,7 +66,8 @@ CURRENT THEME:
 Name: "${theme.name}"
 Description: ${theme.description}
 Current depth: ${currentDepth}
-Files involved: ${theme.affectedFiles.length} files`;
+Files involved: ${theme.affectedFiles.length} files
+File list: ${theme.affectedFiles.join(', ')}`;
 
     if (parentTheme) {
       context += `
@@ -213,7 +214,9 @@ Multi-file themes should expand unless they are:
 3. Pure refactoring with identical logic changes
 
 CONSIDER THESE QUESTIONS:
-${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`;
+${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+
+IMPORTANT: When suggesting sub-themes, assign specific files from the parent theme's file list to each sub-theme based on what that sub-theme actually modifies.`;
 
     section += `
 
@@ -230,6 +233,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
       "description": "1-3 sentences",
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
+      "files": ["list of specific files this sub-theme affects"],
       "estimatedLines": number,
       "rationale": "Why separate concern"
     }
