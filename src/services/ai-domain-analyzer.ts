@@ -154,8 +154,8 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         data.reasoning || 'Standard code modification',
         20
       ),
-      subDomains: data.subDomains?.slice(0, 3) || [], // Limit to 3 sub-domains
-      crossCuttingConcerns: data.crossCuttingConcerns?.slice(0, 2) || [], // Limit to 2 concerns
+      subDomains: data.subDomains || [], // Include all sub-domains
+      crossCuttingConcerns: data.crossCuttingConcerns || [], // Include all concerns
     };
   }
 

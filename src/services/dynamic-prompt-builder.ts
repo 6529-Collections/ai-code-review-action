@@ -407,7 +407,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
   ): ExpansionExample[] {
     return this.expansionExamples
       .filter((example) => this.isExampleRelevant(example, codeAnalysis))
-      .slice(0, 2); // Limit to 2 most relevant examples
+      ; // Include all relevant examples
   }
 
   /**

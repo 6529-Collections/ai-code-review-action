@@ -1243,7 +1243,7 @@ ${siblingThemes.map((s) => `- ${s.name}`).join('\n')}
 }
 
 CODE TO ANALYZE:
-${theme.codeSnippets.slice(0, 5).join('\n---\n')}
+${theme.codeSnippets.join('\n---\n')}
 
 CREATE SUB-THEMES:
 ${

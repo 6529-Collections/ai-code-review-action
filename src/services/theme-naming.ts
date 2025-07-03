@@ -83,7 +83,7 @@ export class ThemeNamingService {
       affectedFiles: Array.from(allFiles),
       confidence: totalConfidence / children.length,
       businessImpact: `Umbrella theme covering ${children.length} related changes in ${domain.toLowerCase()}`,
-      codeSnippets: allSnippets.slice(0, 10), // Limit snippets
+      codeSnippets: allSnippets, // Include all snippets
       context: children.map((c) => c.context).join('\n'),
       lastAnalysis: new Date(),
       sourceThemes,
