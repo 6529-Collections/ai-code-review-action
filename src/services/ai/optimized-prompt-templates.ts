@@ -313,13 +313,8 @@ ${OptimizedPromptTemplates.SHARED_CONTEXT.JSON_INSTRUCTION}`;
       );
     }
 
-    // Trim file lists if too long
-    if (Array.isArray(optimizedVars.files) && optimizedVars.files.length > 5) {
-      optimizedVars.files = [
-        ...optimizedVars.files.slice(0, 5),
-        `...(+${optimizedVars.files.length - 5} more)`,
-      ];
-    }
+    // Include all files - AI needs complete context
+    // No trimming needed for modern AI models
 
     // Replace variables
     let prompt = template;

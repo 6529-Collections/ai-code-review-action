@@ -560,8 +560,7 @@ export class ThemeSimilarityService {
               filesChanged: allFiles.size,
             }
           : undefined,
-      codeExamples:
-        allCodeExamples.length > 0 ? allCodeExamples.slice(0, 5) : undefined, // Limit to 5 examples
+      codeExamples: allCodeExamples.length > 0 ? allCodeExamples : undefined, // Include all examples
     };
   }
 

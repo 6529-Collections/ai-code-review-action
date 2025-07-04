@@ -36,23 +36,13 @@ export class AIExpansionDecisionService {
     const analysisHash = await this.getAnalysisHash(theme);
     const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
     if (this.decisionCache.has(cacheKey)) {
-      return this.decisionCache.get(cacheKey)!;
+      const cachedDecision = this.decisionCache.get(cacheKey);
+      if (cachedDecision) {
+        return cachedDecision;
+      }
     }
 
-    // Very conservative atomic check - let AI decide most cases
-    if (this.isObviouslyAtomic(theme)) {
-      const decision: ExpansionDecision = {
-        shouldExpand: false,
-        isAtomic: true,
-        reasoning: 'Trivial change with minimal complexity',
-        businessContext: 'Minor update',
-        technicalContext: 'Small code change',
-        testabilityAssessment: 'Single assertion test',
-        suggestedSubThemes: null,
-      };
-      this.decisionCache.set(cacheKey, decision);
-      return decision;
-    }
+    // PRD: Let AI make ALL expansion decisions - no programmatic filtering
 
     // Analyze code structure for intelligent hints
     const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
@@ -86,33 +76,13 @@ export class AIExpansionDecisionService {
   }
 
   /**
-   * Simple check for obviously atomic changes - extremely conservative
+   * Calculate total lines from code snippets (which contain full file patches)
    */
-  private isObviouslyAtomic(theme: ConsolidatedTheme): boolean {
-    // PRD: "5-15 lines of focused change" for atomic themes
-    // Only mark as obviously atomic for truly trivial changes
-    const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-    const description = theme.description.toLowerCase();
-    
-    // Only mark as obviously atomic if truly trivial
-    if (theme.affectedFiles.length === 1 && totalLines <= 5) {
-      // Simple one-liners like typo fixes
-      return (
-        description.includes('typo') ||
-        description.includes('spelling') ||
-        description.includes('rename') ||
-        (totalLines <= 2 && !description.includes('multiple'))
-      );
-    }
-    
-    // PRD: Multi-file changes are RARELY atomic
-    // Any multi-file change should go through AI evaluation
-    if (theme.affectedFiles.length > 1) {
-      console.log(`[ATOMIC-CHECK] Multi-file theme "${theme.name}" (${theme.affectedFiles.length} files) -> AI evaluation required`);
-      return false;
-    }
-    
-    return false;
+  private calculateTotalLines(theme: ConsolidatedTheme): number {
+    // Each code snippet contains a full file patch/diff
+    return theme.codeSnippets.reduce((count, snippet) => {
+      return count + snippet.split('\n').length;
+    }, 0);
   }
 
   /**

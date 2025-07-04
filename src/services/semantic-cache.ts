@@ -284,7 +284,7 @@ export class SemanticCacheService {
    */
   private sanitizeInputForStorage(input: unknown): unknown {
     if (typeof input === 'string') {
-      return input.substring(0, 1000); // Limit string length
+      return input; // Keep full string for better semantic matching
     }
 
     if (typeof input === 'object' && input !== null) {
@@ -305,9 +305,9 @@ export class SemanticCacheService {
         const inputObj = input as Record<string, unknown>;
         if (inputObj[field] !== undefined) {
           if (typeof inputObj[field] === 'string') {
-            sanitized[field] = (inputObj[field] as string).substring(0, 500);
+            sanitized[field] = inputObj[field]; // Keep full string
           } else if (Array.isArray(inputObj[field])) {
-            sanitized[field] = (inputObj[field] as unknown[]).slice(0, 20); // Limit array size
+            sanitized[field] = inputObj[field]; // Keep full array
           } else {
             sanitized[field] = inputObj[field];
           }
