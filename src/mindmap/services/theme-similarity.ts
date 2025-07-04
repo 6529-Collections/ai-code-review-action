@@ -6,10 +6,10 @@ import {
   ThemePair,
   AISimilarityResult,
 } from '../types/similarity-types';
-import { SimilarityCache } from '@/shared/cache/similarity-cache';
+import { SimilarityCache } from './similarity-cache';
 import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
-import { AISimilarityService } from '@/shared/services/ai-similarity';
-import { BatchProcessor } from '@/shared/services/batch-processor';
+import { AISimilarityService } from './ai/ai-similarity';
+import { BatchProcessor } from './batch-processor';
 import { BusinessDomainService } from './business-domain';
 import { ThemeNamingService } from './theme-naming';
 import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';

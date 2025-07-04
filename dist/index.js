@@ -30085,7 +30085,7 @@ if (require.main === require.cache[eval('__filename')]) {
 
 /***/ }),
 
-/***/ 8589:
+/***/ 9918:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -30393,7 +30393,7 @@ exports.AIDomainAnalyzer = AIDomainAnalyzer;
 
 /***/ }),
 
-/***/ 3862:
+/***/ 7867:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -30513,6 +30513,403 @@ exports.AIExpansionDecisionService = AIExpansionDecisionService;
 
 /***/ }),
 
+/***/ 5776:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AISimilarityService = void 0;
+const similarity_calculator_1 = __nccwpck_require__(241);
+const json_extractor_1 = __nccwpck_require__(8168);
+const claude_client_1 = __nccwpck_require__(3861);
+const logger_1 = __nccwpck_require__(411);
+class AISimilarityService {
+    constructor(anthropicApiKey) {
+        this.anthropicApiKey = anthropicApiKey;
+        this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
+    }
+    async calculateAISimilarity(theme1, theme2) {
+        const prompt = this.buildSimilarityPrompt(theme1, theme2);
+        try {
+            const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
+            const result = this.parseAISimilarityResponse(output);
+            logger_1.logger.debug('AI-SIMILARITY', `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
+            logger_1.logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
+            return result;
+        }
+        catch (error) {
+            logger_1.logger.warn('AI-SIMILARITY', `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`);
+            // Fallback to basic string matching
+            return this.createFallbackSimilarity(theme1, theme2);
+        }
+    }
+    /**
+     * Get Claude client for external metrics access
+     */
+    getClaudeClient() {
+        return this.claudeClient;
+    }
+    buildSimilarityPrompt(theme1, theme2) {
+        // Include rich details if available
+        const theme1Details = this.buildThemeDetails(theme1);
+        const theme2Details = this.buildThemeDetails(theme2);
+        return `Analyze these code changes to determine if they should be grouped together.
+
+**Theme 1: "${theme1.name}"**
+${theme1Details}
+
+**Theme 2: "${theme2.name}"**
+${theme2Details}
+
+IMPORTANT CONTEXT:
+- Look at the actual code changes, not just descriptions
+- Consider if these are truly part of the same change or just happen to be similar
+- Think about how a developer would organize these changes in their mind
+- Consider file relationships and dependencies
+
+Questions to answer:
+1. Are these solving the same problem or different problems?
+2. Would combining them make the theme clearer or more confusing?
+3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
+4. Do they have logical dependencies on each other?
+
+Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
+It's better to have more specific themes than overly broad ones.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "shouldMerge": true,
+  "confidence": 0.85,
+  "reasoning": "Both themes implement the same email validation improvement for user data integrity"
+}`;
+    }
+    buildThemeDetails(theme) {
+        let details = `Description: ${theme.description}`;
+        // Add detailed description if available
+        if (theme.detailedDescription) {
+            details += `\nDetailed: ${theme.detailedDescription}`;
+        }
+        // Add technical summary if available
+        if (theme.technicalSummary) {
+            details += `\nTechnical: ${theme.technicalSummary}`;
+        }
+        // Add key changes if available
+        if (theme.keyChanges && theme.keyChanges.length > 0) {
+            details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
+        }
+        // Add files
+        details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
+        // Add code metrics if available
+        if (theme.codeMetrics) {
+            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+        }
+        // Add main functions/classes if available
+        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+            details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
+        }
+        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+            details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
+        }
+        // Add all code snippets - modern context windows can handle it
+        const snippets = theme.codeSnippets.join('\n\n');
+        if (snippets) {
+            details += `\n\nActual Code Changes:\n${snippets}`;
+        }
+        return details;
+    }
+    parseAISimilarityResponse(output) {
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['shouldMerge', 'confidence', 'reasoning']);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            // Map the simple response to the full AISimilarityResult interface
+            const shouldMerge = parsed.shouldMerge || false;
+            const confidence = parsed.confidence || 0;
+            return {
+                shouldMerge,
+                confidence,
+                reasoning: parsed.reasoning || 'No reasoning provided',
+                // Derive a semantic score from the decision and confidence
+                semanticScore: shouldMerge ? confidence : 1 - confidence,
+                // Legacy scores - set to 0 as they're not used anymore
+                nameScore: 0,
+                descriptionScore: 0,
+                patternScore: 0,
+                businessScore: 0,
+            };
+        }
+        // Log the extraction failure for debugging
+        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
+        }
+        return {
+            nameScore: 0,
+            descriptionScore: 0,
+            patternScore: 0,
+            businessScore: 0,
+            semanticScore: 0,
+            shouldMerge: false,
+            confidence: 0,
+            reasoning: `Failed to parse AI response: ${extractionResult.error}`,
+        };
+    }
+    createFallbackSimilarity(theme1, theme2) {
+        // Fallback when AI fails - conservative approach
+        const nameScore = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
+        // Only merge if names are extremely similar (fallback is conservative)
+        const shouldMerge = nameScore > 0.9;
+        return {
+            shouldMerge,
+            confidence: 0.3, // Low confidence for fallback
+            reasoning: 'AI analysis failed - conservative fallback based on name similarity only',
+            semanticScore: shouldMerge ? 0.6 : 0.2,
+            // Legacy scores - not used
+            nameScore: 0,
+            descriptionScore: 0,
+            patternScore: 0,
+            businessScore: 0,
+        };
+    }
+    /**
+     * Calculate similarity for multiple theme pairs in a single AI call
+     * This is the key performance optimization method
+     */
+    async calculateBatchSimilarity(batchPrompt, expectedResults) {
+        try {
+            const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
+            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
+            // Extract and validate JSON response
+            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
+            if (!jsonResult.success) {
+                throw new Error(`JSON extraction failed: ${jsonResult.error}`);
+            }
+            const batchData = jsonResult.data;
+            // Validate we got the expected number of results
+            if (!batchData.results || !Array.isArray(batchData.results)) {
+                throw new Error('Invalid batch response: missing results array');
+            }
+            if (batchData.results.length !== expectedResults) {
+                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
+            }
+            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
+            return batchData;
+        }
+        catch (error) {
+            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
+            throw error;
+        }
+    }
+}
+exports.AISimilarityService = AISimilarityService;
+
+
+/***/ }),
+
+/***/ 1174:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BatchProcessor = void 0;
+const json_extractor_1 = __nccwpck_require__(8168);
+const exec = __importStar(__nccwpck_require__(5236));
+const secure_file_namer_1 = __nccwpck_require__(5584);
+class BatchProcessor {
+    constructor() {
+        this.batchSize = 8; // Process 8 theme pairs per AI batch call
+        this.batchFailures = 0; // Track consecutive batch failures
+    }
+    async processBatchSimilarity(pairs) {
+        const prompt = this.buildBatchSimilarityPrompt(pairs);
+        try {
+            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
+            let output = '';
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    silent: true,
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
+                    },
+                });
+                const results = this.parseBatchSimilarityResponse(output, pairs);
+                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
+                return results;
+            }
+            finally {
+                cleanup(); // Ensure file is cleaned up even if execution fails
+            }
+        }
+        catch (error) {
+            console.error('Batch AI similarity failed:', error);
+            throw error;
+        }
+    }
+    getAdaptiveBatchSize() {
+        return Math.max(2, this.batchSize - Math.floor(this.batchFailures / 2));
+    }
+    incrementFailures() {
+        this.batchFailures++;
+    }
+    decrementFailures() {
+        this.batchFailures = Math.max(0, this.batchFailures - 1);
+    }
+    getFailureCount() {
+        return this.batchFailures;
+    }
+    chunkArray(array, chunkSize) {
+        const chunks = [];
+        for (let i = 0; i < array.length; i += chunkSize) {
+            chunks.push(array.slice(i, i + chunkSize));
+        }
+        return chunks;
+    }
+    buildBatchSimilarityPrompt(pairs) {
+        const pairDescriptions = pairs
+            .map((pair, index) => `Pair ${index + 1}: ID="${pair.id}"
+- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
+- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
+- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
+- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`)
+            .join('\n\n');
+        return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
+
+THEME PAIRS:
+${pairDescriptions}
+
+RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
+[
+${pairs
+            .map((pair, index) => `  {
+    "pairId": "${pair.id}",
+    "nameScore": 0.5,
+    "descriptionScore": 0.5,
+    "patternScore": 0.5,
+    "businessScore": 0.5,
+    "semanticScore": 0.5,
+    "shouldMerge": false,
+    "confidence": 0.5,
+    "reasoning": "analysis for pair ${index + 1}"
+  }${index < pairs.length - 1 ? ',' : ''}`)
+            .join('\n')}
+]
+
+Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
+    }
+    parseBatchSimilarityResponse(output, pairs) {
+        console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
+        console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
+            // Handle case where AI returns fewer results than expected
+            const results = [];
+            for (let i = 0; i < pairs.length; i++) {
+                const item = parsed[i];
+                const pair = pairs[i];
+                if (item && typeof item === 'object') {
+                    results.push({
+                        pairId: item.pairId || pair.id,
+                        similarity: {
+                            nameScore: this.clampScore(item.nameScore),
+                            descriptionScore: this.clampScore(item.descriptionScore),
+                            patternScore: this.clampScore(item.patternScore),
+                            businessScore: this.clampScore(item.businessScore),
+                            semanticScore: this.clampScore(item.semanticScore),
+                            shouldMerge: Boolean(item.shouldMerge),
+                            confidence: this.clampScore(item.confidence),
+                            reasoning: String(item.reasoning || 'No reasoning provided'),
+                        },
+                    });
+                }
+                else {
+                    // Missing or invalid item - create fallback
+                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
+                    results.push({
+                        pairId: pair.id,
+                        similarity: this.createFallbackSimilarity(),
+                        error: `Missing AI response for pair ${i + 1}`,
+                    });
+                }
+            }
+            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
+            return results;
+        }
+        // JSON extraction failed
+        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
+        }
+        console.warn('[BATCH-DEBUG] Using fallback for all pairs');
+        // Fallback: create error results for all pairs
+        return pairs.map((pair) => ({
+            pairId: pair.id,
+            similarity: this.createFallbackSimilarity(),
+            error: `Failed to parse batch AI response: ${extractionResult.error}`,
+        }));
+    }
+    clampScore(value) {
+        const num = Number(value);
+        return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
+    }
+    createFallbackSimilarity() {
+        return {
+            nameScore: 0.3,
+            descriptionScore: 0.3,
+            patternScore: 0.3,
+            businessScore: 0.3,
+            semanticScore: 0.3,
+            shouldMerge: false,
+            confidence: 0.2,
+            reasoning: 'Fallback similarity due to parsing error',
+        };
+    }
+}
+exports.BatchProcessor = BatchProcessor;
+
+
+/***/ }),
+
 /***/ 6:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -30556,7 +30953,7 @@ exports.BusinessDomainService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
 const concurrency_manager_1 = __nccwpck_require__(4482);
 const secure_file_namer_1 = __nccwpck_require__(5584);
-const ai_domain_analyzer_1 = __nccwpck_require__(8589);
+const ai_domain_analyzer_1 = __nccwpck_require__(9918);
 class BusinessDomainService {
     constructor(anthropicApiKey) {
         this.aiDomainAnalyzer = new ai_domain_analyzer_1.AIDomainAnalyzer(anthropicApiKey);
@@ -32295,6 +32692,62 @@ exports.HierarchicalSimilarityService = HierarchicalSimilarityService;
 
 /***/ }),
 
+/***/ 667:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SimilarityCache = void 0;
+const performance_tracker_1 = __nccwpck_require__(9600);
+class SimilarityCache {
+    constructor() {
+        this.cache = new Map();
+        this.cacheExpireMinutes = 60; // Cache expires after 1 hour
+    }
+    getCacheKey(theme1, theme2) {
+        // Create deterministic cache key regardless of theme order
+        const id1 = theme1.id;
+        const id2 = theme2.id;
+        return id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`;
+    }
+    getCachedSimilarity(cacheKey) {
+        const cached = this.cache.get(cacheKey);
+        if (!cached) {
+            performance_tracker_1.performanceTracker.trackCache(false); // cache miss
+            return null;
+        }
+        // Check if cache has expired
+        const ageMinutes = (Date.now() - cached.timestamp.getTime()) / (1000 * 60);
+        if (ageMinutes > this.cacheExpireMinutes) {
+            this.cache.delete(cacheKey);
+            performance_tracker_1.performanceTracker.trackCache(false); // cache miss (expired)
+            return null;
+        }
+        performance_tracker_1.performanceTracker.trackCache(true); // cache hit
+        return cached;
+    }
+    cacheSimilarity(cacheKey, similarity) {
+        this.cache.set(cacheKey, {
+            similarity,
+            timestamp: new Date(),
+        });
+    }
+    clearCache() {
+        this.cache.clear();
+    }
+    getCacheStats() {
+        return {
+            size: this.cache.size,
+            expireMinutes: this.cacheExpireMinutes,
+        };
+    }
+}
+exports.SimilarityCache = SimilarityCache;
+
+
+/***/ }),
+
 /***/ 8430:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -32307,7 +32760,7 @@ const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const concurrency_manager_1 = __nccwpck_require__(4482);
 const secure_file_namer_1 = __nccwpck_require__(5584);
-const ai_expansion_decision_service_1 = __nccwpck_require__(3862);
+const ai_expansion_decision_service_1 = __nccwpck_require__(7867);
 const logger_1 = __nccwpck_require__(411);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
@@ -34331,10 +34784,10 @@ exports.ThemeService = ThemeService;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeSimilarityService = void 0;
-const similarity_cache_1 = __nccwpck_require__(2650);
+const similarity_cache_1 = __nccwpck_require__(667);
 const similarity_calculator_1 = __nccwpck_require__(241);
-const ai_similarity_1 = __nccwpck_require__(6684);
-const batch_processor_1 = __nccwpck_require__(7855);
+const ai_similarity_1 = __nccwpck_require__(5776);
+const batch_processor_1 = __nccwpck_require__(1174);
 const business_domain_1 = __nccwpck_require__(6);
 const theme_naming_1 = __nccwpck_require__(3111);
 const concurrency_manager_1 = __nccwpck_require__(4482);
@@ -35365,7 +35818,7 @@ exports.CodeAnalysisCache = void 0;
 const crypto = __importStar(__nccwpck_require__(6982));
 const generic_cache_1 = __nccwpck_require__(282);
 const logger_1 = __nccwpck_require__(411);
-const performance_tracker_1 = __nccwpck_require__(9766);
+const performance_tracker_1 = __nccwpck_require__(9600);
 /**
  * Specialized cache for AI-based code analysis results
  * Uses content-based hashing for cache keys to ensure cache hits on identical diffs
@@ -35509,459 +35962,6 @@ class GenericCache {
     }
 }
 exports.GenericCache = GenericCache;
-
-
-/***/ }),
-
-/***/ 2650:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SimilarityCache = void 0;
-const performance_tracker_1 = __nccwpck_require__(9600);
-class SimilarityCache {
-    constructor() {
-        this.cache = new Map();
-        this.cacheExpireMinutes = 60; // Cache expires after 1 hour
-    }
-    getCacheKey(theme1, theme2) {
-        // Create deterministic cache key regardless of theme order
-        const id1 = theme1.id;
-        const id2 = theme2.id;
-        return id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`;
-    }
-    getCachedSimilarity(cacheKey) {
-        const cached = this.cache.get(cacheKey);
-        if (!cached) {
-            performance_tracker_1.performanceTracker.trackCache(false); // cache miss
-            return null;
-        }
-        // Check if cache has expired
-        const ageMinutes = (Date.now() - cached.timestamp.getTime()) / (1000 * 60);
-        if (ageMinutes > this.cacheExpireMinutes) {
-            this.cache.delete(cacheKey);
-            performance_tracker_1.performanceTracker.trackCache(false); // cache miss (expired)
-            return null;
-        }
-        performance_tracker_1.performanceTracker.trackCache(true); // cache hit
-        return cached;
-    }
-    cacheSimilarity(cacheKey, similarity) {
-        this.cache.set(cacheKey, {
-            similarity,
-            timestamp: new Date(),
-        });
-    }
-    clearCache() {
-        this.cache.clear();
-    }
-    getCacheStats() {
-        return {
-            size: this.cache.size,
-            expireMinutes: this.cacheExpireMinutes,
-        };
-    }
-}
-exports.SimilarityCache = SimilarityCache;
-
-
-/***/ }),
-
-/***/ 6684:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.AISimilarityService = void 0;
-const similarity_calculator_1 = __nccwpck_require__(241);
-const json_extractor_1 = __nccwpck_require__(8168);
-const claude_client_1 = __nccwpck_require__(3861);
-const logger_1 = __nccwpck_require__(411);
-class AISimilarityService {
-    constructor(anthropicApiKey) {
-        this.anthropicApiKey = anthropicApiKey;
-        this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
-        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
-    }
-    async calculateAISimilarity(theme1, theme2) {
-        const prompt = this.buildSimilarityPrompt(theme1, theme2);
-        try {
-            const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
-            const result = this.parseAISimilarityResponse(output);
-            logger_1.logger.debug('AI-SIMILARITY', `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
-            logger_1.logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
-            return result;
-        }
-        catch (error) {
-            logger_1.logger.warn('AI-SIMILARITY', `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`);
-            // Fallback to basic string matching
-            return this.createFallbackSimilarity(theme1, theme2);
-        }
-    }
-    /**
-     * Get Claude client for external metrics access
-     */
-    getClaudeClient() {
-        return this.claudeClient;
-    }
-    buildSimilarityPrompt(theme1, theme2) {
-        // Include rich details if available
-        const theme1Details = this.buildThemeDetails(theme1);
-        const theme2Details = this.buildThemeDetails(theme2);
-        return `Analyze these code changes to determine if they should be grouped together.
-
-**Theme 1: "${theme1.name}"**
-${theme1Details}
-
-**Theme 2: "${theme2.name}"**
-${theme2Details}
-
-IMPORTANT CONTEXT:
-- Look at the actual code changes, not just descriptions
-- Consider if these are truly part of the same change or just happen to be similar
-- Think about how a developer would organize these changes in their mind
-- Consider file relationships and dependencies
-
-Questions to answer:
-1. Are these solving the same problem or different problems?
-2. Would combining them make the theme clearer or more confusing?
-3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
-4. Do they have logical dependencies on each other?
-
-Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
-It's better to have more specific themes than overly broad ones.
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "shouldMerge": true,
-  "confidence": 0.85,
-  "reasoning": "Both themes implement the same email validation improvement for user data integrity"
-}`;
-    }
-    buildThemeDetails(theme) {
-        let details = `Description: ${theme.description}`;
-        // Add detailed description if available
-        if (theme.detailedDescription) {
-            details += `\nDetailed: ${theme.detailedDescription}`;
-        }
-        // Add technical summary if available
-        if (theme.technicalSummary) {
-            details += `\nTechnical: ${theme.technicalSummary}`;
-        }
-        // Add key changes if available
-        if (theme.keyChanges && theme.keyChanges.length > 0) {
-            details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
-        }
-        // Add files
-        details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
-        // Add code metrics if available
-        if (theme.codeMetrics) {
-            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
-        }
-        // Add main functions/classes if available
-        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
-            details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
-        }
-        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
-            details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
-        }
-        // Add all code snippets - modern context windows can handle it
-        const snippets = theme.codeSnippets.join('\n\n');
-        if (snippets) {
-            details += `\n\nActual Code Changes:\n${snippets}`;
-        }
-        return details;
-    }
-    parseAISimilarityResponse(output) {
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['shouldMerge', 'confidence', 'reasoning']);
-        if (extractionResult.success) {
-            const parsed = extractionResult.data;
-            // Map the simple response to the full AISimilarityResult interface
-            const shouldMerge = parsed.shouldMerge || false;
-            const confidence = parsed.confidence || 0;
-            return {
-                shouldMerge,
-                confidence,
-                reasoning: parsed.reasoning || 'No reasoning provided',
-                // Derive a semantic score from the decision and confidence
-                semanticScore: shouldMerge ? confidence : 1 - confidence,
-                // Legacy scores - set to 0 as they're not used anymore
-                nameScore: 0,
-                descriptionScore: 0,
-                patternScore: 0,
-                businessScore: 0,
-            };
-        }
-        // Log the extraction failure for debugging
-        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
-        }
-        return {
-            nameScore: 0,
-            descriptionScore: 0,
-            patternScore: 0,
-            businessScore: 0,
-            semanticScore: 0,
-            shouldMerge: false,
-            confidence: 0,
-            reasoning: `Failed to parse AI response: ${extractionResult.error}`,
-        };
-    }
-    createFallbackSimilarity(theme1, theme2) {
-        // Fallback when AI fails - conservative approach
-        const nameScore = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
-        // Only merge if names are extremely similar (fallback is conservative)
-        const shouldMerge = nameScore > 0.9;
-        return {
-            shouldMerge,
-            confidence: 0.3, // Low confidence for fallback
-            reasoning: 'AI analysis failed - conservative fallback based on name similarity only',
-            semanticScore: shouldMerge ? 0.6 : 0.2,
-            // Legacy scores - not used
-            nameScore: 0,
-            descriptionScore: 0,
-            patternScore: 0,
-            businessScore: 0,
-        };
-    }
-    /**
-     * Calculate similarity for multiple theme pairs in a single AI call
-     * This is the key performance optimization method
-     */
-    async calculateBatchSimilarity(batchPrompt, expectedResults) {
-        try {
-            const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
-            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
-            // Extract and validate JSON response
-            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
-            if (!jsonResult.success) {
-                throw new Error(`JSON extraction failed: ${jsonResult.error}`);
-            }
-            const batchData = jsonResult.data;
-            // Validate we got the expected number of results
-            if (!batchData.results || !Array.isArray(batchData.results)) {
-                throw new Error('Invalid batch response: missing results array');
-            }
-            if (batchData.results.length !== expectedResults) {
-                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
-            }
-            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
-            return batchData;
-        }
-        catch (error) {
-            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
-            throw error;
-        }
-    }
-}
-exports.AISimilarityService = AISimilarityService;
-
-
-/***/ }),
-
-/***/ 7855:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BatchProcessor = void 0;
-const json_extractor_1 = __nccwpck_require__(8168);
-const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(5584);
-class BatchProcessor {
-    constructor() {
-        this.batchSize = 8; // Process 8 theme pairs per AI batch call
-        this.batchFailures = 0; // Track consecutive batch failures
-    }
-    async processBatchSimilarity(pairs) {
-        const prompt = this.buildBatchSimilarityPrompt(pairs);
-        try {
-            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
-            let output = '';
-            try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                    silent: true,
-                    listeners: {
-                        stdout: (data) => {
-                            output += data.toString();
-                        },
-                    },
-                });
-                const results = this.parseBatchSimilarityResponse(output, pairs);
-                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
-                return results;
-            }
-            finally {
-                cleanup(); // Ensure file is cleaned up even if execution fails
-            }
-        }
-        catch (error) {
-            console.error('Batch AI similarity failed:', error);
-            throw error;
-        }
-    }
-    getAdaptiveBatchSize() {
-        return Math.max(2, this.batchSize - Math.floor(this.batchFailures / 2));
-    }
-    incrementFailures() {
-        this.batchFailures++;
-    }
-    decrementFailures() {
-        this.batchFailures = Math.max(0, this.batchFailures - 1);
-    }
-    getFailureCount() {
-        return this.batchFailures;
-    }
-    chunkArray(array, chunkSize) {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
-        }
-        return chunks;
-    }
-    buildBatchSimilarityPrompt(pairs) {
-        const pairDescriptions = pairs
-            .map((pair, index) => `Pair ${index + 1}: ID="${pair.id}"
-- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
-- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
-- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
-- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`)
-            .join('\n\n');
-        return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
-
-THEME PAIRS:
-${pairDescriptions}
-
-RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
-[
-${pairs
-            .map((pair, index) => `  {
-    "pairId": "${pair.id}",
-    "nameScore": 0.5,
-    "descriptionScore": 0.5,
-    "patternScore": 0.5,
-    "businessScore": 0.5,
-    "semanticScore": 0.5,
-    "shouldMerge": false,
-    "confidence": 0.5,
-    "reasoning": "analysis for pair ${index + 1}"
-  }${index < pairs.length - 1 ? ',' : ''}`)
-            .join('\n')}
-]
-
-Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
-    }
-    parseBatchSimilarityResponse(output, pairs) {
-        console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
-        console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
-        if (extractionResult.success) {
-            const parsed = extractionResult.data;
-            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
-            // Handle case where AI returns fewer results than expected
-            const results = [];
-            for (let i = 0; i < pairs.length; i++) {
-                const item = parsed[i];
-                const pair = pairs[i];
-                if (item && typeof item === 'object') {
-                    results.push({
-                        pairId: item.pairId || pair.id,
-                        similarity: {
-                            nameScore: this.clampScore(item.nameScore),
-                            descriptionScore: this.clampScore(item.descriptionScore),
-                            patternScore: this.clampScore(item.patternScore),
-                            businessScore: this.clampScore(item.businessScore),
-                            semanticScore: this.clampScore(item.semanticScore),
-                            shouldMerge: Boolean(item.shouldMerge),
-                            confidence: this.clampScore(item.confidence),
-                            reasoning: String(item.reasoning || 'No reasoning provided'),
-                        },
-                    });
-                }
-                else {
-                    // Missing or invalid item - create fallback
-                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
-                    results.push({
-                        pairId: pair.id,
-                        similarity: this.createFallbackSimilarity(),
-                        error: `Missing AI response for pair ${i + 1}`,
-                    });
-                }
-            }
-            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
-            return results;
-        }
-        // JSON extraction failed
-        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
-        }
-        console.warn('[BATCH-DEBUG] Using fallback for all pairs');
-        // Fallback: create error results for all pairs
-        return pairs.map((pair) => ({
-            pairId: pair.id,
-            similarity: this.createFallbackSimilarity(),
-            error: `Failed to parse batch AI response: ${extractionResult.error}`,
-        }));
-    }
-    clampScore(value) {
-        const num = Number(value);
-        return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
-    }
-    createFallbackSimilarity() {
-        return {
-            nameScore: 0.3,
-            descriptionScore: 0.3,
-            patternScore: 0.3,
-            businessScore: 0.3,
-            semanticScore: 0.3,
-            shouldMerge: false,
-            confidence: 0.2,
-            reasoning: 'Fallback similarity due to parsing error',
-        };
-    }
-}
-exports.BatchProcessor = BatchProcessor;
 
 
 /***/ }),
@@ -36865,8 +36865,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ClaudeClient = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const performance_tracker_1 = __nccwpck_require__(9766);
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const performance_tracker_1 = __nccwpck_require__(9600);
 /**
  * Enhanced Claude client with performance tracking and global rate limiting
  */
@@ -38480,596 +38480,6 @@ function logInfo(message) {
 function setOutput(name, value) {
     core.setOutput(name, value);
 }
-
-
-/***/ }),
-
-/***/ 7893:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-/**
- * Logging utility with configurable levels
- */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.logger = exports.Logger = exports.LogLevel = void 0;
-var LogLevel;
-(function (LogLevel) {
-    LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
-    LogLevel[LogLevel["WARN"] = 1] = "WARN";
-    LogLevel[LogLevel["INFO"] = 2] = "INFO";
-    LogLevel[LogLevel["DEBUG"] = 3] = "DEBUG";
-    LogLevel[LogLevel["TRACE"] = 4] = "TRACE";
-})(LogLevel || (exports.LogLevel = LogLevel = {}));
-class Logger {
-    static parseLogLevel(level) {
-        switch (level.toUpperCase()) {
-            case 'ERROR':
-                return LogLevel.ERROR;
-            case 'WARN':
-                return LogLevel.WARN;
-            case 'INFO':
-                return LogLevel.INFO;
-            case 'DEBUG':
-                return LogLevel.DEBUG;
-            case 'TRACE':
-                return LogLevel.TRACE;
-            default:
-                return LogLevel.INFO;
-        }
-    }
-    static formatMessage(level, service, message) {
-        const timestamp = process.env.LOG_TIMESTAMPS === 'true'
-            ? `[${new Date().toISOString()}] `
-            : '';
-        return `${timestamp}[${level}] [${service}] ${message}`;
-    }
-    static error(service, message) {
-        if (Logger.level >= LogLevel.ERROR) {
-            console.error(Logger.formatMessage('ERROR', service, message));
-        }
-    }
-    static warn(service, message) {
-        if (Logger.level >= LogLevel.WARN) {
-            console.warn(Logger.formatMessage('WARN', service, message));
-        }
-    }
-    static info(service, message) {
-        if (Logger.level >= LogLevel.INFO) {
-            console.log(Logger.formatMessage('INFO', service, message));
-        }
-    }
-    static debug(service, message) {
-        if (Logger.level >= LogLevel.DEBUG) {
-            console.log(Logger.formatMessage('DEBUG', service, message));
-        }
-    }
-    static trace(service, message) {
-        if (Logger.level >= LogLevel.TRACE) {
-            console.log(Logger.formatMessage('TRACE', service, message));
-        }
-    }
-    static setLevel(level) {
-        Logger.level = level;
-    }
-    static getLevel() {
-        return Logger.level;
-    }
-}
-exports.Logger = Logger;
-Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
-// Export convenience functions
-exports.logger = {
-    error: (service, message) => Logger.error(service, message),
-    warn: (service, message) => Logger.warn(service, message),
-    info: (service, message) => Logger.info(service, message),
-    debug: (service, message) => Logger.debug(service, message),
-    trace: (service, message) => Logger.trace(service, message),
-};
-
-
-/***/ }),
-
-/***/ 9766:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.performanceTracker = exports.PerformanceTracker = void 0;
-const logger_1 = __nccwpck_require__(7893);
-class PerformanceTracker {
-    constructor() {
-        this.timingStack = [];
-        this.aiMetrics = new Map();
-        this.resourceMetrics = {
-            memoryStart: this.getMemoryUsage(),
-            memoryPeak: this.getMemoryUsage(),
-            memoryEnd: 0,
-            tempFilesCreated: 0,
-            tempFilesCleaned: 0,
-            cacheHits: 0,
-            cacheMisses: 0,
-        };
-        this.stages = [];
-        this.bottlenecks = [];
-        this.effectiveness = [];
-    }
-    static getInstance() {
-        if (!PerformanceTracker.instance) {
-            PerformanceTracker.instance = new PerformanceTracker();
-        }
-        return PerformanceTracker.instance;
-    }
-    /**
-     * Start timing an operation
-     */
-    startTiming(name, metadata) {
-        const entry = {
-            name,
-            startTime: Date.now(),
-            children: [],
-            metadata,
-        };
-        if (this.timingStack.length > 0) {
-            // Add as child to current operation
-            this.timingStack[this.timingStack.length - 1].children.push(entry);
-        }
-        else {
-            // Top-level operation
-            this.stages.push(entry);
-        }
-        this.timingStack.push(entry);
-        logger_1.logger.info('PERF', `🔄 Starting: ${name}`);
-    }
-    /**
-     * End timing an operation
-     */
-    endTiming(name) {
-        const entry = this.timingStack.pop();
-        if (!entry || entry.name !== name) {
-            logger_1.logger.warn('PERF', `Timing mismatch: expected ${name}, got ${entry?.name || 'none'}`);
-            return 0;
-        }
-        entry.endTime = Date.now();
-        entry.duration = entry.endTime - entry.startTime;
-        // Log completion with sub-stage breakdown
-        if (entry.children.length > 0) {
-            logger_1.logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s total)`);
-            // Log sub-stages with bottleneck detection
-            for (const child of entry.children) {
-                const childDuration = child.duration || 0;
-                const percentOfParent = (childDuration / entry.duration) * 100;
-                const isBottleneck = percentOfParent > 70; // More than 70% of parent time
-                const bottleneckIcon = isBottleneck ? ' ⚠️' : '';
-                logger_1.logger.info('PERF', `└─ ${child.name}: ${(childDuration / 1000).toFixed(1)}s (${percentOfParent.toFixed(0)}% of stage)${bottleneckIcon}`);
-                if (isBottleneck) {
-                    this.addBottleneck({
-                        type: 'sequential_processing',
-                        description: `${child.name} consuming ${percentOfParent.toFixed(0)}% of ${name}`,
-                        currentValue: `${(childDuration / 1000).toFixed(1)}s`,
-                        suggestion: 'Consider parallelization or optimization',
-                    });
-                }
-            }
-        }
-        else {
-            logger_1.logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s)`);
-        }
-        return entry.duration;
-    }
-    /**
-     * Track AI call performance
-     */
-    trackAICall(context, duration, operation) {
-        if (!this.aiMetrics.has(context)) {
-            this.aiMetrics.set(context, {
-                calls: 0,
-                totalTime: 0,
-                times: [],
-                operations: [],
-            });
-        }
-        const metrics = this.aiMetrics.get(context);
-        metrics.calls++;
-        metrics.totalTime += duration;
-        metrics.times.push(duration);
-        if (operation) {
-            metrics.operations.push(operation);
-        }
-        // Check for high latency
-        if (duration > 5000) {
-            // 5+ seconds
-            this.addBottleneck({
-                type: 'high_ai_latency',
-                description: `High AI latency in ${context}`,
-                currentValue: `${(duration / 1000).toFixed(1)}s`,
-                suggestion: 'Consider reducing prompt size or splitting into chunks',
-                estimatedSavings: `${((duration - 3000) / 1000).toFixed(1)}s per call`,
-            });
-        }
-        // Update memory peak
-        this.resourceMetrics.memoryPeak = Math.max(this.resourceMetrics.memoryPeak, this.getMemoryUsage());
-    }
-    /**
-     * Track effectiveness of an operation
-     */
-    trackEffectiveness(operation, input, output, timeSpent) {
-        const reductionRate = input > 0 ? ((input - output) / input) * 100 : 0;
-        const worthwhile = reductionRate > 10 || timeSpent < 5000; // Either good reduction or fast
-        this.effectiveness.push({
-            operation,
-            input,
-            output,
-            reductionRate,
-            timeSpent,
-            worthwhile,
-        });
-        if (!worthwhile && timeSpent > 10000) {
-            // 10+ seconds for minimal benefit
-            this.addBottleneck({
-                type: 'unnecessary_work',
-                description: `${operation}: ${timeSpent / 1000}s for ${reductionRate.toFixed(1)}% improvement`,
-                currentValue: `${reductionRate.toFixed(1)}% reduction`,
-                suggestion: 'Consider skipping this step or optimizing thresholds',
-                estimatedSavings: `${(timeSpent / 1000).toFixed(1)}s`,
-            });
-        }
-    }
-    /**
-     * Track resource usage
-     */
-    trackTempFile(created = true) {
-        if (created) {
-            this.resourceMetrics.tempFilesCreated++;
-        }
-        else {
-            this.resourceMetrics.tempFilesCleaned++;
-        }
-    }
-    trackCache(hit) {
-        if (hit) {
-            this.resourceMetrics.cacheHits++;
-        }
-        else {
-            this.resourceMetrics.cacheMisses++;
-        }
-    }
-    /**
-     * Add bottleneck warning
-     */
-    addBottleneck(bottleneck) {
-        this.bottlenecks.push(bottleneck);
-    }
-    /**
-     * Generate comprehensive performance report
-     */
-    generateReport() {
-        this.resourceMetrics.memoryEnd = this.getMemoryUsage();
-        logger_1.logger.info('PERFORMANCE', '📊 === PERFORMANCE ANALYSIS REPORT ===');
-        // Overall timing breakdown
-        const totalTime = this.stages.reduce((sum, stage) => sum + (stage.duration || 0), 0);
-        logger_1.logger.info('PERFORMANCE', `Total execution time: ${(totalTime / 1000).toFixed(1)}s`);
-        // Stage breakdown
-        if (this.stages.length > 0) {
-            logger_1.logger.info('PERFORMANCE', '\n🎯 Stage Breakdown:');
-            this.stages.forEach((stage, index) => {
-                const duration = stage.duration || 0;
-                const percent = totalTime > 0 ? (duration / totalTime) * 100 : 0;
-                logger_1.logger.info('PERFORMANCE', `${index + 1}. ${stage.name}: ${(duration / 1000).toFixed(1)}s (${percent.toFixed(0)}%)`);
-            });
-        }
-        // AI call analytics
-        if (this.aiMetrics.size > 0) {
-            logger_1.logger.info('PERFORMANCE', '\n🤖 AI Call Analytics:');
-            for (const [context, metrics] of this.aiMetrics) {
-                const avgTime = metrics.totalTime / metrics.calls;
-                const maxTime = Math.max(...metrics.times);
-                const minTime = Math.min(...metrics.times);
-                logger_1.logger.info('PERFORMANCE', `${context}:`);
-                logger_1.logger.info('PERFORMANCE', `├─ Calls: ${metrics.calls}, Total: ${(metrics.totalTime / 1000).toFixed(1)}s`);
-                logger_1.logger.info('PERFORMANCE', `├─ Avg: ${(avgTime / 1000).toFixed(1)}s, Max: ${(maxTime / 1000).toFixed(1)}s, Min: ${(minTime / 1000).toFixed(1)}s`);
-                // Find slowest operation
-                if (metrics.operations.length > 0) {
-                    const slowestIndex = metrics.times.indexOf(maxTime);
-                    if (slowestIndex >= 0 && metrics.operations[slowestIndex]) {
-                        logger_1.logger.info('PERFORMANCE', `└─ Slowest: ${metrics.operations[slowestIndex]} (${(maxTime / 1000).toFixed(1)}s)`);
-                    }
-                }
-            }
-        }
-        // Resource utilization
-        logger_1.logger.info('PERFORMANCE', '\n💾 Resource Utilization:');
-        logger_1.logger.info('PERFORMANCE', `Memory: ${this.resourceMetrics.memoryStart}MB → ${this.resourceMetrics.memoryEnd}MB (peak: ${this.resourceMetrics.memoryPeak}MB)`);
-        const tempFileLeaks = this.resourceMetrics.tempFilesCreated -
-            this.resourceMetrics.tempFilesCleaned;
-        logger_1.logger.info('PERFORMANCE', `Temp files: ${this.resourceMetrics.tempFilesCreated} created, ${this.resourceMetrics.tempFilesCleaned} cleaned${tempFileLeaks > 0 ? ` (${tempFileLeaks} leaked!)` : ''}`);
-        const totalCacheOps = this.resourceMetrics.cacheHits + this.resourceMetrics.cacheMisses;
-        const cacheHitRate = totalCacheOps > 0
-            ? (this.resourceMetrics.cacheHits / totalCacheOps) * 100
-            : 0;
-        logger_1.logger.info('PERFORMANCE', `Cache: ${this.resourceMetrics.cacheHits}/${totalCacheOps} hits (${cacheHitRate.toFixed(0)}% hit rate)`);
-        // Effectiveness tracking
-        if (this.effectiveness.length > 0) {
-            logger_1.logger.info('PERFORMANCE', '\n📈 Effectiveness Analysis:');
-            this.effectiveness.forEach((eff) => {
-                const worthwhileIcon = eff.worthwhile ? '✅' : '⚠️';
-                logger_1.logger.info('PERFORMANCE', `${worthwhileIcon} ${eff.operation}: ${eff.input}→${eff.output} (${eff.reductionRate.toFixed(1)}% reduction, ${(eff.timeSpent / 1000).toFixed(1)}s)`);
-            });
-        }
-        // Bottleneck warnings and suggestions
-        if (this.bottlenecks.length > 0) {
-            logger_1.logger.info('PERFORMANCE', '\n⚠️ Bottlenecks & Optimization Opportunities:');
-            this.bottlenecks.forEach((bottleneck, index) => {
-                logger_1.logger.info('PERFORMANCE', `${index + 1}. ${bottleneck.description}`);
-                logger_1.logger.info('PERFORMANCE', `   Current: ${bottleneck.currentValue}`);
-                logger_1.logger.info('PERFORMANCE', `   Suggestion: ${bottleneck.suggestion}`);
-                if (bottleneck.estimatedSavings) {
-                    logger_1.logger.info('PERFORMANCE', `   Est. savings: ${bottleneck.estimatedSavings}`);
-                }
-            });
-        }
-        // Final insights
-        const totalAICalls = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.calls, 0);
-        const totalAITime = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.totalTime, 0);
-        logger_1.logger.info('PERFORMANCE', '\n🎯 Key Insights:');
-        logger_1.logger.info('PERFORMANCE', `• Total AI calls: ${totalAICalls} (${(totalAITime / 1000).toFixed(1)}s, ${((totalAITime / totalTime) * 100).toFixed(0)}% of total time)`);
-        if (totalAICalls > 50) {
-            logger_1.logger.warn('PERFORMANCE', `• High AI usage detected (${totalAICalls} calls) - consider batch optimization`);
-        }
-        if (totalTime > 120000) {
-            // 2+ minutes
-            logger_1.logger.warn('PERFORMANCE', `• Long processing time (${(totalTime / 1000).toFixed(1)}s) - see bottleneck suggestions above`);
-        }
-        logger_1.logger.info('PERFORMANCE', '📊 === END PERFORMANCE REPORT ===');
-    }
-    /**
-     * Reset all metrics
-     */
-    reset() {
-        this.timingStack = [];
-        this.aiMetrics.clear();
-        this.stages = [];
-        this.bottlenecks = [];
-        this.effectiveness = [];
-        this.resourceMetrics = {
-            memoryStart: this.getMemoryUsage(),
-            memoryPeak: this.getMemoryUsage(),
-            memoryEnd: 0,
-            tempFilesCreated: 0,
-            tempFilesCleaned: 0,
-            cacheHits: 0,
-            cacheMisses: 0,
-        };
-    }
-    getMemoryUsage() {
-        const usage = process.memoryUsage();
-        return Math.round(usage.heapUsed / 1024 / 1024); // MB
-    }
-}
-exports.PerformanceTracker = PerformanceTracker;
-// Export singleton instance
-exports.performanceTracker = PerformanceTracker.getInstance();
-
-
-/***/ }),
-
-/***/ 1661:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SecureFileNamer = void 0;
-const crypto = __importStar(__nccwpck_require__(6982));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
-const fs = __importStar(__nccwpck_require__(9896));
-/**
- * Secure file naming utility that prevents collisions in parallel execution
- * by using UUIDs, process IDs, and crypto-grade randomness
- */
-class SecureFileNamer {
-    /**
-     * Generate a collision-resistant file name for temporary files
-     */
-    static generateSecureFileName(prefix, extension = 'txt') {
-        const uuid = crypto.randomUUID().substring(0, 8);
-        const pid = this.processId;
-        const random = crypto.randomBytes(4).toString('hex');
-        const timestamp = Date.now();
-        return `${prefix}-${pid}-${uuid}-${random}-${timestamp}.${extension}`;
-    }
-    /**
-     * Generate a collision-resistant ID for entities (themes, batches, etc.)
-     */
-    static generateSecureId(prefix) {
-        const uuid = crypto.randomUUID();
-        return `${prefix}-${uuid}`;
-    }
-    /**
-     * Generate a short collision-resistant ID for performance-critical operations
-     */
-    static generateShortSecureId(prefix) {
-        const shortUuid = crypto.randomUUID().substring(0, 8);
-        const random = crypto.randomBytes(2).toString('hex');
-        return `${prefix}-${shortUuid}-${random}`;
-    }
-    /**
-     * Create a process-isolated temporary file path
-     */
-    static createSecureTempFilePath(prefix, extension = 'txt') {
-        const fileName = this.generateSecureFileName(prefix, extension);
-        const processDir = this.getProcessTempDir();
-        return path.join(processDir, fileName);
-    }
-    /**
-     * Get or create a process-specific temporary directory
-     */
-    static getProcessTempDir() {
-        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
-        try {
-            if (!fs.existsSync(processDir)) {
-                fs.mkdirSync(processDir, { recursive: true });
-            }
-        }
-        catch (error) {
-            // Fallback to system temp dir if process dir creation fails
-            console.warn(`Failed to create process temp dir: ${error}`);
-            return os.tmpdir();
-        }
-        return processDir;
-    }
-    /**
-     * Create a temporary file with secure naming and optional content
-     */
-    static createSecureTempFile(prefix, content = '', extension = 'txt') {
-        const filePath = this.createSecureTempFilePath(prefix, extension);
-        try {
-            fs.writeFileSync(filePath, content, 'utf8');
-        }
-        catch (error) {
-            throw new Error(`Failed to create secure temp file: ${error}`);
-        }
-        const cleanup = () => {
-            try {
-                if (fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
-                }
-            }
-            catch (error) {
-                console.warn(`Failed to cleanup temp file ${filePath}: ${error}`);
-            }
-        };
-        return { filePath, cleanup };
-    }
-    /**
-     * Clean up process-specific temporary directory
-     */
-    static cleanupProcessTempDir() {
-        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
-        try {
-            if (fs.existsSync(processDir)) {
-                // Remove all files in the directory
-                const files = fs.readdirSync(processDir);
-                for (const file of files) {
-                    fs.unlinkSync(path.join(processDir, file));
-                }
-                // Remove the directory
-                fs.rmdirSync(processDir);
-            }
-        }
-        catch (error) {
-            console.warn(`Failed to cleanup process temp dir: ${error}`);
-        }
-    }
-    /**
-     * Generate batch ID with collision resistance for concurrent operations
-     */
-    static generateBatchId(batchType, promptType) {
-        const uuid = crypto.randomUUID().substring(0, 12);
-        const pid = this.processId;
-        const random = crypto.randomBytes(3).toString('hex');
-        if (promptType) {
-            return `${batchType}-${promptType}-${pid}-${uuid}-${random}`;
-        }
-        return `${batchType}-${pid}-${uuid}-${random}`;
-    }
-    /**
-     * Generate expansion/request ID with hierarchy support
-     */
-    static generateHierarchicalId(type, parentId, index) {
-        const uuid = crypto.randomUUID().substring(0, 8);
-        const random = crypto.randomBytes(2).toString('hex');
-        if (parentId && typeof index === 'number') {
-            return `${parentId}_${type}_${index}_${uuid}_${random}`;
-        }
-        if (parentId) {
-            return `${parentId}_${type}_${uuid}_${random}`;
-        }
-        return `${type}_${uuid}_${random}`;
-    }
-    /**
-     * Validate that a generated ID/filename is collision-resistant
-     */
-    static validateSecureNaming(name) {
-        // Check for minimum entropy (process ID + UUID parts + random)
-        const parts = name.split('-');
-        if (parts.length < 4)
-            return false;
-        // Check for presence of process ID (numeric)
-        if (!parts.some((part) => /^\d+$/.test(part)))
-            return false;
-        // Check for presence of hex random data
-        if (!parts.some((part) => /^[a-f0-9]{4,}$/i.test(part)))
-            return false;
-        return true;
-    }
-    /**
-     * Get statistics about the naming system
-     */
-    static getStats() {
-        return {
-            processId: this.processId,
-            processStartTime: this.processStartTime,
-            tempDir: this.getProcessTempDir(),
-            entropyBits: 128 + 32 + 16, // UUID + random bytes + timestamp
-        };
-    }
-}
-exports.SecureFileNamer = SecureFileNamer;
-SecureFileNamer.processId = process.pid;
-SecureFileNamer.processStartTime = Date.now();
-/**
- * Setup process cleanup handlers
- */
-function setupCleanupHandlers() {
-    const cleanup = () => SecureFileNamer.cleanupProcessTempDir();
-    process.on('exit', cleanup);
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
-    process.on('uncaughtException', (error) => {
-        console.error('Uncaught exception:', error);
-        cleanup();
-        process.exit(1);
-    });
-}
-// Initialize cleanup handlers
-setupCleanupHandlers();
 
 
 /***/ }),

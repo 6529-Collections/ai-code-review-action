@@ -10,7 +10,7 @@ import { SecureFileNamer } from '../utils/secure-file-namer';
 import {
   AIExpansionDecisionService,
   ExpansionDecision,
-} from './ai-expansion-decision-service';
+} from './ai/ai-expansion-decision-service';
 import { logger } from '@/shared/utils/logger';
 
 // Configuration for theme expansion

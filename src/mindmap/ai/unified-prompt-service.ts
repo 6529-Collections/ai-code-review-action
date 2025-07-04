@@ -1,5 +1,5 @@
-import { ClaudeClient } from '../../utils/claude-client';
-import { PromptTemplates } from '../../utils/prompt-templates';
+import { ClaudeClient } from '@/shared/utils/claude-client';
+import { PromptTemplates } from '../utils/prompt-templates';
 import { OptimizedPromptTemplates } from './optimized-prompt-templates';
 import {
   PromptType,

@@ -13,7 +13,7 @@ import {
   FileType,
   AIAnalysisContext,
 } from '../../mindmap/types/mindmap-types';
-import { AISemanticAnalyzer } from '../../mindmap/services/ai-semantic-analyzer';
+import { AISemanticAnalyzer } from '../../mindmap/services/ai/ai-semantic-analyzer';
 import { logInfo } from '../../utils';
 
 /**

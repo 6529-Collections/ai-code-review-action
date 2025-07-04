@@ -1,4 +1,4 @@
-import { PromptTemplates } from '../../utils/prompt-templates';
+import { PromptTemplates } from '../utils/prompt-templates';
 import { PromptType } from './prompt-types';
 
 /**

@@ -1,6 +1,6 @@
 import * as exec from '@actions/exec';
-import { SecureFileNamer } from '../../utils/secure-file-namer';
-import { performanceTracker } from '../../utils/performance-tracker';
+import { SecureFileNamer } from '@/mindmap/utils/secure-file-namer';
+import { performanceTracker } from './performance-tracker';
 
 /**
  * Performance tracking for AI calls

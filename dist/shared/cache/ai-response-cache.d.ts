@@ -1,4 +1,4 @@
-import { PromptType, PromptResponse } from '../../mindmap/ai/prompt-types';
+import { PromptType, PromptResponse } from '@/mindmap/ai/prompt-types';
 /**
  * LRU (Least Recently Used) cache implementation for AI responses
  */
@@ -33,7 +33,7 @@ export declare class AIResponseCache {
     /**
      * Get cache metrics
      */
-    getMetrics(): import("../../mindmap/ai/cache/cache-metrics").CacheMetrics | import("../../mindmap/ai/cache/cache-metrics").CacheMetricsByType;
+    getMetrics(): import("@/mindmap/ai/cache/cache-metrics").CacheMetrics | import("@/mindmap/ai/cache/cache-metrics").CacheMetricsByType;
     /**
      * Get cache efficiency report
      */

@@ -1,5 +1,5 @@
 import { Theme } from '@/shared/types/theme-types';
-import { QuickSimilarityResult } from '../../types/similarity-types';
+import { QuickSimilarityResult } from '@/mindmap/types/similarity-types';
 
 export class SimilarityCalculator {
   quickSimilarityCheck(theme1: Theme, theme2: Theme): QuickSimilarityResult {

@@ -1,6 +1,6 @@
-import { PromptType, PromptResponse } from '../../mindmap/ai/prompt-types';
-import { CacheStrategy, CacheStrategyFactory } from '../../mindmap/ai/cache/cache-strategies';
-import { CacheMetricsCollector } from '../../mindmap/ai/cache/cache-metrics';
+import { PromptType, PromptResponse } from '@/mindmap/ai/prompt-types';
+import { CacheStrategy, CacheStrategyFactory } from '@/mindmap/ai/cache/cache-strategies';
+import { CacheMetricsCollector } from '@/mindmap/ai/cache/cache-metrics';
 
 interface CacheEntry<T> {
   key: string;

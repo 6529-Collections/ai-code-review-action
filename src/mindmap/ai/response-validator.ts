@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { JsonExtractor } from '../../utils/json-extractor';
+import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { PromptType } from './prompt-types';
 import { ResponseSchemas } from './prompt-config';
 

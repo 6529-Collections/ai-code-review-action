@@ -1,5 +1,5 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { ExpansionDecision } from './ai-expansion-decision-service';
+import { ExpansionDecision } from './ai/ai-expansion-decision-service';
 export interface ExpansionConfig {
     maxDepth: number;
     concurrencyLimit: number;

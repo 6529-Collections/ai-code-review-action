@@ -3,7 +3,7 @@ import { CodeChange } from '@/shared/utils/ai-code-analyzer';
 import * as exec from '@actions/exec';
 import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { SecureFileNamer } from '../utils/secure-file-namer';
-import { AIDomainAnalyzer } from './ai-domain-analyzer';
+import { AIDomainAnalyzer } from './ai/ai-domain-analyzer';
 import { AIAnalysisContext } from '../types/mindmap-types';
 
 export class BusinessDomainService {

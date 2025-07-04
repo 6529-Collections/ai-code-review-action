@@ -1,5 +1,5 @@
 import { SmartContext, CodeChange } from '@/shared/utils/ai-code-analyzer';
-import { ConsolidatedTheme } from '../../types/similarity-types';
+import { ConsolidatedTheme } from '@/mindmap/types/similarity-types';
 export interface Theme {
     id: string;
     name: string;

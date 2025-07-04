@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import { GenericCache } from './generic-cache';
 import { CodeChange } from '../utils/ai-code-analyzer';
 import { logger } from '../utils/logger';
-import { performanceTracker } from '../../utils/performance-tracker';
+import { performanceTracker } from '../utils/performance-tracker';
 
 /**
  * Specialized cache for AI-based code analysis results

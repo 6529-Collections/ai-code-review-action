@@ -6,7 +6,7 @@ import {
   BatchFormationStrategies,
 } from './batch-strategies';
 import { AdaptiveBatchingController, SystemMetrics } from './adaptive-batching';
-import { SecureFileNamer } from '../../../utils/secure-file-namer';
+import { SecureFileNamer } from '../../utils/secure-file-namer';
 
 interface QueueItem<T> {
   id: string;
