@@ -30425,22 +30425,12 @@ class AIExpansionDecisionService {
         const analysisHash = await this.getAnalysisHash(theme);
         const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
         if (this.decisionCache.has(cacheKey)) {
-            return this.decisionCache.get(cacheKey);
+            const cachedDecision = this.decisionCache.get(cacheKey);
+            if (cachedDecision) {
+                return cachedDecision;
+            }
         }
-        // Very conservative atomic check - let AI decide most cases
-        if (this.isObviouslyAtomic(theme)) {
-            const decision = {
-                shouldExpand: false,
-                isAtomic: true,
-                reasoning: 'Trivial change with minimal complexity',
-                businessContext: 'Minor update',
-                technicalContext: 'Small code change',
-                testabilityAssessment: 'Single assertion test',
-                suggestedSubThemes: null,
-            };
-            this.decisionCache.set(cacheKey, decision);
-            return decision;
-        }
+        // PRD: Let AI make ALL expansion decisions - no programmatic filtering
         // Analyze code structure for intelligent hints
         const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
         // Build dynamic, context-aware prompt
@@ -30459,28 +30449,13 @@ class AIExpansionDecisionService {
         return Buffer.from(content).toString('base64').slice(0, 16);
     }
     /**
-     * Simple check for obviously atomic changes - extremely conservative
+     * Calculate total lines from code snippets (which contain full file patches)
      */
-    isObviouslyAtomic(theme) {
-        // PRD: "5-15 lines of focused change" for atomic themes
-        // Only mark as obviously atomic for truly trivial changes
-        const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-        const description = theme.description.toLowerCase();
-        // Only mark as obviously atomic if truly trivial
-        if (theme.affectedFiles.length === 1 && totalLines <= 5) {
-            // Simple one-liners like typo fixes
-            return (description.includes('typo') ||
-                description.includes('spelling') ||
-                description.includes('rename') ||
-                (totalLines <= 2 && !description.includes('multiple')));
-        }
-        // PRD: Multi-file changes are RARELY atomic
-        // Any multi-file change should go through AI evaluation
-        if (theme.affectedFiles.length > 1) {
-            console.log(`[ATOMIC-CHECK] Multi-file theme "${theme.name}" (${theme.affectedFiles.length} files) -> AI evaluation required`);
-            return false;
-        }
-        return false;
+    calculateTotalLines(theme) {
+        // Each code snippet contains a full file patch/diff
+        return theme.codeSnippets.reduce((count, snippet) => {
+            return count + snippet.split('\n').length;
+        }, 0);
     }
     /**
      * Get AI decision from Claude
@@ -31844,7 +31819,8 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.join('\n').split('\n').length} lines
+Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
+Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
 
@@ -31874,7 +31850,18 @@ Multi-file themes should expand unless they are:
 CONSIDER THESE QUESTIONS:
 ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
-IMPORTANT: When suggesting sub-themes, assign specific files from the parent theme's file list to each sub-theme based on what that sub-theme actually modifies.`;
+CRITICAL FILE ASSIGNMENT RULES:
+1. Each sub-theme MUST have "files" array populated
+2. Files MUST be selected ONLY from the parent theme's files listed above
+3. You CANNOT suggest files that are not in the parent theme's file list
+4. If parent has only 1 file, ALL sub-themes must use that SAME file
+5. Each file should typically belong to only ONE sub-theme (unless parent has only 1 file)
+6. If a sub-theme doesn't modify any specific files, it shouldn't exist
+7. The "files" field is REQUIRED - omitting it will cause an error
+
+EXAMPLE: If parent theme affects ["src/services/theme-expansion.ts"], then ALL sub-themes 
+must have "files": ["src/services/theme-expansion.ts"]. You CANNOT suggest files like 
+"src/utils/concurrency-manager.ts" that are not in the parent's file list.`;
         section += `
 
 RESPOND WITH PRD-COMPLIANT JSON:
@@ -31890,7 +31877,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
       "description": "1-3 sentences",
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
-      "files": ["list of specific files this sub-theme affects"],
+      "files": ["REQUIRED: list files from parent theme that this sub-theme modifies"],
       "estimatedLines": number,
       "rationale": "Why separate concern"
     }
@@ -32008,8 +31995,7 @@ RESPOND WITH PRD-COMPLIANT JSON:
      * Select relevant examples based on code patterns
      */
     selectRelevantExamples(codeAnalysis) {
-        return this.expansionExamples
-            .filter((example) => this.isExampleRelevant(example, codeAnalysis)); // Include all relevant examples
+        return this.expansionExamples.filter((example) => this.isExampleRelevant(example, codeAnalysis)); // Include all relevant examples
     }
     /**
      * Check if an example is relevant to current analysis
@@ -33319,10 +33305,10 @@ class ThemeExpansionService {
             console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
         });
         // Log themes that exceeded PRD limits but were marked atomic
-        const oversizedAtomic = this.expansionStopReasons.filter(r => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
+        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
         if (oversizedAtomic.length > 0) {
             console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
-            oversizedAtomic.forEach(r => {
+            oversizedAtomic.forEach((r) => {
                 console.log(`  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`);
             });
         }
@@ -33375,6 +33361,13 @@ class ThemeExpansionService {
         // Process expansion
         const result = await this.processExpansionRequest(expansionRequest);
         if (!result.success || !result.expandedTheme) {
+            // Log expansion request context on failure
+            console.error(`[EXPANSION-REQUEST-FAILED] Theme: "${theme.name}" (ID: ${theme.id})`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Request ID: ${expansionRequest.id}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Depth: ${currentDepth}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Parent: ${parentTheme?.name || 'none'}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Error: ${result.error}`);
+            console.error(`[EXPANSION-REQUEST-FAILED] Processing time: ${result.processingTime}ms`);
             logger_1.logger.info('EXPANSION', `Expansion failed for theme ${theme.name}: ${result.error}`);
             return theme;
         }
@@ -33400,7 +33393,7 @@ class ThemeExpansionService {
             }
         }
         // Process existing children only if we didn't create new sub-themes
-        let expandedExistingChildren = [];
+        const expandedExistingChildren = [];
         if (result.subThemes.length === 0) {
             // Only process existing children if we didn't create new sub-themes
             const existingChildResults = await this.processConcurrentlyWithLimit(result.expandedTheme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme), {
@@ -33477,7 +33470,19 @@ class ThemeExpansionService {
             // Detailed logging for expansion decisions
             console.log(`[EXPANSION-DECISION] Evaluating theme: "${theme.name}" at depth ${currentDepth}`);
             console.log(`[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`);
-            console.log(`[EXPANSION-DECISION] Code lines: ${theme.codeSnippets.join('\n').split('\n').length}`);
+            const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
+            console.log(`[EXPANSION-DECISION] Code lines: ${totalLines}`);
+            // Debug: Log first few lines of each snippet
+            if (totalLines <= 10 && theme.codeSnippets.length > 0) {
+                console.log(`[EXPANSION-DECISION] DEBUG - snippets count: ${theme.codeSnippets.length}`);
+                theme.codeSnippets.forEach((snippet, idx) => {
+                    const lines = snippet.split('\n');
+                    console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx}: ${lines.length} lines`);
+                    if (lines.length <= 3) {
+                        console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx} content: ${JSON.stringify(snippet)}`);
+                    }
+                });
+            }
             console.log(`[EXPANSION-DECISION] AI Decision: shouldExpand=${expansionDecision.shouldExpand}, isAtomic=${expansionDecision.isAtomic}`);
             console.log(`[EXPANSION-DECISION] AI Reasoning: "${expansionDecision.reasoning}"`);
             console.log(`[EXPANSION-DECISION] Business Context: "${expansionDecision.businessContext}"`);
@@ -33501,7 +33506,7 @@ class ThemeExpansionService {
                 reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
                 details: expansionDecision.reasoning,
                 fileCount: theme.affectedFiles.length,
-                lineCount: theme.codeSnippets.join('\n').split('\n').length
+                lineCount: theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0),
             });
             logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
             // Log PRD metrics
@@ -33534,7 +33539,7 @@ class ThemeExpansionService {
         for (const theme of themes) {
             // Check if this was a merged theme (has multiple source themes)
             if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-                const totalLines = theme.codeSnippets.join('\n').split('\n').length;
+                const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
                 console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${totalLines} lines, ${theme.affectedFiles.length} files)`);
                 // PRD: If merged theme exceeds atomic size, it should be re-evaluated
                 const exceedsLineLimit = strictAtomicLimits && totalLines > maxAtomicSize;
@@ -33590,7 +33595,7 @@ class ThemeExpansionService {
         }
         // Pre-deduplication state logging
         console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
-        subThemes.forEach(t => {
+        subThemes.forEach((t) => {
             const lines = t.codeSnippets.join('\n').split('\n').length;
             console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${lines} lines)`);
         });
@@ -33662,7 +33667,7 @@ class ThemeExpansionService {
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
             // Post-deduplication state logging (after second pass)
             console.log(`[DEDUP-AFTER] Final themes after second pass deduplication:`);
-            secondPassResult.forEach(t => {
+            secondPassResult.forEach((t) => {
                 const lines = t.codeSnippets.join('\n').split('\n').length;
                 if (t.sourceThemes && t.sourceThemes.length > 1) {
                     console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
@@ -33681,7 +33686,7 @@ class ThemeExpansionService {
         }
         // Post-deduplication state logging (no second pass)
         console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
-        finalThemes.forEach(t => {
+        finalThemes.forEach((t) => {
             const lines = t.codeSnippets.join('\n').split('\n').length;
             if (t.sourceThemes && t.sourceThemes.length > 1) {
                 console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
@@ -33969,7 +33974,7 @@ CRITICAL: Respond with ONLY valid JSON.
                 // Create expanded theme with new sub-themes
                 const expandedTheme = {
                     ...request.theme,
-                    childThemes: [...request.theme.childThemes, ...analysis.subThemes],
+                    childThemes: analysis.subThemes,
                 };
                 return {
                     requestId: request.id,
@@ -34007,6 +34012,11 @@ CRITICAL: Respond with ONLY valid JSON.
         const expansionCandidate = request.context;
         // We already have the expansion decision from evaluateExpansionCandidate
         if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
+            // Debug: Log what AI provided
+            console.log(`[DEBUG-SUBTHEMES] AI suggested ${expansionCandidate.expansionDecision.suggestedSubThemes.length} sub-themes:`);
+            expansionCandidate.expansionDecision.suggestedSubThemes.forEach((st, i) => {
+                console.log(`  ${i + 1}. "${st.name}" - files: ${st.files ? JSON.stringify(st.files) : 'UNDEFINED'}`);
+            });
             // Convert suggested sub-themes to ConsolidatedThemes
             const suggestedSubThemes = expansionCandidate.expansionDecision.suggestedSubThemes;
             // DEBUG: Log AI-generated sub-themes before conversion
@@ -34100,6 +34110,17 @@ Return JSON with specific sub-themes:
             };
         }
         catch (error) {
+            // Log detailed context on error
+            console.error(`[EXPANSION-ERROR] AI analysis failed for theme "${theme.name}"`);
+            console.error(`[EXPANSION-ERROR] Theme ID: ${theme.id}`);
+            console.error(`[EXPANSION-ERROR] Parent theme: ${parentTheme?.name || 'none'} (ID: ${parentTheme?.id || 'N/A'})`);
+            console.error(`[EXPANSION-ERROR] Current depth: ${depth}`);
+            console.error(`[EXPANSION-ERROR] Theme level: ${theme.level}`);
+            console.error(`[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`);
+            console.error(`[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`);
+            console.error(`[EXPANSION-ERROR] Total code lines: ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)}`);
+            console.error(`[EXPANSION-ERROR] Error: ${error}`);
+            console.error(`[EXPANSION-ERROR] Stack trace:`, error instanceof Error ? error.stack : 'No stack trace available');
             logger_1.logger.info('EXPANSION', `AI analysis failed for theme ${theme.name}: ${error}`);
             return {
                 subThemes: [],
@@ -34117,7 +34138,26 @@ Return JSON with specific sub-themes:
     convertSuggestedToConsolidatedThemes(suggestedThemes, parentTheme) {
         return suggestedThemes.map((suggested, index) => {
             const relevantFiles = suggested.files || suggested.relevantFiles || [];
+            // Validate that AI provided files
+            if (relevantFiles.length === 0) {
+                console.error(`[ERROR] AI did not provide files for sub-theme "${suggested.name}"`);
+                console.error(`[ERROR] Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                throw new Error(`AI failed to provide files for sub-theme "${suggested.name}". ` +
+                    `Parent theme has ${parentTheme.affectedFiles.length} files. ` +
+                    `AI must specify which files each sub-theme affects.`);
+            }
             const validFiles = relevantFiles.filter((file) => parentTheme.affectedFiles.includes(file));
+            // Validate that provided files are valid
+            if (validFiles.length === 0) {
+                console.error(`[ERROR] AI provided invalid files for sub-theme "${suggested.name}"`);
+                console.error(`[ERROR] AI suggested: ${JSON.stringify(relevantFiles)}`);
+                console.error(`[ERROR] Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                throw new Error(`AI provided invalid files for sub-theme "${suggested.name}". ` +
+                    `Suggested files ${JSON.stringify(relevantFiles)} are not in parent's files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+            }
+            console.log(`[FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
+            console.log(`  - AI suggested files: ${JSON.stringify(relevantFiles)}`);
+            console.log(`  - Valid files assigned: ${JSON.stringify(validFiles)}`);
             return {
                 id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', parentTheme.id, index),
                 name: suggested.name,
@@ -34125,7 +34165,7 @@ Return JSON with specific sub-themes:
                 level: parentTheme.level + 1,
                 parentId: parentTheme.id,
                 childThemes: [],
-                affectedFiles: validFiles.length > 0 ? validFiles : [parentTheme.affectedFiles[0]], // Fallback to first parent file
+                affectedFiles: validFiles,
                 confidence: 0.8,
                 businessImpact: suggested.businessImpact ||
                     suggested.rationale ||
@@ -36258,14 +36298,14 @@ const exec = __importStar(__nccwpck_require__(5236));
 const secure_file_namer_1 = __nccwpck_require__(1661);
 const performance_tracker_1 = __nccwpck_require__(9766);
 /**
- * Enhanced Claude client with performance tracking
+ * Enhanced Claude client with performance tracking and global rate limiting
  */
 class ClaudeClient {
     constructor(anthropicApiKey) {
         this.anthropicApiKey = anthropicApiKey;
         // Set the API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = this.anthropicApiKey;
-        // Initialize metrics
+        // Initialize instance metrics
         this.metrics = {
             totalCalls: 0,
             totalTime: 0,
@@ -36276,25 +36316,156 @@ class ClaudeClient {
         };
     }
     async callClaude(prompt, context = 'unknown', operation) {
+        // Use global rate-limited queue instead of direct execution
+        return this.enqueueRequest(prompt, context, operation);
+    }
+    /**
+     * Enqueue a request for rate-limited processing
+     */
+    async enqueueRequest(prompt, context, operation) {
+        return new Promise((resolve, reject) => {
+            const queueItem = {
+                id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                prompt,
+                context,
+                operation,
+                resolve,
+                reject,
+                timestamp: Date.now(),
+                retryCount: 0,
+            };
+            // Add to static queue
+            ClaudeClient.requestQueue.push(queueItem);
+            ClaudeClient.queueMetrics.totalQueued++;
+            ClaudeClient.queueMetrics.maxQueueLength = Math.max(ClaudeClient.queueMetrics.maxQueueLength, ClaudeClient.requestQueue.length);
+            // Start processing if not already running
+            ClaudeClient.startQueueProcessor();
+            // Log queue status every 10 requests
+            if (ClaudeClient.queueMetrics.totalQueued % 10 === 0) {
+                console.log(`[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting, ${ClaudeClient.activeRequests} active, ${ClaudeClient.queueMetrics.totalProcessed} completed`);
+            }
+        });
+    }
+    /**
+     * Start the static queue processor if not already running
+     */
+    static startQueueProcessor() {
+        if (!ClaudeClient.isProcessing) {
+            ClaudeClient.isProcessing = true;
+            ClaudeClient.processingPromise = ClaudeClient.processQueue();
+        }
+    }
+    /**
+     * Process the request queue with rate limiting
+     */
+    static async processQueue() {
+        while (ClaudeClient.requestQueue.length > 0 ||
+            ClaudeClient.activeRequests > 0) {
+            // Check circuit breaker
+            if (Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil) {
+                await ClaudeClient.sleep(1000);
+                continue;
+            }
+            // Check if we can start new request
+            if (ClaudeClient.requestQueue.length > 0 &&
+                ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS &&
+                Date.now() - ClaudeClient.lastRequestTime >=
+                    ClaudeClient.MIN_REQUEST_INTERVAL) {
+                const queueItem = ClaudeClient.requestQueue.shift();
+                ClaudeClient.activeRequests++;
+                ClaudeClient.lastRequestTime = Date.now();
+                // Process request asynchronously
+                ClaudeClient.processRequest(queueItem);
+            }
+            else {
+                // Wait briefly before checking again
+                await ClaudeClient.sleep(50);
+            }
+        }
+        ClaudeClient.isProcessing = false;
+        ClaudeClient.processingPromise = null;
+    }
+    /**
+     * Process a single request with error handling and retry logic
+     */
+    static async processRequest(queueItem) {
         const startTime = Date.now();
-        this.metrics.totalCalls++;
-        this.updateContextCounter(this.metrics.callsByContext, context);
         try {
-            const result = await this.executeClaudeCall(prompt);
+            // Create a temporary client instance for execution
+            const tempClient = new ClaudeClient(process.env.ANTHROPIC_API_KEY || '');
+            const result = await tempClient.executeClaudeCall(queueItem.prompt);
+            // Track successful metrics
             const duration = Date.now() - startTime;
-            // Track successful call metrics
-            this.metrics.totalTime += duration;
-            this.updateContextCounter(this.metrics.timeByContext, context, duration);
+            ClaudeClient.queueMetrics.totalProcessed++;
+            ClaudeClient.queueMetrics.totalWaitTime +=
+                startTime - queueItem.timestamp;
+            ClaudeClient.queueMetrics.consecutiveRateLimitErrors = 0;
+            // Track instance metrics
+            tempClient.metrics.totalCalls++;
+            tempClient.metrics.totalTime += duration;
+            tempClient.updateContextCounter(tempClient.metrics.callsByContext, queueItem.context);
+            tempClient.updateContextCounter(tempClient.metrics.timeByContext, queueItem.context, duration);
             // Track with performance tracker
-            performance_tracker_1.performanceTracker.trackAICall(context, duration, operation);
-            return result;
+            performance_tracker_1.performanceTracker.trackAICall(queueItem.context, duration, queueItem.operation);
+            queueItem.resolve(result);
         }
         catch (error) {
-            // Track error metrics
-            this.metrics.errors++;
-            this.updateContextCounter(this.metrics.errorsByContext, context);
-            throw error;
+            await ClaudeClient.handleRequestError(queueItem, error);
         }
+        finally {
+            ClaudeClient.activeRequests--;
+        }
+    }
+    /**
+     * Handle request errors with retry logic
+     */
+    static async handleRequestError(queueItem, error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isRateLimitError = ClaudeClient.isRateLimitError(errorMessage);
+        if (isRateLimitError) {
+            ClaudeClient.queueMetrics.consecutiveRateLimitErrors++;
+            console.error(`[CLAUDE-RATE-LIMIT] Rate limit detected: ${errorMessage}`);
+            // Circuit breaker: pause processing after 5 consecutive rate limit errors
+            if (ClaudeClient.queueMetrics.consecutiveRateLimitErrors >= 5) {
+                ClaudeClient.queueMetrics.circuitBreakerUntil = Date.now() + 30000; // 30 seconds
+                console.error('[CLAUDE-RATE-LIMIT] Circuit breaker activated for 30s');
+            }
+            // Retry with exponential backoff
+            if (queueItem.retryCount < 3) {
+                queueItem.retryCount++;
+                const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s
+                console.error(`[CLAUDE-RATE-LIMIT] Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/3)`);
+                setTimeout(() => {
+                    ClaudeClient.requestQueue.unshift(queueItem); // Add back to front of queue
+                }, backoffDelay);
+                return;
+            }
+        }
+        // Failed permanently
+        ClaudeClient.queueMetrics.totalFailed++;
+        console.error(`[CLAUDE-ERROR] Request failed permanently: ${errorMessage}`);
+        queueItem.reject(new Error(`Claude API call failed: ${errorMessage}`));
+    }
+    /**
+     * Check if error is rate limit related
+     */
+    static isRateLimitError(errorMessage) {
+        const rateLimitPatterns = [
+            'rate_limit_error',
+            'rate limit',
+            'too many requests',
+            'quota exceeded',
+            '429',
+            'throttled',
+        ];
+        const lowerError = errorMessage.toLowerCase();
+        return rateLimitPatterns.some((pattern) => lowerError.includes(pattern));
+    }
+    /**
+     * Sleep utility
+     */
+    static sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
     }
     async executeClaudeCall(prompt) {
         let tempFile = null;
@@ -36304,15 +36475,36 @@ class ClaudeClient {
             tempFile = filePath;
             performance_tracker_1.performanceTracker.trackTempFile(true);
             let output = '';
+            let errorOutput = '';
+            let exitCode = 0;
             try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                exitCode = await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
                     silent: true, // Suppress command logging
                     listeners: {
                         stdout: (data) => {
                             output += data.toString();
                         },
+                        stderr: (data) => {
+                            errorOutput += data.toString();
+                        },
                     },
+                    ignoreReturnCode: true,
                 });
+                if (exitCode !== 0) {
+                    // Log prompt size and first few lines for debugging
+                    const promptLines = prompt.split('\n');
+                    const promptPreview = promptLines.slice(0, 5).join('\n');
+                    console.error(`[CLAUDE-ERROR] Exit code: ${exitCode}`);
+                    console.error(`[CLAUDE-ERROR] Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
+                    console.error(`[CLAUDE-ERROR] Prompt preview: ${promptPreview}...`);
+                    console.error(`[CLAUDE-ERROR] Error output: ${errorOutput}`);
+                    throw new Error(`Claude CLI failed with exit code ${exitCode}. ` +
+                        `Error: ${errorOutput || 'No error output'}. ` +
+                        `Prompt was ${prompt.length} chars.`);
+                }
+                if (!output || output.trim().length === 0) {
+                    throw new Error('Claude returned empty response');
+                }
                 return output.trim();
             }
             finally {
@@ -36355,8 +36547,104 @@ class ClaudeClient {
         this.metrics.timeByContext.clear();
         this.metrics.errorsByContext.clear();
     }
+    /**
+     * Get current queue status (static method)
+     */
+    static getQueueStatus() {
+        return {
+            queueLength: ClaudeClient.requestQueue.length,
+            activeRequests: ClaudeClient.activeRequests,
+            totalProcessed: ClaudeClient.queueMetrics.totalProcessed,
+            totalFailed: ClaudeClient.queueMetrics.totalFailed,
+            averageWaitTime: ClaudeClient.queueMetrics.totalProcessed > 0
+                ? ClaudeClient.queueMetrics.totalWaitTime /
+                    ClaudeClient.queueMetrics.totalProcessed
+                : 0,
+            maxQueueLength: ClaudeClient.queueMetrics.maxQueueLength,
+            isProcessing: ClaudeClient.isProcessing,
+        };
+    }
+    /**
+     * Clear the global queue (useful for testing)
+     */
+    static clearQueue() {
+        // Reject all pending requests
+        ClaudeClient.requestQueue.forEach((item) => {
+            item.reject(new Error('Queue cleared'));
+        });
+        ClaudeClient.requestQueue = [];
+        ClaudeClient.activeRequests = 0;
+        ClaudeClient.isProcessing = false;
+        ClaudeClient.processingPromise = null;
+        // Reset metrics
+        ClaudeClient.queueMetrics = {
+            totalQueued: 0,
+            totalProcessed: 0,
+            totalFailed: 0,
+            totalWaitTime: 0,
+            maxQueueLength: 0,
+            consecutiveRateLimitErrors: 0,
+            circuitBreakerUntil: 0,
+        };
+    }
+    /**
+     * Set maximum concurrent requests (useful for testing/debugging)
+     */
+    static setMaxConcurrency(limit) {
+        if (limit > 0 && limit <= 20) {
+            // Use object property assignment to modify readonly property
+            Object.defineProperty(ClaudeClient, 'MAX_CONCURRENT_REQUESTS', {
+                value: limit,
+                writable: false,
+                enumerable: true,
+                configurable: true,
+            });
+            console.log(`[CLAUDE-QUEUE] Max concurrency set to ${limit}`);
+        }
+        else {
+            console.warn(`[CLAUDE-QUEUE] Invalid concurrency limit: ${limit}`);
+        }
+    }
+    /**
+     * Get detailed queue statistics for debugging
+     */
+    static getDetailedStats() {
+        return {
+            queue: ClaudeClient.getQueueStatus(),
+            circuitBreaker: {
+                active: Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil,
+                until: ClaudeClient.queueMetrics.circuitBreakerUntil,
+            },
+            rateLimiting: {
+                consecutiveErrors: ClaudeClient.queueMetrics.consecutiveRateLimitErrors,
+                lastRequestTime: ClaudeClient.lastRequestTime,
+            },
+            processing: {
+                isRunning: ClaudeClient.isProcessing,
+                hasPromise: ClaudeClient.processingPromise !== null,
+            },
+        };
+    }
 }
 exports.ClaudeClient = ClaudeClient;
+// Static shared rate limiting components
+ClaudeClient.requestQueue = [];
+ClaudeClient.activeRequests = 0;
+ClaudeClient.MAX_CONCURRENT_REQUESTS = 5;
+ClaudeClient.MIN_REQUEST_INTERVAL = 200; // ms between requests
+ClaudeClient.isProcessing = false;
+ClaudeClient.lastRequestTime = 0;
+ClaudeClient.processingPromise = null;
+// Static metrics for monitoring
+ClaudeClient.queueMetrics = {
+    totalQueued: 0,
+    totalProcessed: 0,
+    totalFailed: 0,
+    totalWaitTime: 0,
+    maxQueueLength: 0,
+    consecutiveRateLimitErrors: 0,
+    circuitBreakerUntil: 0,
+};
 
 
 /***/ }),
