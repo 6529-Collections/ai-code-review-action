@@ -219,10 +219,16 @@ ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 
 CRITICAL FILE ASSIGNMENT RULES:
 1. Each sub-theme MUST have "files" array populated
-2. Files MUST be selected from the parent theme's files listed above
-3. Each file should typically belong to only ONE sub-theme (no duplication unless truly needed)
-4. If a sub-theme doesn't modify any specific files, it shouldn't exist
-5. The "files" field is REQUIRED - omitting it will cause an error`;
+2. Files MUST be selected ONLY from the parent theme's files listed above
+3. You CANNOT suggest files that are not in the parent theme's file list
+4. If parent has only 1 file, ALL sub-themes must use that SAME file
+5. Each file should typically belong to only ONE sub-theme (unless parent has only 1 file)
+6. If a sub-theme doesn't modify any specific files, it shouldn't exist
+7. The "files" field is REQUIRED - omitting it will cause an error
+
+EXAMPLE: If parent theme affects ["src/services/theme-expansion.ts"], then ALL sub-themes 
+must have "files": ["src/services/theme-expansion.ts"]. You CANNOT suggest files like 
+"src/utils/concurrency-manager.ts" that are not in the parent's file list.`;
 
     section += `
 
