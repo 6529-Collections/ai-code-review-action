@@ -4,6 +4,12 @@
     "module": "commonjs",
     "outDir": "./dist",
     "rootDir": "./src",
+    "baseUrl": "./src",
+    "paths": {
+      "@/mindmap/*": ["mindmap/*"],
+      "@/review/*": ["review/*"],
+      "@/shared/*": ["shared/*"]
+    },
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

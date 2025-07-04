@@ -1,8 +1,8 @@
-import { Theme } from './theme-service';
+import { Theme } from '@/shared/types/theme-types';
 import { AISimilarityResult } from '../types/similarity-types';
-import { SimilarityCalculator } from '../utils/similarity-calculator';
-import { JsonExtractor } from '../utils/json-extractor';
-import { ClaudeClient } from '../utils/claude-client';
+import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
+import { JsonExtractor } from '@/shared/utils/json-extractor';
+import { ClaudeClient } from '@/shared/utils/claude-client';
 import { logger } from '../utils/logger';
 
 export class AISimilarityService {

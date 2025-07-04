@@ -29959,11 +29959,11 @@ const core = __importStar(__nccwpck_require__(7484));
 const exec = __importStar(__nccwpck_require__(5236));
 const validation_1 = __nccwpck_require__(4344);
 const utils_1 = __nccwpck_require__(1798);
-const git_service_1 = __nccwpck_require__(5902);
-const theme_service_1 = __nccwpck_require__(1599);
-const theme_formatter_1 = __nccwpck_require__(6583);
-const logger_1 = __nccwpck_require__(7893);
-const performance_tracker_1 = __nccwpck_require__(9766);
+const git_service_1 = __nccwpck_require__(8416);
+const theme_service_1 = __nccwpck_require__(884);
+const theme_formatter_1 = __nccwpck_require__(2542);
+const logger_1 = __nccwpck_require__(411);
+const performance_tracker_1 = __nccwpck_require__(9600);
 async function run() {
     try {
         // Reset performance tracker for this run
@@ -30085,16 +30085,16 @@ if (require.main === require.cache[eval('__filename')]) {
 
 /***/ }),
 
-/***/ 6244:
+/***/ 8589:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AIDomainAnalyzer = void 0;
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const concurrency_manager_1 = __nccwpck_require__(8692);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
+const concurrency_manager_1 = __nccwpck_require__(4482);
 const utils_1 = __nccwpck_require__(1798);
 /**
  * AI-driven business domain analyzer
@@ -30393,18 +30393,18 @@ exports.AIDomainAnalyzer = AIDomainAnalyzer;
 
 /***/ }),
 
-/***/ 7257:
+/***/ 3862:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AIExpansionDecisionService = void 0;
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
-const code_structure_analyzer_1 = __nccwpck_require__(8318);
-const dynamic_prompt_builder_1 = __nccwpck_require__(1814);
+const code_structure_analyzer_1 = __nccwpck_require__(5873);
+const dynamic_prompt_builder_1 = __nccwpck_require__(4527);
 /**
  * Simplified AI-driven expansion decision service
  * Implements PRD vision: "AI decides when further decomposition is needed"
@@ -30513,404 +30513,7 @@ exports.AIExpansionDecisionService = AIExpansionDecisionService;
 
 /***/ }),
 
-/***/ 270:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.AISimilarityService = void 0;
-const similarity_calculator_1 = __nccwpck_require__(7831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const claude_client_1 = __nccwpck_require__(3831);
-const logger_1 = __nccwpck_require__(7893);
-class AISimilarityService {
-    constructor(anthropicApiKey) {
-        this.anthropicApiKey = anthropicApiKey;
-        this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
-        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
-    }
-    async calculateAISimilarity(theme1, theme2) {
-        const prompt = this.buildSimilarityPrompt(theme1, theme2);
-        try {
-            const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
-            const result = this.parseAISimilarityResponse(output);
-            logger_1.logger.debug('AI-SIMILARITY', `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
-            logger_1.logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
-            return result;
-        }
-        catch (error) {
-            logger_1.logger.warn('AI-SIMILARITY', `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`);
-            // Fallback to basic string matching
-            return this.createFallbackSimilarity(theme1, theme2);
-        }
-    }
-    /**
-     * Get Claude client for external metrics access
-     */
-    getClaudeClient() {
-        return this.claudeClient;
-    }
-    buildSimilarityPrompt(theme1, theme2) {
-        // Include rich details if available
-        const theme1Details = this.buildThemeDetails(theme1);
-        const theme2Details = this.buildThemeDetails(theme2);
-        return `Analyze these code changes to determine if they should be grouped together.
-
-**Theme 1: "${theme1.name}"**
-${theme1Details}
-
-**Theme 2: "${theme2.name}"**
-${theme2Details}
-
-IMPORTANT CONTEXT:
-- Look at the actual code changes, not just descriptions
-- Consider if these are truly part of the same change or just happen to be similar
-- Think about how a developer would organize these changes in their mind
-- Consider file relationships and dependencies
-
-Questions to answer:
-1. Are these solving the same problem or different problems?
-2. Would combining them make the theme clearer or more confusing?
-3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
-4. Do they have logical dependencies on each other?
-
-Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
-It's better to have more specific themes than overly broad ones.
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "shouldMerge": true,
-  "confidence": 0.85,
-  "reasoning": "Both themes implement the same email validation improvement for user data integrity"
-}`;
-    }
-    buildThemeDetails(theme) {
-        let details = `Description: ${theme.description}`;
-        // Add detailed description if available
-        if (theme.detailedDescription) {
-            details += `\nDetailed: ${theme.detailedDescription}`;
-        }
-        // Add technical summary if available
-        if (theme.technicalSummary) {
-            details += `\nTechnical: ${theme.technicalSummary}`;
-        }
-        // Add key changes if available
-        if (theme.keyChanges && theme.keyChanges.length > 0) {
-            details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
-        }
-        // Add files
-        details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
-        // Add code metrics if available
-        if (theme.codeMetrics) {
-            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
-        }
-        // Add main functions/classes if available
-        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
-            details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
-        }
-        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
-            details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
-        }
-        // Add all code snippets - modern context windows can handle it
-        const snippets = theme.codeSnippets.join('\n\n');
-        if (snippets) {
-            details += `\n\nActual Code Changes:\n${snippets}`;
-        }
-        return details;
-    }
-    parseAISimilarityResponse(output) {
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['shouldMerge', 'confidence', 'reasoning']);
-        if (extractionResult.success) {
-            const parsed = extractionResult.data;
-            // Map the simple response to the full AISimilarityResult interface
-            const shouldMerge = parsed.shouldMerge || false;
-            const confidence = parsed.confidence || 0;
-            return {
-                shouldMerge,
-                confidence,
-                reasoning: parsed.reasoning || 'No reasoning provided',
-                // Derive a semantic score from the decision and confidence
-                semanticScore: shouldMerge ? confidence : 1 - confidence,
-                // Legacy scores - set to 0 as they're not used anymore
-                nameScore: 0,
-                descriptionScore: 0,
-                patternScore: 0,
-                businessScore: 0,
-            };
-        }
-        // Log the extraction failure for debugging
-        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
-        }
-        return {
-            nameScore: 0,
-            descriptionScore: 0,
-            patternScore: 0,
-            businessScore: 0,
-            semanticScore: 0,
-            shouldMerge: false,
-            confidence: 0,
-            reasoning: `Failed to parse AI response: ${extractionResult.error}`,
-        };
-    }
-    createFallbackSimilarity(theme1, theme2) {
-        // Fallback when AI fails - conservative approach
-        const nameScore = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
-        // Only merge if names are extremely similar (fallback is conservative)
-        const shouldMerge = nameScore > 0.9;
-        return {
-            shouldMerge,
-            confidence: 0.3, // Low confidence for fallback
-            reasoning: 'AI analysis failed - conservative fallback based on name similarity only',
-            semanticScore: shouldMerge ? 0.6 : 0.2,
-            // Legacy scores - not used
-            nameScore: 0,
-            descriptionScore: 0,
-            patternScore: 0,
-            businessScore: 0,
-        };
-    }
-    /**
-     * Calculate similarity for multiple theme pairs in a single AI call
-     * This is the key performance optimization method
-     */
-    async calculateBatchSimilarity(batchPrompt, expectedResults) {
-        try {
-            const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
-            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
-            // Extract and validate JSON response
-            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
-            if (!jsonResult.success) {
-                throw new Error(`JSON extraction failed: ${jsonResult.error}`);
-            }
-            const batchData = jsonResult.data;
-            // Validate we got the expected number of results
-            if (!batchData.results || !Array.isArray(batchData.results)) {
-                throw new Error('Invalid batch response: missing results array');
-            }
-            if (batchData.results.length !== expectedResults) {
-                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
-            }
-            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
-            return batchData;
-        }
-        catch (error) {
-            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
-            throw error;
-        }
-    }
-}
-exports.AISimilarityService = AISimilarityService;
-
-
-/***/ }),
-
-/***/ 325:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BatchProcessor = void 0;
-const json_extractor_1 = __nccwpck_require__(2642);
-const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
-class BatchProcessor {
-    constructor() {
-        this.batchSize = 8; // Process 8 theme pairs per AI batch call
-        this.batchFailures = 0; // Track consecutive batch failures
-    }
-    async processBatchSimilarity(pairs) {
-        const prompt = this.buildBatchSimilarityPrompt(pairs);
-        try {
-            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
-            let output = '';
-            try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                    silent: true,
-                    listeners: {
-                        stdout: (data) => {
-                            output += data.toString();
-                        },
-                    },
-                });
-                const results = this.parseBatchSimilarityResponse(output, pairs);
-                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
-                return results;
-            }
-            finally {
-                cleanup(); // Ensure file is cleaned up even if execution fails
-            }
-        }
-        catch (error) {
-            console.error('Batch AI similarity failed:', error);
-            throw error;
-        }
-    }
-    getAdaptiveBatchSize() {
-        return Math.max(2, this.batchSize - Math.floor(this.batchFailures / 2));
-    }
-    incrementFailures() {
-        this.batchFailures++;
-    }
-    decrementFailures() {
-        this.batchFailures = Math.max(0, this.batchFailures - 1);
-    }
-    getFailureCount() {
-        return this.batchFailures;
-    }
-    chunkArray(array, chunkSize) {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
-        }
-        return chunks;
-    }
-    buildBatchSimilarityPrompt(pairs) {
-        const pairDescriptions = pairs
-            .map((pair, index) => `Pair ${index + 1}: ID="${pair.id}"
-- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
-- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
-- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
-- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`)
-            .join('\n\n');
-        return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
-
-THEME PAIRS:
-${pairDescriptions}
-
-RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
-[
-${pairs
-            .map((pair, index) => `  {
-    "pairId": "${pair.id}",
-    "nameScore": 0.5,
-    "descriptionScore": 0.5,
-    "patternScore": 0.5,
-    "businessScore": 0.5,
-    "semanticScore": 0.5,
-    "shouldMerge": false,
-    "confidence": 0.5,
-    "reasoning": "analysis for pair ${index + 1}"
-  }${index < pairs.length - 1 ? ',' : ''}`)
-            .join('\n')}
-]
-
-Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
-    }
-    parseBatchSimilarityResponse(output, pairs) {
-        console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
-        console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
-        if (extractionResult.success) {
-            const parsed = extractionResult.data;
-            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
-            // Handle case where AI returns fewer results than expected
-            const results = [];
-            for (let i = 0; i < pairs.length; i++) {
-                const item = parsed[i];
-                const pair = pairs[i];
-                if (item && typeof item === 'object') {
-                    results.push({
-                        pairId: item.pairId || pair.id,
-                        similarity: {
-                            nameScore: this.clampScore(item.nameScore),
-                            descriptionScore: this.clampScore(item.descriptionScore),
-                            patternScore: this.clampScore(item.patternScore),
-                            businessScore: this.clampScore(item.businessScore),
-                            semanticScore: this.clampScore(item.semanticScore),
-                            shouldMerge: Boolean(item.shouldMerge),
-                            confidence: this.clampScore(item.confidence),
-                            reasoning: String(item.reasoning || 'No reasoning provided'),
-                        },
-                    });
-                }
-                else {
-                    // Missing or invalid item - create fallback
-                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
-                    results.push({
-                        pairId: pair.id,
-                        similarity: this.createFallbackSimilarity(),
-                        error: `Missing AI response for pair ${i + 1}`,
-                    });
-                }
-            }
-            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
-            return results;
-        }
-        // JSON extraction failed
-        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
-        }
-        console.warn('[BATCH-DEBUG] Using fallback for all pairs');
-        // Fallback: create error results for all pairs
-        return pairs.map((pair) => ({
-            pairId: pair.id,
-            similarity: this.createFallbackSimilarity(),
-            error: `Failed to parse batch AI response: ${extractionResult.error}`,
-        }));
-    }
-    clampScore(value) {
-        const num = Number(value);
-        return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
-    }
-    createFallbackSimilarity() {
-        return {
-            nameScore: 0.3,
-            descriptionScore: 0.3,
-            patternScore: 0.3,
-            businessScore: 0.3,
-            semanticScore: 0.3,
-            shouldMerge: false,
-            confidence: 0.2,
-            reasoning: 'Fallback similarity due to parsing error',
-        };
-    }
-}
-exports.BatchProcessor = BatchProcessor;
-
-
-/***/ }),
-
-/***/ 8133:
+/***/ 6:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -30951,9 +30554,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BusinessDomainService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const ai_domain_analyzer_1 = __nccwpck_require__(6244);
+const concurrency_manager_1 = __nccwpck_require__(4482);
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const ai_domain_analyzer_1 = __nccwpck_require__(8589);
 class BusinessDomainService {
     constructor(anthropicApiKey) {
         this.aiDomainAnalyzer = new ai_domain_analyzer_1.AIDomainAnalyzer(anthropicApiKey);
@@ -31390,7 +30993,7 @@ exports.BusinessDomainService = BusinessDomainService;
 
 /***/ }),
 
-/***/ 8318:
+/***/ 5873:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
@@ -31682,7 +31285,7 @@ exports.CodeStructureAnalyzer = CodeStructureAnalyzer;
 
 /***/ }),
 
-/***/ 1814:
+/***/ 4527:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -32092,451 +31695,19 @@ exports.DynamicPromptBuilder = DynamicPromptBuilder;
 
 /***/ }),
 
-/***/ 5902:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GitService = void 0;
-const github = __importStar(__nccwpck_require__(3228));
-const exec = __importStar(__nccwpck_require__(5236));
-const ai_code_analyzer_1 = __nccwpck_require__(9840);
-class GitService {
-    shouldIncludeFile(filename) {
-        const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
-        return !isExcluded;
-    }
-    constructor(githubToken, anthropicApiKey) {
-        this.githubToken = githubToken;
-        this.octokit = null;
-        // Initialize GitHub API client if token is available
-        if (this.githubToken) {
-            try {
-                this.octokit = github.getOctokit(this.githubToken);
-            }
-            catch (error) {
-                console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
-            }
-        }
-        // Initialize AI analyzer - use environment variable if not provided
-        const apiKey = anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-        if (!apiKey) {
-            throw new Error('[GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
-        }
-        this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(apiKey);
-    }
-    async getEnhancedChangedFiles() {
-        console.log('[GIT-SERVICE] Getting enhanced changed files with AI code analysis');
-        // Get basic changed files first
-        const changedFiles = await this.getChangedFiles();
-        if (changedFiles.length === 0) {
-            console.log('[GIT-SERVICE] No changed files to analyze');
-            return [];
-        }
-        // Prepare files for concurrent AI analysis
-        const filesToAnalyze = changedFiles.map((file) => ({
-            filename: file.filename,
-            diffPatch: file.patch || '',
-            changeType: file.status === 'removed'
-                ? 'deleted'
-                : file.status,
-            linesAdded: file.additions,
-            linesRemoved: file.deletions,
-        }));
-        console.log(`[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
-        // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
-        const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
-        console.log(`[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
-        // Log cache statistics
-        const cacheStats = this.aiAnalyzer.getCacheStats();
-        console.log(`[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
-        return codeChanges;
-    }
-    async getPullRequestContext() {
-        // Check if we're in a GitHub Actions PR context
-        if (github.context.eventName === 'pull_request') {
-            const pr = github.context.payload.pull_request;
-            if (pr) {
-                console.log(`[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`);
-                return {
-                    number: pr.number,
-                    title: pr.title,
-                    body: pr.body || '',
-                    baseBranch: pr.base.ref,
-                    headBranch: pr.head.ref,
-                    baseSha: pr.base.sha,
-                    headSha: pr.head.sha,
-                };
-            }
-        }
-        // Dev mode: First try to find existing PR for current branch
-        const currentBranch = await this.getCurrentBranch();
-        const existingPR = await this.getPullRequestForBranch(currentBranch);
-        if (existingPR) {
-            console.log(`[GIT-SERVICE] Using existing PR #${existingPR.number} context for local testing`);
-            return existingPR;
-        }
-        // Fallback: create synthetic PR context from local git
-        console.log('[GIT-SERVICE] No PR found, using branch comparison mode');
-        return await this.createDevModeContext();
-    }
-    async getPullRequestForBranch(branchName) {
-        if (!this.octokit) {
-            console.log('[GIT-SERVICE] No GitHub token available, cannot check for existing PR');
-            return null;
-        }
-        try {
-            console.log(`[GIT-SERVICE] Checking for open PR for branch: ${branchName}`);
-            const { data: pulls } = await this.octokit.rest.pulls.list({
-                ...github.context.repo,
-                head: `${github.context.repo.owner}:${branchName}`,
-                state: 'open',
-            });
-            if (pulls.length > 0) {
-                const pr = pulls[0]; // Take the first matching PR
-                console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${branchName}`);
-                return {
-                    number: pr.number,
-                    title: pr.title,
-                    body: pr.body || '',
-                    baseBranch: pr.base.ref,
-                    headBranch: pr.head.ref,
-                    baseSha: pr.base.sha,
-                    headSha: pr.head.sha,
-                };
-            }
-            console.log(`[GIT-SERVICE] No open PR found for branch ${branchName}`);
-            return null;
-        }
-        catch (error) {
-            console.warn(`[GIT-SERVICE] Failed to check for PR on branch ${branchName}:`, error);
-            return null;
-        }
-    }
-    async createDevModeContext() {
-        try {
-            const currentBranch = await this.getCurrentBranch();
-            const baseBranch = 'main'; // Default comparison branch
-            const headSha = await this.getCurrentCommitSha();
-            const baseSha = await this.getBranchCommitSha(baseBranch);
-            return {
-                number: 0, // Synthetic PR number
-                title: `Local changes on ${currentBranch}`,
-                body: 'Development mode - comparing local changes against main branch',
-                baseBranch,
-                headBranch: currentBranch,
-                baseSha,
-                headSha,
-            };
-        }
-        catch (error) {
-            console.warn('Failed to create dev mode context:', error);
-            return null;
-        }
-    }
-    async getCurrentBranch() {
-        let branch = '';
-        await exec.exec('git', ['branch', '--show-current'], {
-            listeners: {
-                stdout: (data) => {
-                    branch += data.toString().trim();
-                },
-            },
-        });
-        return branch || 'unknown';
-    }
-    async getCurrentCommitSha() {
-        let sha = '';
-        await exec.exec('git', ['rev-parse', 'HEAD'], {
-            listeners: {
-                stdout: (data) => {
-                    sha += data.toString().trim();
-                },
-            },
-        });
-        return sha;
-    }
-    async getBranchCommitSha(branch) {
-        let sha = '';
-        try {
-            await exec.exec('git', ['rev-parse', `origin/${branch}`], {
-                listeners: {
-                    stdout: (data) => {
-                        sha += data.toString().trim();
-                    },
-                },
-            });
-        }
-        catch (error) {
-            // Fallback to local branch if remote doesn't exist
-            await exec.exec('git', ['rev-parse', branch], {
-                listeners: {
-                    stdout: (data) => {
-                        sha += data.toString().trim();
-                    },
-                },
-            });
-        }
-        return sha;
-    }
-    async getChangedFiles() {
-        const prContext = await this.getPullRequestContext();
-        if (!prContext) {
-            return [];
-        }
-        console.log(`[GIT-DEBUG] PR Context: number=${prContext.number}, event=${github.context.eventName}, hasToken=${!!this.githubToken}`);
-        console.log(`[GIT-DEBUG] baseBranch=${prContext.baseBranch}, headBranch=${prContext.headBranch}`);
-        // Use GitHub API for real PRs (in GitHub Actions or when PR found locally)
-        if (prContext.number > 0 && this.octokit) {
-            console.log(`[GIT-DEBUG] Using GitHub API for PR #${prContext.number} (exact same as live)`);
-            return await this.getChangedFilesFromGitHub(prContext.number);
-        }
-        // Fallback to git commands for synthetic dev mode (no PR)
-        console.log(`[GIT-DEBUG] Using git commands method for branch comparison`);
-        return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
-    }
-    async getChangedFilesFromGitHub(prNumber) {
-        try {
-            if (!this.octokit) {
-                throw new Error('GitHub API client not initialized');
-            }
-            // Fetch all files using pagination (GitHub API returns max 30 per page)
-            const allFiles = [];
-            let page = 1;
-            let hasMore = true;
-            while (hasMore) {
-                const { data: files } = await this.octokit.rest.pulls.listFiles({
-                    ...github.context.repo,
-                    pull_number: prNumber,
-                    per_page: 100, // Maximum allowed by GitHub
-                    page: page,
-                });
-                allFiles.push(...files);
-                // If we got less than 100 files, we've reached the end
-                hasMore = files.length === 100;
-                page++;
-                // Safety limit to prevent infinite loops
-                if (page > 10) {
-                    console.warn('[GIT-SERVICE] Reached pagination limit, stopping at 1000 files');
-                    break;
-                }
-            }
-            const changedFiles = allFiles
-                .filter((file) => this.shouldIncludeFile(file.filename))
-                .map((file) => ({
-                filename: file.filename,
-                status: file.status,
-                additions: file.additions,
-                deletions: file.deletions,
-                patch: file.patch,
-            }));
-            console.log(`[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
-            return changedFiles;
-        }
-        catch (error) {
-            console.error('Failed to get changed files from GitHub:', error);
-            return [];
-        }
-    }
-    async getChangedFilesFromGit(baseSha, headSha) {
-        console.log(`[GIT-DEBUG] Comparing ${baseSha.substring(0, 8)} (base) vs ${headSha.substring(0, 8)} (head)`);
-        const files = [];
-        let fileList = '';
-        let diffCommand = [];
-        // Method 1: Try exact SHA comparison (remove triple-dot syntax)
-        try {
-            diffCommand = ['diff', '--name-status', baseSha, headSha];
-            console.log(`[GIT-DEBUG] Method 1: git ${diffCommand.join(' ')}`);
-            await exec.exec('git', diffCommand, {
-                listeners: {
-                    stdout: (data) => {
-                        fileList += data.toString();
-                    },
-                },
-            });
-            console.log(`[GIT-DEBUG] Method 1 succeeded`);
-        }
-        catch (method1Error) {
-            console.log(`[GIT-DEBUG] Method 1 failed: ${method1Error}`);
-            // Method 2: Fetch base branch and compare
-            try {
-                const prContext = await this.getPullRequestContext();
-                const baseBranch = prContext?.baseBranch || 'main';
-                console.log(`[GIT-DEBUG] Method 2: Fetching base branch ${baseBranch}`);
-                await exec.exec('git', ['fetch', 'origin', baseBranch]);
-                diffCommand = ['diff', '--name-status', `origin/${baseBranch}`, 'HEAD'];
-                console.log(`[GIT-DEBUG] Method 2: git ${diffCommand.join(' ')}`);
-                fileList = ''; // Reset for retry
-                await exec.exec('git', diffCommand, {
-                    listeners: {
-                        stdout: (data) => {
-                            fileList += data.toString();
-                        },
-                    },
-                });
-                console.log(`[GIT-DEBUG] Method 2 succeeded`);
-            }
-            catch (method2Error) {
-                console.log(`[GIT-DEBUG] Method 2 failed: ${method2Error}`);
-                // Method 3: Emergency fallback - recent commits only
-                try {
-                    diffCommand = ['diff', '--name-status', 'HEAD~1', 'HEAD'];
-                    console.log(`[GIT-DEBUG] Method 3 (emergency): git ${diffCommand.join(' ')}`);
-                    fileList = ''; // Reset for retry
-                    await exec.exec('git', diffCommand, {
-                        listeners: {
-                            stdout: (data) => {
-                                fileList += data.toString();
-                            },
-                        },
-                    });
-                    console.log(`[GIT-DEBUG] Method 3 succeeded (showing recent commits only)`);
-                }
-                catch (method3Error) {
-                    console.error(`[GIT-DEBUG] All methods failed. Method 3 error: ${method3Error}`);
-                    throw new Error(`Git diff failed with all methods. Last error: ${method3Error}`);
-                }
-            }
-        }
-        // Parse file status
-        const fileLines = fileList
-            .trim()
-            .split('\n')
-            .filter((line) => line.trim());
-        console.log(`[GIT-DEBUG] Found ${fileLines.length} changed files total before filtering`);
-        try {
-            for (const line of fileLines) {
-                const [status, filename] = line.split('\t');
-                if (!filename || !this.shouldIncludeFile(filename))
-                    continue;
-                // Get diff patch for this file using the same command that succeeded for file list
-                let patch = '';
-                try {
-                    const patchCommand = [...diffCommand, '--', filename];
-                    await exec.exec('git', patchCommand, {
-                        listeners: {
-                            stdout: (data) => {
-                                patch += data.toString();
-                            },
-                        },
-                    });
-                }
-                catch (error) {
-                    console.warn(`[GIT-DEBUG] Failed to get patch for ${filename}:`, error);
-                    // Continue without patch - we still have the file status
-                }
-                // Count additions/deletions from patch
-                const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
-                const deletions = (patch.match(/^-(?!-)/gm) || []).length;
-                const file = {
-                    filename,
-                    status: this.mapGitStatusToChangedFileStatus(status),
-                    additions,
-                    deletions,
-                    patch,
-                };
-                files.push(file);
-            }
-            console.log(`[GIT-SERVICE] Found ${files.length} source files for analysis (excluded build artifacts)`);
-            return files;
-        }
-        catch (fileProcessingError) {
-            console.error('Failed to process files:', fileProcessingError);
-            return [];
-        }
-    }
-    mapGitStatusToChangedFileStatus(gitStatus) {
-        switch (gitStatus) {
-            case 'A':
-                return 'added';
-            case 'D':
-                return 'removed';
-            case 'M':
-                return 'modified';
-            case 'R':
-                return 'renamed';
-            default:
-                return 'modified';
-        }
-    }
-    async getDiffContent(baseSha, headSha) {
-        let diffOutput = '';
-        try {
-            await exec.exec('git', ['diff', `${baseSha}...${headSha}`], {
-                listeners: {
-                    stdout: (data) => {
-                        diffOutput += data.toString();
-                    },
-                },
-            });
-        }
-        catch (error) {
-            console.error('Failed to get diff content:', error);
-        }
-        return diffOutput;
-    }
-}
-exports.GitService = GitService;
-// Patterns for files to exclude from analysis
-GitService.EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-];
-
-
-/***/ }),
-
-/***/ 2983:
+/***/ 4200:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HierarchicalSimilarityService = void 0;
-const generic_cache_1 = __nccwpck_require__(9267);
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
+const generic_cache_1 = __nccwpck_require__(282);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const logger_1 = __nccwpck_require__(7893);
+const concurrency_manager_1 = __nccwpck_require__(4482);
+const logger_1 = __nccwpck_require__(411);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
  * Handles cross-level duplicate detection and hierarchy optimization
@@ -33124,76 +32295,20 @@ exports.HierarchicalSimilarityService = HierarchicalSimilarityService;
 
 /***/ }),
 
-/***/ 7329:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SimilarityCache = void 0;
-const performance_tracker_1 = __nccwpck_require__(9766);
-class SimilarityCache {
-    constructor() {
-        this.cache = new Map();
-        this.cacheExpireMinutes = 60; // Cache expires after 1 hour
-    }
-    getCacheKey(theme1, theme2) {
-        // Create deterministic cache key regardless of theme order
-        const id1 = theme1.id;
-        const id2 = theme2.id;
-        return id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`;
-    }
-    getCachedSimilarity(cacheKey) {
-        const cached = this.cache.get(cacheKey);
-        if (!cached) {
-            performance_tracker_1.performanceTracker.trackCache(false); // cache miss
-            return null;
-        }
-        // Check if cache has expired
-        const ageMinutes = (Date.now() - cached.timestamp.getTime()) / (1000 * 60);
-        if (ageMinutes > this.cacheExpireMinutes) {
-            this.cache.delete(cacheKey);
-            performance_tracker_1.performanceTracker.trackCache(false); // cache miss (expired)
-            return null;
-        }
-        performance_tracker_1.performanceTracker.trackCache(true); // cache hit
-        return cached;
-    }
-    cacheSimilarity(cacheKey, similarity) {
-        this.cache.set(cacheKey, {
-            similarity,
-            timestamp: new Date(),
-        });
-    }
-    clearCache() {
-        this.cache.clear();
-    }
-    getCacheStats() {
-        return {
-            size: this.cache.size,
-            expireMinutes: this.cacheExpireMinutes,
-        };
-    }
-}
-exports.SimilarityCache = SimilarityCache;
-
-
-/***/ }),
-
-/***/ 7333:
+/***/ 8430:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
-const generic_cache_1 = __nccwpck_require__(9267);
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const ai_expansion_decision_service_1 = __nccwpck_require__(7257);
-const logger_1 = __nccwpck_require__(7893);
+const generic_cache_1 = __nccwpck_require__(282);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
+const concurrency_manager_1 = __nccwpck_require__(4482);
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const ai_expansion_decision_service_1 = __nccwpck_require__(3862);
+const logger_1 = __nccwpck_require__(411);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
     concurrencyLimit: 5,
@@ -34205,7 +33320,7 @@ exports.ThemeExpansionService = ThemeExpansionService;
 
 /***/ }),
 
-/***/ 9018:
+/***/ 3111:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -34245,9 +33360,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeNamingService = void 0;
-const json_extractor_1 = __nccwpck_require__(2642);
+const json_extractor_1 = __nccwpck_require__(8168);
 const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
+const secure_file_namer_1 = __nccwpck_require__(5584);
 class ThemeNamingService {
     async generateMergedThemeNameAndDescription(themes) {
         const prompt = this.buildMergedThemeNamingPrompt(themes);
@@ -34452,7 +33567,7 @@ exports.ThemeNamingService = ThemeNamingService;
 
 /***/ }),
 
-/***/ 1599:
+/***/ 884:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -34493,14 +33608,14 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const theme_similarity_1 = __nccwpck_require__(4189);
-const theme_expansion_1 = __nccwpck_require__(7333);
-const hierarchical_similarity_1 = __nccwpck_require__(2983);
-const ai_code_analyzer_1 = __nccwpck_require__(9840);
-const json_extractor_1 = __nccwpck_require__(2642);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const performance_tracker_1 = __nccwpck_require__(9766);
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const theme_similarity_1 = __nccwpck_require__(3500);
+const theme_expansion_1 = __nccwpck_require__(8430);
+const hierarchical_similarity_1 = __nccwpck_require__(4200);
+const ai_code_analyzer_1 = __nccwpck_require__(3562);
+const json_extractor_1 = __nccwpck_require__(8168);
+const concurrency_manager_1 = __nccwpck_require__(4482);
+const performance_tracker_1 = __nccwpck_require__(9600);
 // Concurrency configuration
 const PARALLEL_CONFIG = {
     CONCURRENCY_LIMIT: 5,
@@ -35209,21 +34324,21 @@ exports.ThemeService = ThemeService;
 
 /***/ }),
 
-/***/ 4189:
+/***/ 3500:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeSimilarityService = void 0;
-const similarity_cache_1 = __nccwpck_require__(7329);
-const similarity_calculator_1 = __nccwpck_require__(7831);
-const ai_similarity_1 = __nccwpck_require__(270);
-const batch_processor_1 = __nccwpck_require__(325);
-const business_domain_1 = __nccwpck_require__(8133);
-const theme_naming_1 = __nccwpck_require__(9018);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const logger_1 = __nccwpck_require__(7893);
+const similarity_cache_1 = __nccwpck_require__(2650);
+const similarity_calculator_1 = __nccwpck_require__(241);
+const ai_similarity_1 = __nccwpck_require__(6684);
+const batch_processor_1 = __nccwpck_require__(7855);
+const business_domain_1 = __nccwpck_require__(6);
+const theme_naming_1 = __nccwpck_require__(3111);
+const concurrency_manager_1 = __nccwpck_require__(4482);
+const logger_1 = __nccwpck_require__(411);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.pendingCalculations = new Map();
@@ -35770,7 +34885,7 @@ exports.ThemeSimilarityService = ThemeSimilarityService;
 
 /***/ }),
 
-/***/ 1798:
+/***/ 5584:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -35809,26 +34924,1481 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handleError = handleError;
-exports.logInfo = logInfo;
-exports.setOutput = setOutput;
-const core = __importStar(__nccwpck_require__(7484));
-function handleError(error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    core.error(`Action failed: ${errorMessage}`);
-    core.setFailed(errorMessage);
+exports.SecureFileNamer = void 0;
+const crypto = __importStar(__nccwpck_require__(6982));
+const os = __importStar(__nccwpck_require__(857));
+const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(9896));
+/**
+ * Secure file naming utility that prevents collisions in parallel execution
+ * by using UUIDs, process IDs, and crypto-grade randomness
+ */
+class SecureFileNamer {
+    /**
+     * Generate a collision-resistant file name for temporary files
+     */
+    static generateSecureFileName(prefix, extension = 'txt') {
+        const uuid = crypto.randomUUID().substring(0, 8);
+        const pid = this.processId;
+        const random = crypto.randomBytes(4).toString('hex');
+        const timestamp = Date.now();
+        return `${prefix}-${pid}-${uuid}-${random}-${timestamp}.${extension}`;
+    }
+    /**
+     * Generate a collision-resistant ID for entities (themes, batches, etc.)
+     */
+    static generateSecureId(prefix) {
+        const uuid = crypto.randomUUID();
+        return `${prefix}-${uuid}`;
+    }
+    /**
+     * Generate a short collision-resistant ID for performance-critical operations
+     */
+    static generateShortSecureId(prefix) {
+        const shortUuid = crypto.randomUUID().substring(0, 8);
+        const random = crypto.randomBytes(2).toString('hex');
+        return `${prefix}-${shortUuid}-${random}`;
+    }
+    /**
+     * Create a process-isolated temporary file path
+     */
+    static createSecureTempFilePath(prefix, extension = 'txt') {
+        const fileName = this.generateSecureFileName(prefix, extension);
+        const processDir = this.getProcessTempDir();
+        return path.join(processDir, fileName);
+    }
+    /**
+     * Get or create a process-specific temporary directory
+     */
+    static getProcessTempDir() {
+        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
+        try {
+            if (!fs.existsSync(processDir)) {
+                fs.mkdirSync(processDir, { recursive: true });
+            }
+        }
+        catch (error) {
+            // Fallback to system temp dir if process dir creation fails
+            console.warn(`Failed to create process temp dir: ${error}`);
+            return os.tmpdir();
+        }
+        return processDir;
+    }
+    /**
+     * Create a temporary file with secure naming and optional content
+     */
+    static createSecureTempFile(prefix, content = '', extension = 'txt') {
+        const filePath = this.createSecureTempFilePath(prefix, extension);
+        try {
+            fs.writeFileSync(filePath, content, 'utf8');
+        }
+        catch (error) {
+            throw new Error(`Failed to create secure temp file: ${error}`);
+        }
+        const cleanup = () => {
+            try {
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            }
+            catch (error) {
+                console.warn(`Failed to cleanup temp file ${filePath}: ${error}`);
+            }
+        };
+        return { filePath, cleanup };
+    }
+    /**
+     * Clean up process-specific temporary directory
+     */
+    static cleanupProcessTempDir() {
+        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
+        try {
+            if (fs.existsSync(processDir)) {
+                // Remove all files in the directory
+                const files = fs.readdirSync(processDir);
+                for (const file of files) {
+                    fs.unlinkSync(path.join(processDir, file));
+                }
+                // Remove the directory
+                fs.rmdirSync(processDir);
+            }
+        }
+        catch (error) {
+            console.warn(`Failed to cleanup process temp dir: ${error}`);
+        }
+    }
+    /**
+     * Generate batch ID with collision resistance for concurrent operations
+     */
+    static generateBatchId(batchType, promptType) {
+        const uuid = crypto.randomUUID().substring(0, 12);
+        const pid = this.processId;
+        const random = crypto.randomBytes(3).toString('hex');
+        if (promptType) {
+            return `${batchType}-${promptType}-${pid}-${uuid}-${random}`;
+        }
+        return `${batchType}-${pid}-${uuid}-${random}`;
+    }
+    /**
+     * Generate expansion/request ID with hierarchy support
+     */
+    static generateHierarchicalId(type, parentId, index) {
+        const uuid = crypto.randomUUID().substring(0, 8);
+        const random = crypto.randomBytes(2).toString('hex');
+        if (parentId && typeof index === 'number') {
+            return `${parentId}_${type}_${index}_${uuid}_${random}`;
+        }
+        if (parentId) {
+            return `${parentId}_${type}_${uuid}_${random}`;
+        }
+        return `${type}_${uuid}_${random}`;
+    }
+    /**
+     * Validate that a generated ID/filename is collision-resistant
+     */
+    static validateSecureNaming(name) {
+        // Check for minimum entropy (process ID + UUID parts + random)
+        const parts = name.split('-');
+        if (parts.length < 4)
+            return false;
+        // Check for presence of process ID (numeric)
+        if (!parts.some((part) => /^\d+$/.test(part)))
+            return false;
+        // Check for presence of hex random data
+        if (!parts.some((part) => /^[a-f0-9]{4,}$/i.test(part)))
+            return false;
+        return true;
+    }
+    /**
+     * Get statistics about the naming system
+     */
+    static getStats() {
+        return {
+            processId: this.processId,
+            processStartTime: this.processStartTime,
+            tempDir: this.getProcessTempDir(),
+            entropyBits: 128 + 32 + 16, // UUID + random bytes + timestamp
+        };
+    }
 }
-function logInfo(message) {
-    core.info(message);
+exports.SecureFileNamer = SecureFileNamer;
+SecureFileNamer.processId = process.pid;
+SecureFileNamer.processStartTime = Date.now();
+/**
+ * Setup process cleanup handlers
+ */
+function setupCleanupHandlers() {
+    const cleanup = () => SecureFileNamer.cleanupProcessTempDir();
+    process.on('exit', cleanup);
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    process.on('uncaughtException', (error) => {
+        console.error('Uncaught exception:', error);
+        cleanup();
+        process.exit(1);
+    });
 }
-function setOutput(name, value) {
-    core.setOutput(name, value);
-}
+// Initialize cleanup handlers
+setupCleanupHandlers();
 
 
 /***/ }),
 
-/***/ 9840:
+/***/ 2542:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ThemeFormatter = void 0;
+/**
+ * Utility for formatting theme hierarchies for output
+ */
+class ThemeFormatter {
+    /**
+     * Format themes for GitHub Actions output with deep hierarchy support
+     */
+    static formatThemesForOutput(themes) {
+        const themeCount = this.countTotalThemes(themes);
+        let output = `Found ${themeCount} themes:\\n`;
+        themes.forEach((theme, index) => {
+            output += this.formatThemeRecursively(theme, index + 1, 0);
+        });
+        return output;
+    }
+    /**
+     * Format a single theme recursively with proper indentation
+     */
+    static formatThemeRecursively(theme, number, depth, parentNumber) {
+        const indent = '   '.repeat(depth);
+        const confidence = (theme.confidence * 100).toFixed(0);
+        // Create theme number (e.g., "1", "1.1", "1.1.1")
+        const themeNumber = parentNumber
+            ? `${parentNumber}.${number}`
+            : `${number}`;
+        // Truncate description if too long
+        const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim(), this.MAX_DESCRIPTION_LENGTH);
+        let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
+        // Files on the same line or next line depending on length
+        const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
+        const fileList = theme.affectedFiles.length > this.MAX_FILES_SHOWN
+            ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
+            : files;
+        output += `\\n${indent}   ${fileList}`;
+        // Main description
+        output += `\\n${indent}   ${description}`;
+        // Show detailed description only if significantly different and adds value
+        if (theme.detailedDescription &&
+            theme.detailedDescription.length > 20 &&
+            !theme.description
+                .toLowerCase()
+                .includes(theme.detailedDescription.toLowerCase().substring(0, 10))) {
+            output += ` ${theme.detailedDescription}`;
+        }
+        // No merge indicators, no emoji, just content
+        // Show child themes recursively without announcement
+        if (theme.childThemes && theme.childThemes.length > 0) {
+            output += '\\n'; // Add blank line before sub-themes
+            theme.childThemes.forEach((childTheme, childIndex) => {
+                output += this.formatThemeRecursively(childTheme, childIndex + 1, depth + 1, themeNumber);
+            });
+        }
+        return output;
+    }
+    /**
+     * Create a concise summary of the theme analysis
+     */
+    static createThemeSummary(themes) {
+        const totalThemes = this.countTotalThemes(themes);
+        const maxDepth = this.calculateMaxDepth(themes);
+        const avgConfidence = this.calculateAverageConfidence(themes);
+        const rootThemes = themes.length;
+        const expandedThemes = this.countExpandedThemes(themes);
+        const mergedThemes = this.countMergedThemes(themes);
+        let summary = `Analyzed code changes and identified ${totalThemes} themes across ${maxDepth + 1} hierarchy levels. `;
+        summary += `Root themes: ${rootThemes}, Average confidence: ${(avgConfidence * 100).toFixed(0)}%. `;
+        if (expandedThemes > 0) {
+            summary += `${expandedThemes} themes expanded for detailed analysis. `;
+        }
+        if (mergedThemes > 0) {
+            summary += `${mergedThemes} themes consolidated from similar patterns.`;
+        }
+        return summary;
+    }
+    /**
+     * Format themes for JSON output (useful for integrations)
+     */
+    static formatThemesAsJson(themes) {
+        const formatted = themes.map((theme) => this.themeToJsonObject(theme));
+        return JSON.stringify(formatted, null, 2);
+    }
+    /**
+     * Create a flat list of all themes with hierarchy indicators
+     */
+    static createFlatThemeList(themes) {
+        const flatThemes = [];
+        const collectThemes = (themeList, parentPath = '') => {
+            themeList.forEach((theme, index) => {
+                const currentPath = parentPath
+                    ? `${parentPath}.${index + 1}`
+                    : `${index + 1}`;
+                flatThemes.push({ theme, path: currentPath });
+                if (theme.childThemes.length > 0) {
+                    collectThemes(theme.childThemes, currentPath);
+                }
+            });
+        };
+        collectThemes(themes);
+        let output = `Theme hierarchy (${flatThemes.length} total themes):\\n`;
+        flatThemes.forEach(({ theme, path }) => {
+            const confidence = (theme.confidence * 100).toFixed(0);
+            const level = path.split('.').length;
+            const indent = '  '.repeat(level - 1);
+            output += `\\n${indent}${path}. ${theme.name} (${confidence}%, ${theme.affectedFiles.length} files)`;
+        });
+        return output;
+    }
+    // Private helper methods
+    static countTotalThemes(themes) {
+        let count = 0;
+        const countRecursively = (themeList) => {
+            count += themeList.length;
+            themeList.forEach((theme) => {
+                if (theme.childThemes.length > 0) {
+                    countRecursively(theme.childThemes);
+                }
+            });
+        };
+        countRecursively(themes);
+        return count;
+    }
+    static calculateMaxDepth(themes) {
+        let maxDepth = 0;
+        const findMaxDepth = (themeList, currentDepth) => {
+            maxDepth = Math.max(maxDepth, currentDepth);
+            themeList.forEach((theme) => {
+                if (theme.childThemes.length > 0) {
+                    findMaxDepth(theme.childThemes, currentDepth + 1);
+                }
+            });
+        };
+        findMaxDepth(themes, 0);
+        return maxDepth;
+    }
+    static calculateAverageConfidence(themes) {
+        const allThemes = [];
+        const collectAllThemes = (themeList) => {
+            themeList.forEach((theme) => {
+                allThemes.push(theme);
+                if (theme.childThemes.length > 0) {
+                    collectAllThemes(theme.childThemes);
+                }
+            });
+        };
+        collectAllThemes(themes);
+        if (allThemes.length === 0)
+            return 0;
+        const totalConfidence = allThemes.reduce((sum, theme) => sum + theme.confidence, 0);
+        return totalConfidence / allThemes.length;
+    }
+    static countExpandedThemes(themes) {
+        let count = 0;
+        const countRecursively = (themeList) => {
+            themeList.forEach((theme) => {
+                if (theme.isExpanded || theme.consolidationMethod === 'expansion') {
+                    count++;
+                }
+                if (theme.childThemes.length > 0) {
+                    countRecursively(theme.childThemes);
+                }
+            });
+        };
+        countRecursively(themes);
+        return count;
+    }
+    static countMergedThemes(themes) {
+        let count = 0;
+        const countRecursively = (themeList) => {
+            themeList.forEach((theme) => {
+                if (theme.consolidationMethod === 'merge' &&
+                    theme.sourceThemes.length > 1) {
+                    count++;
+                }
+                if (theme.childThemes.length > 0) {
+                    countRecursively(theme.childThemes);
+                }
+            });
+        };
+        countRecursively(themes);
+        return count;
+    }
+    static truncateText(text, maxLength) {
+        if (text.length <= maxLength) {
+            return text;
+        }
+        return text.substring(0, maxLength - 3) + '...';
+    }
+    static themeToJsonObject(theme) {
+        return {
+            id: theme.id,
+            name: theme.name,
+            description: theme.description,
+            level: theme.level,
+            confidence: theme.confidence,
+            businessImpact: theme.businessImpact,
+            affectedFiles: theme.affectedFiles,
+            consolidationMethod: theme.consolidationMethod,
+            isExpanded: theme.isExpanded,
+            businessLogicPatterns: theme.businessLogicPatterns,
+            userFlowPatterns: theme.userFlowPatterns,
+            childThemes: theme.childThemes.map((child) => this.themeToJsonObject(child)),
+        };
+    }
+}
+exports.ThemeFormatter = ThemeFormatter;
+ThemeFormatter.MAX_FILES_SHOWN = 3;
+ThemeFormatter.MAX_DESCRIPTION_LENGTH = 200;
+
+
+/***/ }),
+
+/***/ 5061:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CodeAnalysisCache = void 0;
+const crypto = __importStar(__nccwpck_require__(6982));
+const generic_cache_1 = __nccwpck_require__(282);
+const logger_1 = __nccwpck_require__(411);
+const performance_tracker_1 = __nccwpck_require__(9766);
+/**
+ * Specialized cache for AI-based code analysis results
+ * Uses content-based hashing for cache keys to ensure cache hits on identical diffs
+ */
+class CodeAnalysisCache extends generic_cache_1.GenericCache {
+    constructor(ttlMs = 86400000) {
+        // 24 hour default TTL
+        super(ttlMs);
+    }
+    /**
+     * Generate a cache key based on filename and diff content
+     * Uses SHA-256 hash for deterministic, collision-resistant keys
+     */
+    generateCacheKey(filename, diffContent) {
+        const content = `${filename}:${diffContent}`;
+        return crypto
+            .createHash('sha256')
+            .update(content)
+            .digest('hex')
+            .substring(0, 16); // Use first 16 chars for memory efficiency
+    }
+    /**
+     * Get cached analysis result or execute the processor function
+     * Provides transparent caching for AI code analysis
+     */
+    async getOrAnalyze(filename, diffContent, processor) {
+        const key = this.generateCacheKey(filename, diffContent);
+        const cached = this.get(key);
+        if (cached) {
+            logger_1.logger.trace('CACHE', `Hit: ${filename}`);
+            performance_tracker_1.performanceTracker.trackCache(true);
+            return cached;
+        }
+        logger_1.logger.trace('CACHE', `Miss: ${filename}`);
+        performance_tracker_1.performanceTracker.trackCache(false);
+        const result = await processor();
+        // Store in cache with default TTL
+        this.set(key, result);
+        logger_1.logger.trace('CACHE', `Cached: ${filename}`);
+        return result;
+    }
+    /**
+     * Get cache statistics for monitoring
+     */
+    getStats() {
+        return {
+            size: this.size(),
+            ttlMs: this['defaultTtlMs'], // Access private property for stats
+        };
+    }
+    /**
+     * Pre-warm cache with known results (useful for testing)
+     */
+    preWarm(filename, diffContent, result) {
+        const key = this.generateCacheKey(filename, diffContent);
+        this.set(key, result);
+        console.log(`[CODE-ANALYSIS-CACHE] Pre-warmed cache for ${filename} (key: ${key})`);
+    }
+}
+exports.CodeAnalysisCache = CodeAnalysisCache;
+
+
+/***/ }),
+
+/***/ 282:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GenericCache = void 0;
+/**
+ * Generic cache utility for storing any type of data with expiration
+ */
+class GenericCache {
+    constructor(defaultTtlMs = 3600000) {
+        this.cache = new Map();
+        // Default 1 hour TTL
+        this.defaultTtlMs = defaultTtlMs;
+    }
+    get(key) {
+        const cached = this.cache.get(key);
+        if (!cached)
+            return null;
+        // Check if cache has expired
+        const ageMs = Date.now() - cached.timestamp.getTime();
+        if (ageMs > this.defaultTtlMs) {
+            this.cache.delete(key);
+            return null;
+        }
+        return cached.data;
+    }
+    set(key, data, ttlMs) {
+        this.cache.set(key, {
+            data,
+            timestamp: new Date(),
+        });
+        // If custom TTL is provided, set a timeout to clear this specific entry
+        if (ttlMs && ttlMs !== this.defaultTtlMs) {
+            setTimeout(() => {
+                this.cache.delete(key);
+            }, ttlMs);
+        }
+    }
+    delete(key) {
+        return this.cache.delete(key);
+    }
+    clear() {
+        this.cache.clear();
+    }
+    size() {
+        return this.cache.size;
+    }
+    has(key) {
+        const cached = this.cache.get(key);
+        if (!cached)
+            return false;
+        // Check if cache has expired
+        const ageMs = Date.now() - cached.timestamp.getTime();
+        if (ageMs > this.defaultTtlMs) {
+            this.cache.delete(key);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get all keys with a specific prefix
+     * Used for semantic cache operations
+     */
+    getKeysWithPrefix(prefix) {
+        const keys = [];
+        for (const key of this.cache.keys()) {
+            if (key.startsWith(prefix)) {
+                // Check if entry is still valid (not expired)
+                if (this.has(key)) {
+                    keys.push(key);
+                }
+            }
+        }
+        return keys;
+    }
+}
+exports.GenericCache = GenericCache;
+
+
+/***/ }),
+
+/***/ 2650:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SimilarityCache = void 0;
+const performance_tracker_1 = __nccwpck_require__(9600);
+class SimilarityCache {
+    constructor() {
+        this.cache = new Map();
+        this.cacheExpireMinutes = 60; // Cache expires after 1 hour
+    }
+    getCacheKey(theme1, theme2) {
+        // Create deterministic cache key regardless of theme order
+        const id1 = theme1.id;
+        const id2 = theme2.id;
+        return id1 < id2 ? `${id1}-${id2}` : `${id2}-${id1}`;
+    }
+    getCachedSimilarity(cacheKey) {
+        const cached = this.cache.get(cacheKey);
+        if (!cached) {
+            performance_tracker_1.performanceTracker.trackCache(false); // cache miss
+            return null;
+        }
+        // Check if cache has expired
+        const ageMinutes = (Date.now() - cached.timestamp.getTime()) / (1000 * 60);
+        if (ageMinutes > this.cacheExpireMinutes) {
+            this.cache.delete(cacheKey);
+            performance_tracker_1.performanceTracker.trackCache(false); // cache miss (expired)
+            return null;
+        }
+        performance_tracker_1.performanceTracker.trackCache(true); // cache hit
+        return cached;
+    }
+    cacheSimilarity(cacheKey, similarity) {
+        this.cache.set(cacheKey, {
+            similarity,
+            timestamp: new Date(),
+        });
+    }
+    clearCache() {
+        this.cache.clear();
+    }
+    getCacheStats() {
+        return {
+            size: this.cache.size,
+            expireMinutes: this.cacheExpireMinutes,
+        };
+    }
+}
+exports.SimilarityCache = SimilarityCache;
+
+
+/***/ }),
+
+/***/ 6684:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AISimilarityService = void 0;
+const similarity_calculator_1 = __nccwpck_require__(241);
+const json_extractor_1 = __nccwpck_require__(8168);
+const claude_client_1 = __nccwpck_require__(3861);
+const logger_1 = __nccwpck_require__(411);
+class AISimilarityService {
+    constructor(anthropicApiKey) {
+        this.anthropicApiKey = anthropicApiKey;
+        this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
+    }
+    async calculateAISimilarity(theme1, theme2) {
+        const prompt = this.buildSimilarityPrompt(theme1, theme2);
+        try {
+            const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
+            const result = this.parseAISimilarityResponse(output);
+            logger_1.logger.debug('AI-SIMILARITY', `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
+            logger_1.logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
+            return result;
+        }
+        catch (error) {
+            logger_1.logger.warn('AI-SIMILARITY', `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`);
+            // Fallback to basic string matching
+            return this.createFallbackSimilarity(theme1, theme2);
+        }
+    }
+    /**
+     * Get Claude client for external metrics access
+     */
+    getClaudeClient() {
+        return this.claudeClient;
+    }
+    buildSimilarityPrompt(theme1, theme2) {
+        // Include rich details if available
+        const theme1Details = this.buildThemeDetails(theme1);
+        const theme2Details = this.buildThemeDetails(theme2);
+        return `Analyze these code changes to determine if they should be grouped together.
+
+**Theme 1: "${theme1.name}"**
+${theme1Details}
+
+**Theme 2: "${theme2.name}"**
+${theme2Details}
+
+IMPORTANT CONTEXT:
+- Look at the actual code changes, not just descriptions
+- Consider if these are truly part of the same change or just happen to be similar
+- Think about how a developer would organize these changes in their mind
+- Consider file relationships and dependencies
+
+Questions to answer:
+1. Are these solving the same problem or different problems?
+2. Would combining them make the theme clearer or more confusing?
+3. Are they in the same domain (e.g., both CI/CD, both UI, both data model)?
+4. Do they have logical dependencies on each other?
+
+Be STRICT about merging. Only merge if they are truly the same change or tightly coupled.
+It's better to have more specific themes than overly broad ones.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+{
+  "shouldMerge": true,
+  "confidence": 0.85,
+  "reasoning": "Both themes implement the same email validation improvement for user data integrity"
+}`;
+    }
+    buildThemeDetails(theme) {
+        let details = `Description: ${theme.description}`;
+        // Add detailed description if available
+        if (theme.detailedDescription) {
+            details += `\nDetailed: ${theme.detailedDescription}`;
+        }
+        // Add technical summary if available
+        if (theme.technicalSummary) {
+            details += `\nTechnical: ${theme.technicalSummary}`;
+        }
+        // Add key changes if available
+        if (theme.keyChanges && theme.keyChanges.length > 0) {
+            details += `\nKey Changes:\n${theme.keyChanges.map((c) => `  - ${c}`).join('\n')}`;
+        }
+        // Add files
+        details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
+        // Add code metrics if available
+        if (theme.codeMetrics) {
+            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
+            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+        }
+        // Add main functions/classes if available
+        if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
+            details += `\nFunctions Changed: ${theme.mainFunctionsChanged.join(', ')}`;
+        }
+        if (theme.mainClassesChanged && theme.mainClassesChanged.length > 0) {
+            details += `\nClasses Changed: ${theme.mainClassesChanged.join(', ')}`;
+        }
+        // Add all code snippets - modern context windows can handle it
+        const snippets = theme.codeSnippets.join('\n\n');
+        if (snippets) {
+            details += `\n\nActual Code Changes:\n${snippets}`;
+        }
+        return details;
+    }
+    parseAISimilarityResponse(output) {
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['shouldMerge', 'confidence', 'reasoning']);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            // Map the simple response to the full AISimilarityResult interface
+            const shouldMerge = parsed.shouldMerge || false;
+            const confidence = parsed.confidence || 0;
+            return {
+                shouldMerge,
+                confidence,
+                reasoning: parsed.reasoning || 'No reasoning provided',
+                // Derive a semantic score from the decision and confidence
+                semanticScore: shouldMerge ? confidence : 1 - confidence,
+                // Legacy scores - set to 0 as they're not used anymore
+                nameScore: 0,
+                descriptionScore: 0,
+                patternScore: 0,
+                businessScore: 0,
+            };
+        }
+        // Log the extraction failure for debugging
+        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
+        }
+        return {
+            nameScore: 0,
+            descriptionScore: 0,
+            patternScore: 0,
+            businessScore: 0,
+            semanticScore: 0,
+            shouldMerge: false,
+            confidence: 0,
+            reasoning: `Failed to parse AI response: ${extractionResult.error}`,
+        };
+    }
+    createFallbackSimilarity(theme1, theme2) {
+        // Fallback when AI fails - conservative approach
+        const nameScore = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
+        // Only merge if names are extremely similar (fallback is conservative)
+        const shouldMerge = nameScore > 0.9;
+        return {
+            shouldMerge,
+            confidence: 0.3, // Low confidence for fallback
+            reasoning: 'AI analysis failed - conservative fallback based on name similarity only',
+            semanticScore: shouldMerge ? 0.6 : 0.2,
+            // Legacy scores - not used
+            nameScore: 0,
+            descriptionScore: 0,
+            patternScore: 0,
+            businessScore: 0,
+        };
+    }
+    /**
+     * Calculate similarity for multiple theme pairs in a single AI call
+     * This is the key performance optimization method
+     */
+    async calculateBatchSimilarity(batchPrompt, expectedResults) {
+        try {
+            const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
+            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
+            // Extract and validate JSON response
+            const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
+            if (!jsonResult.success) {
+                throw new Error(`JSON extraction failed: ${jsonResult.error}`);
+            }
+            const batchData = jsonResult.data;
+            // Validate we got the expected number of results
+            if (!batchData.results || !Array.isArray(batchData.results)) {
+                throw new Error('Invalid batch response: missing results array');
+            }
+            if (batchData.results.length !== expectedResults) {
+                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
+            }
+            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
+            return batchData;
+        }
+        catch (error) {
+            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
+            throw error;
+        }
+    }
+}
+exports.AISimilarityService = AISimilarityService;
+
+
+/***/ }),
+
+/***/ 7855:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BatchProcessor = void 0;
+const json_extractor_1 = __nccwpck_require__(8168);
+const exec = __importStar(__nccwpck_require__(5236));
+const secure_file_namer_1 = __nccwpck_require__(5584);
+class BatchProcessor {
+    constructor() {
+        this.batchSize = 8; // Process 8 theme pairs per AI batch call
+        this.batchFailures = 0; // Track consecutive batch failures
+    }
+    async processBatchSimilarity(pairs) {
+        const prompt = this.buildBatchSimilarityPrompt(pairs);
+        try {
+            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
+            let output = '';
+            try {
+                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
+                    silent: true,
+                    listeners: {
+                        stdout: (data) => {
+                            output += data.toString();
+                        },
+                    },
+                });
+                const results = this.parseBatchSimilarityResponse(output, pairs);
+                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
+                return results;
+            }
+            finally {
+                cleanup(); // Ensure file is cleaned up even if execution fails
+            }
+        }
+        catch (error) {
+            console.error('Batch AI similarity failed:', error);
+            throw error;
+        }
+    }
+    getAdaptiveBatchSize() {
+        return Math.max(2, this.batchSize - Math.floor(this.batchFailures / 2));
+    }
+    incrementFailures() {
+        this.batchFailures++;
+    }
+    decrementFailures() {
+        this.batchFailures = Math.max(0, this.batchFailures - 1);
+    }
+    getFailureCount() {
+        return this.batchFailures;
+    }
+    chunkArray(array, chunkSize) {
+        const chunks = [];
+        for (let i = 0; i < array.length; i += chunkSize) {
+            chunks.push(array.slice(i, i + chunkSize));
+        }
+        return chunks;
+    }
+    buildBatchSimilarityPrompt(pairs) {
+        const pairDescriptions = pairs
+            .map((pair, index) => `Pair ${index + 1}: ID="${pair.id}"
+- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
+- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
+- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
+- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`)
+            .join('\n\n');
+        return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
+
+THEME PAIRS:
+${pairDescriptions}
+
+RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
+[
+${pairs
+            .map((pair, index) => `  {
+    "pairId": "${pair.id}",
+    "nameScore": 0.5,
+    "descriptionScore": 0.5,
+    "patternScore": 0.5,
+    "businessScore": 0.5,
+    "semanticScore": 0.5,
+    "shouldMerge": false,
+    "confidence": 0.5,
+    "reasoning": "analysis for pair ${index + 1}"
+  }${index < pairs.length - 1 ? ',' : ''}`)
+            .join('\n')}
+]
+
+Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
+    }
+    parseBatchSimilarityResponse(output, pairs) {
+        console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
+        console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
+        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
+        if (extractionResult.success) {
+            const parsed = extractionResult.data;
+            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
+            // Handle case where AI returns fewer results than expected
+            const results = [];
+            for (let i = 0; i < pairs.length; i++) {
+                const item = parsed[i];
+                const pair = pairs[i];
+                if (item && typeof item === 'object') {
+                    results.push({
+                        pairId: item.pairId || pair.id,
+                        similarity: {
+                            nameScore: this.clampScore(item.nameScore),
+                            descriptionScore: this.clampScore(item.descriptionScore),
+                            patternScore: this.clampScore(item.patternScore),
+                            businessScore: this.clampScore(item.businessScore),
+                            semanticScore: this.clampScore(item.semanticScore),
+                            shouldMerge: Boolean(item.shouldMerge),
+                            confidence: this.clampScore(item.confidence),
+                            reasoning: String(item.reasoning || 'No reasoning provided'),
+                        },
+                    });
+                }
+                else {
+                    // Missing or invalid item - create fallback
+                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
+                    results.push({
+                        pairId: pair.id,
+                        similarity: this.createFallbackSimilarity(),
+                        error: `Missing AI response for pair ${i + 1}`,
+                    });
+                }
+            }
+            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
+            return results;
+        }
+        // JSON extraction failed
+        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
+        if (extractionResult.originalResponse) {
+            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
+        }
+        console.warn('[BATCH-DEBUG] Using fallback for all pairs');
+        // Fallback: create error results for all pairs
+        return pairs.map((pair) => ({
+            pairId: pair.id,
+            similarity: this.createFallbackSimilarity(),
+            error: `Failed to parse batch AI response: ${extractionResult.error}`,
+        }));
+    }
+    clampScore(value) {
+        const num = Number(value);
+        return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
+    }
+    createFallbackSimilarity() {
+        return {
+            nameScore: 0.3,
+            descriptionScore: 0.3,
+            patternScore: 0.3,
+            businessScore: 0.3,
+            semanticScore: 0.3,
+            shouldMerge: false,
+            confidence: 0.2,
+            reasoning: 'Fallback similarity due to parsing error',
+        };
+    }
+}
+exports.BatchProcessor = BatchProcessor;
+
+
+/***/ }),
+
+/***/ 8416:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitService = void 0;
+const github = __importStar(__nccwpck_require__(3228));
+const exec = __importStar(__nccwpck_require__(5236));
+const ai_code_analyzer_1 = __nccwpck_require__(3562);
+class GitService {
+    shouldIncludeFile(filename) {
+        const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
+        console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
+        return !isExcluded;
+    }
+    constructor(githubToken, anthropicApiKey) {
+        this.githubToken = githubToken;
+        this.octokit = null;
+        // Initialize GitHub API client if token is available
+        if (this.githubToken) {
+            try {
+                this.octokit = github.getOctokit(this.githubToken);
+            }
+            catch (error) {
+                console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
+            }
+        }
+        // Initialize AI analyzer - use environment variable if not provided
+        const apiKey = anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+        if (!apiKey) {
+            throw new Error('[GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
+        }
+        this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(apiKey);
+    }
+    async getEnhancedChangedFiles() {
+        console.log('[GIT-SERVICE] Getting enhanced changed files with AI code analysis');
+        // Get basic changed files first
+        const changedFiles = await this.getChangedFiles();
+        if (changedFiles.length === 0) {
+            console.log('[GIT-SERVICE] No changed files to analyze');
+            return [];
+        }
+        // Prepare files for concurrent AI analysis
+        const filesToAnalyze = changedFiles.map((file) => ({
+            filename: file.filename,
+            diffPatch: file.patch || '',
+            changeType: file.status === 'removed'
+                ? 'deleted'
+                : file.status,
+            linesAdded: file.additions,
+            linesRemoved: file.deletions,
+        }));
+        console.log(`[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
+        // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+        const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
+        console.log(`[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
+        // Log cache statistics
+        const cacheStats = this.aiAnalyzer.getCacheStats();
+        console.log(`[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
+        return codeChanges;
+    }
+    async getPullRequestContext() {
+        // Check if we're in a GitHub Actions PR context
+        if (github.context.eventName === 'pull_request') {
+            const pr = github.context.payload.pull_request;
+            if (pr) {
+                console.log(`[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`);
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+        }
+        // Dev mode: First try to find existing PR for current branch
+        const currentBranch = await this.getCurrentBranch();
+        const existingPR = await this.getPullRequestForBranch(currentBranch);
+        if (existingPR) {
+            console.log(`[GIT-SERVICE] Using existing PR #${existingPR.number} context for local testing`);
+            return existingPR;
+        }
+        // Fallback: create synthetic PR context from local git
+        console.log('[GIT-SERVICE] No PR found, using branch comparison mode');
+        return await this.createDevModeContext();
+    }
+    async getPullRequestForBranch(branchName) {
+        if (!this.octokit) {
+            console.log('[GIT-SERVICE] No GitHub token available, cannot check for existing PR');
+            return null;
+        }
+        try {
+            console.log(`[GIT-SERVICE] Checking for open PR for branch: ${branchName}`);
+            const { data: pulls } = await this.octokit.rest.pulls.list({
+                ...github.context.repo,
+                head: `${github.context.repo.owner}:${branchName}`,
+                state: 'open',
+            });
+            if (pulls.length > 0) {
+                const pr = pulls[0]; // Take the first matching PR
+                console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${branchName}`);
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+            console.log(`[GIT-SERVICE] No open PR found for branch ${branchName}`);
+            return null;
+        }
+        catch (error) {
+            console.warn(`[GIT-SERVICE] Failed to check for PR on branch ${branchName}:`, error);
+            return null;
+        }
+    }
+    async createDevModeContext() {
+        try {
+            const currentBranch = await this.getCurrentBranch();
+            const baseBranch = 'main'; // Default comparison branch
+            const headSha = await this.getCurrentCommitSha();
+            const baseSha = await this.getBranchCommitSha(baseBranch);
+            return {
+                number: 0, // Synthetic PR number
+                title: `Local changes on ${currentBranch}`,
+                body: 'Development mode - comparing local changes against main branch',
+                baseBranch,
+                headBranch: currentBranch,
+                baseSha,
+                headSha,
+            };
+        }
+        catch (error) {
+            console.warn('Failed to create dev mode context:', error);
+            return null;
+        }
+    }
+    async getCurrentBranch() {
+        let branch = '';
+        await exec.exec('git', ['branch', '--show-current'], {
+            listeners: {
+                stdout: (data) => {
+                    branch += data.toString().trim();
+                },
+            },
+        });
+        return branch || 'unknown';
+    }
+    async getCurrentCommitSha() {
+        let sha = '';
+        await exec.exec('git', ['rev-parse', 'HEAD'], {
+            listeners: {
+                stdout: (data) => {
+                    sha += data.toString().trim();
+                },
+            },
+        });
+        return sha;
+    }
+    async getBranchCommitSha(branch) {
+        let sha = '';
+        try {
+            await exec.exec('git', ['rev-parse', `origin/${branch}`], {
+                listeners: {
+                    stdout: (data) => {
+                        sha += data.toString().trim();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            // Fallback to local branch if remote doesn't exist
+            await exec.exec('git', ['rev-parse', branch], {
+                listeners: {
+                    stdout: (data) => {
+                        sha += data.toString().trim();
+                    },
+                },
+            });
+        }
+        return sha;
+    }
+    async getChangedFiles() {
+        const prContext = await this.getPullRequestContext();
+        if (!prContext) {
+            return [];
+        }
+        console.log(`[GIT-DEBUG] PR Context: number=${prContext.number}, event=${github.context.eventName}, hasToken=${!!this.githubToken}`);
+        console.log(`[GIT-DEBUG] baseBranch=${prContext.baseBranch}, headBranch=${prContext.headBranch}`);
+        // Use GitHub API for real PRs (in GitHub Actions or when PR found locally)
+        if (prContext.number > 0 && this.octokit) {
+            console.log(`[GIT-DEBUG] Using GitHub API for PR #${prContext.number} (exact same as live)`);
+            return await this.getChangedFilesFromGitHub(prContext.number);
+        }
+        // Fallback to git commands for synthetic dev mode (no PR)
+        console.log(`[GIT-DEBUG] Using git commands method for branch comparison`);
+        return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
+    }
+    async getChangedFilesFromGitHub(prNumber) {
+        try {
+            if (!this.octokit) {
+                throw new Error('GitHub API client not initialized');
+            }
+            // Fetch all files using pagination (GitHub API returns max 30 per page)
+            const allFiles = [];
+            let page = 1;
+            let hasMore = true;
+            while (hasMore) {
+                const { data: files } = await this.octokit.rest.pulls.listFiles({
+                    ...github.context.repo,
+                    pull_number: prNumber,
+                    per_page: 100, // Maximum allowed by GitHub
+                    page: page,
+                });
+                allFiles.push(...files);
+                // If we got less than 100 files, we've reached the end
+                hasMore = files.length === 100;
+                page++;
+                // Safety limit to prevent infinite loops
+                if (page > 10) {
+                    console.warn('[GIT-SERVICE] Reached pagination limit, stopping at 1000 files');
+                    break;
+                }
+            }
+            const changedFiles = allFiles
+                .filter((file) => this.shouldIncludeFile(file.filename))
+                .map((file) => ({
+                filename: file.filename,
+                status: file.status,
+                additions: file.additions,
+                deletions: file.deletions,
+                patch: file.patch,
+            }));
+            console.log(`[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
+            return changedFiles;
+        }
+        catch (error) {
+            console.error('Failed to get changed files from GitHub:', error);
+            return [];
+        }
+    }
+    async getChangedFilesFromGit(baseSha, headSha) {
+        console.log(`[GIT-DEBUG] Comparing ${baseSha.substring(0, 8)} (base) vs ${headSha.substring(0, 8)} (head)`);
+        const files = [];
+        let fileList = '';
+        let diffCommand = [];
+        // Method 1: Try exact SHA comparison (remove triple-dot syntax)
+        try {
+            diffCommand = ['diff', '--name-status', baseSha, headSha];
+            console.log(`[GIT-DEBUG] Method 1: git ${diffCommand.join(' ')}`);
+            await exec.exec('git', diffCommand, {
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+            console.log(`[GIT-DEBUG] Method 1 succeeded`);
+        }
+        catch (method1Error) {
+            console.log(`[GIT-DEBUG] Method 1 failed: ${method1Error}`);
+            // Method 2: Fetch base branch and compare
+            try {
+                const prContext = await this.getPullRequestContext();
+                const baseBranch = prContext?.baseBranch || 'main';
+                console.log(`[GIT-DEBUG] Method 2: Fetching base branch ${baseBranch}`);
+                await exec.exec('git', ['fetch', 'origin', baseBranch]);
+                diffCommand = ['diff', '--name-status', `origin/${baseBranch}`, 'HEAD'];
+                console.log(`[GIT-DEBUG] Method 2: git ${diffCommand.join(' ')}`);
+                fileList = ''; // Reset for retry
+                await exec.exec('git', diffCommand, {
+                    listeners: {
+                        stdout: (data) => {
+                            fileList += data.toString();
+                        },
+                    },
+                });
+                console.log(`[GIT-DEBUG] Method 2 succeeded`);
+            }
+            catch (method2Error) {
+                console.log(`[GIT-DEBUG] Method 2 failed: ${method2Error}`);
+                // Method 3: Emergency fallback - recent commits only
+                try {
+                    diffCommand = ['diff', '--name-status', 'HEAD~1', 'HEAD'];
+                    console.log(`[GIT-DEBUG] Method 3 (emergency): git ${diffCommand.join(' ')}`);
+                    fileList = ''; // Reset for retry
+                    await exec.exec('git', diffCommand, {
+                        listeners: {
+                            stdout: (data) => {
+                                fileList += data.toString();
+                            },
+                        },
+                    });
+                    console.log(`[GIT-DEBUG] Method 3 succeeded (showing recent commits only)`);
+                }
+                catch (method3Error) {
+                    console.error(`[GIT-DEBUG] All methods failed. Method 3 error: ${method3Error}`);
+                    throw new Error(`Git diff failed with all methods. Last error: ${method3Error}`);
+                }
+            }
+        }
+        // Parse file status
+        const fileLines = fileList
+            .trim()
+            .split('\n')
+            .filter((line) => line.trim());
+        console.log(`[GIT-DEBUG] Found ${fileLines.length} changed files total before filtering`);
+        try {
+            for (const line of fileLines) {
+                const [status, filename] = line.split('\t');
+                if (!filename || !this.shouldIncludeFile(filename))
+                    continue;
+                // Get diff patch for this file using the same command that succeeded for file list
+                let patch = '';
+                try {
+                    const patchCommand = [...diffCommand, '--', filename];
+                    await exec.exec('git', patchCommand, {
+                        listeners: {
+                            stdout: (data) => {
+                                patch += data.toString();
+                            },
+                        },
+                    });
+                }
+                catch (error) {
+                    console.warn(`[GIT-DEBUG] Failed to get patch for ${filename}:`, error);
+                    // Continue without patch - we still have the file status
+                }
+                // Count additions/deletions from patch
+                const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
+                const deletions = (patch.match(/^-(?!-)/gm) || []).length;
+                const file = {
+                    filename,
+                    status: this.mapGitStatusToChangedFileStatus(status),
+                    additions,
+                    deletions,
+                    patch,
+                };
+                files.push(file);
+            }
+            console.log(`[GIT-SERVICE] Found ${files.length} source files for analysis (excluded build artifacts)`);
+            return files;
+        }
+        catch (fileProcessingError) {
+            console.error('Failed to process files:', fileProcessingError);
+            return [];
+        }
+    }
+    mapGitStatusToChangedFileStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'D':
+                return 'removed';
+            case 'M':
+                return 'modified';
+            case 'R':
+                return 'renamed';
+            default:
+                return 'modified';
+        }
+    }
+    async getDiffContent(baseSha, headSha) {
+        let diffOutput = '';
+        try {
+            await exec.exec('git', ['diff', `${baseSha}...${headSha}`], {
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            console.error('Failed to get diff content:', error);
+        }
+        return diffOutput;
+    }
+}
+exports.GitService = GitService;
+// Patterns for files to exclude from analysis
+GitService.EXCLUDED_PATTERNS = [
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /package-lock\.json$/, // Exclude lock files
+];
+
+
+/***/ }),
+
+/***/ 3562:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -35869,11 +36439,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AICodeAnalyzer = void 0;
 const path = __importStar(__nccwpck_require__(6928));
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const code_analysis_cache_1 = __nccwpck_require__(8940);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const logger_1 = __nccwpck_require__(7893);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
+const code_analysis_cache_1 = __nccwpck_require__(5061);
+const concurrency_manager_1 = __nccwpck_require__(4482);
+const logger_1 = __nccwpck_require__(411);
 /**
  * AI-powered code analyzer that replaces regex-based analysis
  * Uses Claude to understand code structure across all programming languages
@@ -36254,7 +36824,7 @@ exports.AICodeAnalyzer = AICodeAnalyzer;
 
 /***/ }),
 
-/***/ 3831:
+/***/ 3861:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -36649,115 +37219,7 @@ ClaudeClient.queueMetrics = {
 
 /***/ }),
 
-/***/ 8940:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CodeAnalysisCache = void 0;
-const crypto = __importStar(__nccwpck_require__(6982));
-const generic_cache_1 = __nccwpck_require__(9267);
-const logger_1 = __nccwpck_require__(7893);
-const performance_tracker_1 = __nccwpck_require__(9766);
-/**
- * Specialized cache for AI-based code analysis results
- * Uses content-based hashing for cache keys to ensure cache hits on identical diffs
- */
-class CodeAnalysisCache extends generic_cache_1.GenericCache {
-    constructor(ttlMs = 86400000) {
-        // 24 hour default TTL
-        super(ttlMs);
-    }
-    /**
-     * Generate a cache key based on filename and diff content
-     * Uses SHA-256 hash for deterministic, collision-resistant keys
-     */
-    generateCacheKey(filename, diffContent) {
-        const content = `${filename}:${diffContent}`;
-        return crypto
-            .createHash('sha256')
-            .update(content)
-            .digest('hex')
-            .substring(0, 16); // Use first 16 chars for memory efficiency
-    }
-    /**
-     * Get cached analysis result or execute the processor function
-     * Provides transparent caching for AI code analysis
-     */
-    async getOrAnalyze(filename, diffContent, processor) {
-        const key = this.generateCacheKey(filename, diffContent);
-        const cached = this.get(key);
-        if (cached) {
-            logger_1.logger.trace('CACHE', `Hit: ${filename}`);
-            performance_tracker_1.performanceTracker.trackCache(true);
-            return cached;
-        }
-        logger_1.logger.trace('CACHE', `Miss: ${filename}`);
-        performance_tracker_1.performanceTracker.trackCache(false);
-        const result = await processor();
-        // Store in cache with default TTL
-        this.set(key, result);
-        logger_1.logger.trace('CACHE', `Cached: ${filename}`);
-        return result;
-    }
-    /**
-     * Get cache statistics for monitoring
-     */
-    getStats() {
-        return {
-            size: this.size(),
-            ttlMs: this['defaultTtlMs'], // Access private property for stats
-        };
-    }
-    /**
-     * Pre-warm cache with known results (useful for testing)
-     */
-    preWarm(filename, diffContent, result) {
-        const key = this.generateCacheKey(filename, diffContent);
-        this.set(key, result);
-        console.log(`[CODE-ANALYSIS-CACHE] Pre-warmed cache for ${filename} (key: ${key})`);
-    }
-}
-exports.CodeAnalysisCache = CodeAnalysisCache;
-
-
-/***/ }),
-
-/***/ 8692:
+/***/ 4482:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -37210,90 +37672,7 @@ exports.ConcurrencyManager = ConcurrencyManager;
 
 /***/ }),
 
-/***/ 9267:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GenericCache = void 0;
-/**
- * Generic cache utility for storing any type of data with expiration
- */
-class GenericCache {
-    constructor(defaultTtlMs = 3600000) {
-        this.cache = new Map();
-        // Default 1 hour TTL
-        this.defaultTtlMs = defaultTtlMs;
-    }
-    get(key) {
-        const cached = this.cache.get(key);
-        if (!cached)
-            return null;
-        // Check if cache has expired
-        const ageMs = Date.now() - cached.timestamp.getTime();
-        if (ageMs > this.defaultTtlMs) {
-            this.cache.delete(key);
-            return null;
-        }
-        return cached.data;
-    }
-    set(key, data, ttlMs) {
-        this.cache.set(key, {
-            data,
-            timestamp: new Date(),
-        });
-        // If custom TTL is provided, set a timeout to clear this specific entry
-        if (ttlMs && ttlMs !== this.defaultTtlMs) {
-            setTimeout(() => {
-                this.cache.delete(key);
-            }, ttlMs);
-        }
-    }
-    delete(key) {
-        return this.cache.delete(key);
-    }
-    clear() {
-        this.cache.clear();
-    }
-    size() {
-        return this.cache.size;
-    }
-    has(key) {
-        const cached = this.cache.get(key);
-        if (!cached)
-            return false;
-        // Check if cache has expired
-        const ageMs = Date.now() - cached.timestamp.getTime();
-        if (ageMs > this.defaultTtlMs) {
-            this.cache.delete(key);
-            return false;
-        }
-        return true;
-    }
-    /**
-     * Get all keys with a specific prefix
-     * Used for semantic cache operations
-     */
-    getKeysWithPrefix(prefix) {
-        const keys = [];
-        for (const key of this.cache.keys()) {
-            if (key.startsWith(prefix)) {
-                // Check if entry is still valid (not expired)
-                if (this.has(key)) {
-                    keys.push(key);
-                }
-            }
-        }
-        return keys;
-    }
-}
-exports.GenericCache = GenericCache;
-
-
-/***/ }),
-
-/***/ 2642:
+/***/ 8168:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -37515,6 +37894,592 @@ class JsonExtractor {
     }
 }
 exports.JsonExtractor = JsonExtractor;
+
+
+/***/ }),
+
+/***/ 411:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Logging utility with configurable levels
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logger = exports.Logger = exports.LogLevel = void 0;
+var LogLevel;
+(function (LogLevel) {
+    LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
+    LogLevel[LogLevel["WARN"] = 1] = "WARN";
+    LogLevel[LogLevel["INFO"] = 2] = "INFO";
+    LogLevel[LogLevel["DEBUG"] = 3] = "DEBUG";
+    LogLevel[LogLevel["TRACE"] = 4] = "TRACE";
+})(LogLevel || (exports.LogLevel = LogLevel = {}));
+class Logger {
+    static parseLogLevel(level) {
+        switch (level.toUpperCase()) {
+            case 'ERROR':
+                return LogLevel.ERROR;
+            case 'WARN':
+                return LogLevel.WARN;
+            case 'INFO':
+                return LogLevel.INFO;
+            case 'DEBUG':
+                return LogLevel.DEBUG;
+            case 'TRACE':
+                return LogLevel.TRACE;
+            default:
+                return LogLevel.INFO;
+        }
+    }
+    static formatMessage(level, service, message) {
+        const timestamp = process.env.LOG_TIMESTAMPS === 'true'
+            ? `[${new Date().toISOString()}] `
+            : '';
+        return `${timestamp}[${level}] [${service}] ${message}`;
+    }
+    static error(service, message) {
+        if (Logger.level >= LogLevel.ERROR) {
+            console.error(Logger.formatMessage('ERROR', service, message));
+        }
+    }
+    static warn(service, message) {
+        if (Logger.level >= LogLevel.WARN) {
+            console.warn(Logger.formatMessage('WARN', service, message));
+        }
+    }
+    static info(service, message) {
+        if (Logger.level >= LogLevel.INFO) {
+            console.log(Logger.formatMessage('INFO', service, message));
+        }
+    }
+    static debug(service, message) {
+        if (Logger.level >= LogLevel.DEBUG) {
+            console.log(Logger.formatMessage('DEBUG', service, message));
+        }
+    }
+    static trace(service, message) {
+        if (Logger.level >= LogLevel.TRACE) {
+            console.log(Logger.formatMessage('TRACE', service, message));
+        }
+    }
+    static setLevel(level) {
+        Logger.level = level;
+    }
+    static getLevel() {
+        return Logger.level;
+    }
+}
+exports.Logger = Logger;
+Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
+// Export convenience functions
+exports.logger = {
+    error: (service, message) => Logger.error(service, message),
+    warn: (service, message) => Logger.warn(service, message),
+    info: (service, message) => Logger.info(service, message),
+    debug: (service, message) => Logger.debug(service, message),
+    trace: (service, message) => Logger.trace(service, message),
+};
+
+
+/***/ }),
+
+/***/ 9600:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.performanceTracker = exports.PerformanceTracker = void 0;
+const logger_1 = __nccwpck_require__(411);
+class PerformanceTracker {
+    constructor() {
+        this.timingStack = [];
+        this.aiMetrics = new Map();
+        this.resourceMetrics = {
+            memoryStart: this.getMemoryUsage(),
+            memoryPeak: this.getMemoryUsage(),
+            memoryEnd: 0,
+            tempFilesCreated: 0,
+            tempFilesCleaned: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+        };
+        this.stages = [];
+        this.bottlenecks = [];
+        this.effectiveness = [];
+    }
+    static getInstance() {
+        if (!PerformanceTracker.instance) {
+            PerformanceTracker.instance = new PerformanceTracker();
+        }
+        return PerformanceTracker.instance;
+    }
+    /**
+     * Start timing an operation
+     */
+    startTiming(name, metadata) {
+        const entry = {
+            name,
+            startTime: Date.now(),
+            children: [],
+            metadata,
+        };
+        if (this.timingStack.length > 0) {
+            // Add as child to current operation
+            this.timingStack[this.timingStack.length - 1].children.push(entry);
+        }
+        else {
+            // Top-level operation
+            this.stages.push(entry);
+        }
+        this.timingStack.push(entry);
+        logger_1.logger.info('PERF', `🔄 Starting: ${name}`);
+    }
+    /**
+     * End timing an operation
+     */
+    endTiming(name) {
+        const entry = this.timingStack.pop();
+        if (!entry || entry.name !== name) {
+            logger_1.logger.warn('PERF', `Timing mismatch: expected ${name}, got ${entry?.name || 'none'}`);
+            return 0;
+        }
+        entry.endTime = Date.now();
+        entry.duration = entry.endTime - entry.startTime;
+        // Log completion with sub-stage breakdown
+        if (entry.children.length > 0) {
+            logger_1.logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s total)`);
+            // Log sub-stages with bottleneck detection
+            for (const child of entry.children) {
+                const childDuration = child.duration || 0;
+                const percentOfParent = (childDuration / entry.duration) * 100;
+                const isBottleneck = percentOfParent > 70; // More than 70% of parent time
+                const bottleneckIcon = isBottleneck ? ' ⚠️' : '';
+                logger_1.logger.info('PERF', `└─ ${child.name}: ${(childDuration / 1000).toFixed(1)}s (${percentOfParent.toFixed(0)}% of stage)${bottleneckIcon}`);
+                if (isBottleneck) {
+                    this.addBottleneck({
+                        type: 'sequential_processing',
+                        description: `${child.name} consuming ${percentOfParent.toFixed(0)}% of ${name}`,
+                        currentValue: `${(childDuration / 1000).toFixed(1)}s`,
+                        suggestion: 'Consider parallelization or optimization',
+                    });
+                }
+            }
+        }
+        else {
+            logger_1.logger.info('PERF', `✅ Complete: ${name} (${(entry.duration / 1000).toFixed(1)}s)`);
+        }
+        return entry.duration;
+    }
+    /**
+     * Track AI call performance
+     */
+    trackAICall(context, duration, operation) {
+        if (!this.aiMetrics.has(context)) {
+            this.aiMetrics.set(context, {
+                calls: 0,
+                totalTime: 0,
+                times: [],
+                operations: [],
+            });
+        }
+        const metrics = this.aiMetrics.get(context);
+        metrics.calls++;
+        metrics.totalTime += duration;
+        metrics.times.push(duration);
+        if (operation) {
+            metrics.operations.push(operation);
+        }
+        // Check for high latency
+        if (duration > 5000) {
+            // 5+ seconds
+            this.addBottleneck({
+                type: 'high_ai_latency',
+                description: `High AI latency in ${context}`,
+                currentValue: `${(duration / 1000).toFixed(1)}s`,
+                suggestion: 'Consider reducing prompt size or splitting into chunks',
+                estimatedSavings: `${((duration - 3000) / 1000).toFixed(1)}s per call`,
+            });
+        }
+        // Update memory peak
+        this.resourceMetrics.memoryPeak = Math.max(this.resourceMetrics.memoryPeak, this.getMemoryUsage());
+    }
+    /**
+     * Track effectiveness of an operation
+     */
+    trackEffectiveness(operation, input, output, timeSpent) {
+        const reductionRate = input > 0 ? ((input - output) / input) * 100 : 0;
+        const worthwhile = reductionRate > 10 || timeSpent < 5000; // Either good reduction or fast
+        this.effectiveness.push({
+            operation,
+            input,
+            output,
+            reductionRate,
+            timeSpent,
+            worthwhile,
+        });
+        if (!worthwhile && timeSpent > 10000) {
+            // 10+ seconds for minimal benefit
+            this.addBottleneck({
+                type: 'unnecessary_work',
+                description: `${operation}: ${timeSpent / 1000}s for ${reductionRate.toFixed(1)}% improvement`,
+                currentValue: `${reductionRate.toFixed(1)}% reduction`,
+                suggestion: 'Consider skipping this step or optimizing thresholds',
+                estimatedSavings: `${(timeSpent / 1000).toFixed(1)}s`,
+            });
+        }
+    }
+    /**
+     * Track resource usage
+     */
+    trackTempFile(created = true) {
+        if (created) {
+            this.resourceMetrics.tempFilesCreated++;
+        }
+        else {
+            this.resourceMetrics.tempFilesCleaned++;
+        }
+    }
+    trackCache(hit) {
+        if (hit) {
+            this.resourceMetrics.cacheHits++;
+        }
+        else {
+            this.resourceMetrics.cacheMisses++;
+        }
+    }
+    /**
+     * Add bottleneck warning
+     */
+    addBottleneck(bottleneck) {
+        this.bottlenecks.push(bottleneck);
+    }
+    /**
+     * Generate comprehensive performance report
+     */
+    generateReport() {
+        this.resourceMetrics.memoryEnd = this.getMemoryUsage();
+        logger_1.logger.info('PERFORMANCE', '📊 === PERFORMANCE ANALYSIS REPORT ===');
+        // Overall timing breakdown
+        const totalTime = this.stages.reduce((sum, stage) => sum + (stage.duration || 0), 0);
+        logger_1.logger.info('PERFORMANCE', `Total execution time: ${(totalTime / 1000).toFixed(1)}s`);
+        // Stage breakdown
+        if (this.stages.length > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n🎯 Stage Breakdown:');
+            this.stages.forEach((stage, index) => {
+                const duration = stage.duration || 0;
+                const percent = totalTime > 0 ? (duration / totalTime) * 100 : 0;
+                logger_1.logger.info('PERFORMANCE', `${index + 1}. ${stage.name}: ${(duration / 1000).toFixed(1)}s (${percent.toFixed(0)}%)`);
+            });
+        }
+        // AI call analytics
+        if (this.aiMetrics.size > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n🤖 AI Call Analytics:');
+            for (const [context, metrics] of this.aiMetrics) {
+                const avgTime = metrics.totalTime / metrics.calls;
+                const maxTime = Math.max(...metrics.times);
+                const minTime = Math.min(...metrics.times);
+                logger_1.logger.info('PERFORMANCE', `${context}:`);
+                logger_1.logger.info('PERFORMANCE', `├─ Calls: ${metrics.calls}, Total: ${(metrics.totalTime / 1000).toFixed(1)}s`);
+                logger_1.logger.info('PERFORMANCE', `├─ Avg: ${(avgTime / 1000).toFixed(1)}s, Max: ${(maxTime / 1000).toFixed(1)}s, Min: ${(minTime / 1000).toFixed(1)}s`);
+                // Find slowest operation
+                if (metrics.operations.length > 0) {
+                    const slowestIndex = metrics.times.indexOf(maxTime);
+                    if (slowestIndex >= 0 && metrics.operations[slowestIndex]) {
+                        logger_1.logger.info('PERFORMANCE', `└─ Slowest: ${metrics.operations[slowestIndex]} (${(maxTime / 1000).toFixed(1)}s)`);
+                    }
+                }
+            }
+        }
+        // Resource utilization
+        logger_1.logger.info('PERFORMANCE', '\n💾 Resource Utilization:');
+        logger_1.logger.info('PERFORMANCE', `Memory: ${this.resourceMetrics.memoryStart}MB → ${this.resourceMetrics.memoryEnd}MB (peak: ${this.resourceMetrics.memoryPeak}MB)`);
+        const tempFileLeaks = this.resourceMetrics.tempFilesCreated -
+            this.resourceMetrics.tempFilesCleaned;
+        logger_1.logger.info('PERFORMANCE', `Temp files: ${this.resourceMetrics.tempFilesCreated} created, ${this.resourceMetrics.tempFilesCleaned} cleaned${tempFileLeaks > 0 ? ` (${tempFileLeaks} leaked!)` : ''}`);
+        const totalCacheOps = this.resourceMetrics.cacheHits + this.resourceMetrics.cacheMisses;
+        const cacheHitRate = totalCacheOps > 0
+            ? (this.resourceMetrics.cacheHits / totalCacheOps) * 100
+            : 0;
+        logger_1.logger.info('PERFORMANCE', `Cache: ${this.resourceMetrics.cacheHits}/${totalCacheOps} hits (${cacheHitRate.toFixed(0)}% hit rate)`);
+        // Effectiveness tracking
+        if (this.effectiveness.length > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n📈 Effectiveness Analysis:');
+            this.effectiveness.forEach((eff) => {
+                const worthwhileIcon = eff.worthwhile ? '✅' : '⚠️';
+                logger_1.logger.info('PERFORMANCE', `${worthwhileIcon} ${eff.operation}: ${eff.input}→${eff.output} (${eff.reductionRate.toFixed(1)}% reduction, ${(eff.timeSpent / 1000).toFixed(1)}s)`);
+            });
+        }
+        // Bottleneck warnings and suggestions
+        if (this.bottlenecks.length > 0) {
+            logger_1.logger.info('PERFORMANCE', '\n⚠️ Bottlenecks & Optimization Opportunities:');
+            this.bottlenecks.forEach((bottleneck, index) => {
+                logger_1.logger.info('PERFORMANCE', `${index + 1}. ${bottleneck.description}`);
+                logger_1.logger.info('PERFORMANCE', `   Current: ${bottleneck.currentValue}`);
+                logger_1.logger.info('PERFORMANCE', `   Suggestion: ${bottleneck.suggestion}`);
+                if (bottleneck.estimatedSavings) {
+                    logger_1.logger.info('PERFORMANCE', `   Est. savings: ${bottleneck.estimatedSavings}`);
+                }
+            });
+        }
+        // Final insights
+        const totalAICalls = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.calls, 0);
+        const totalAITime = Array.from(this.aiMetrics.values()).reduce((sum, m) => sum + m.totalTime, 0);
+        logger_1.logger.info('PERFORMANCE', '\n🎯 Key Insights:');
+        logger_1.logger.info('PERFORMANCE', `• Total AI calls: ${totalAICalls} (${(totalAITime / 1000).toFixed(1)}s, ${((totalAITime / totalTime) * 100).toFixed(0)}% of total time)`);
+        if (totalAICalls > 50) {
+            logger_1.logger.warn('PERFORMANCE', `• High AI usage detected (${totalAICalls} calls) - consider batch optimization`);
+        }
+        if (totalTime > 120000) {
+            // 2+ minutes
+            logger_1.logger.warn('PERFORMANCE', `• Long processing time (${(totalTime / 1000).toFixed(1)}s) - see bottleneck suggestions above`);
+        }
+        logger_1.logger.info('PERFORMANCE', '📊 === END PERFORMANCE REPORT ===');
+    }
+    /**
+     * Reset all metrics
+     */
+    reset() {
+        this.timingStack = [];
+        this.aiMetrics.clear();
+        this.stages = [];
+        this.bottlenecks = [];
+        this.effectiveness = [];
+        this.resourceMetrics = {
+            memoryStart: this.getMemoryUsage(),
+            memoryPeak: this.getMemoryUsage(),
+            memoryEnd: 0,
+            tempFilesCreated: 0,
+            tempFilesCleaned: 0,
+            cacheHits: 0,
+            cacheMisses: 0,
+        };
+    }
+    getMemoryUsage() {
+        const usage = process.memoryUsage();
+        return Math.round(usage.heapUsed / 1024 / 1024); // MB
+    }
+}
+exports.PerformanceTracker = PerformanceTracker;
+// Export singleton instance
+exports.performanceTracker = PerformanceTracker.getInstance();
+
+
+/***/ }),
+
+/***/ 241:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SimilarityCalculator = void 0;
+class SimilarityCalculator {
+    quickSimilarityCheck(theme1, theme2) {
+        // Quick name similarity check
+        const nameScore = this.calculateNameSimilarity(theme1.name, theme2.name);
+        // Exact or near-exact name match - very likely to merge
+        if (nameScore >= 0.95) {
+            return {
+                shouldSkipAI: true,
+                similarity: {
+                    nameScore,
+                    descriptionScore: 0.9, // Assume high description similarity
+                    fileOverlap: this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles),
+                    patternScore: 0.8,
+                    businessScore: 0.9,
+                    combinedScore: 0.92,
+                },
+                reason: 'Near-identical names detected, skipping AI',
+            };
+        }
+        // No file overlap and completely different file types - very unlikely to merge
+        const fileOverlap = this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
+        if (fileOverlap === 0 && this.hasDifferentFileTypes(theme1, theme2)) {
+            return {
+                shouldSkipAI: true,
+                similarity: {
+                    nameScore,
+                    descriptionScore: 0.2,
+                    fileOverlap: 0,
+                    patternScore: 0.1,
+                    businessScore: 0.2,
+                    combinedScore: 0.15,
+                },
+                reason: 'No file overlap and different file types, skipping AI',
+            };
+        }
+        // Very different names and no file overlap - unlikely to merge
+        if (nameScore < 0.1 && fileOverlap === 0) {
+            return {
+                shouldSkipAI: true,
+                similarity: {
+                    nameScore,
+                    descriptionScore: 0.2,
+                    fileOverlap: 0,
+                    patternScore: 0.2,
+                    businessScore: 0.2,
+                    combinedScore: 0.18,
+                },
+                reason: 'Very different names and no file overlap, skipping AI',
+            };
+        }
+        // Need AI analysis for uncertain cases
+        return {
+            shouldSkipAI: false,
+            reason: 'Uncertain case, using AI analysis',
+        };
+    }
+    calculateNameSimilarity(name1, name2) {
+        const words1 = name1.toLowerCase().split(/\s+/);
+        const words2 = name2.toLowerCase().split(/\s+/);
+        const intersection = words1.filter((word) => words2.includes(word));
+        const union = new Set([...words1, ...words2]);
+        return intersection.length / union.size;
+    }
+    calculateDescriptionSimilarity(desc1, desc2) {
+        const words1 = desc1.toLowerCase().split(/\s+/);
+        const words2 = desc2.toLowerCase().split(/\s+/);
+        const intersection = words1.filter((word) => words2.includes(word));
+        const union = new Set([...words1, ...words2]);
+        return intersection.length / union.size;
+    }
+    calculateFileOverlap(files1, files2) {
+        const set1 = new Set(files1);
+        const set2 = new Set(files2);
+        const intersection = new Set([...set1].filter((file) => set2.has(file)));
+        const union = new Set([...set1, ...set2]);
+        return union.size === 0 ? 0 : intersection.size / union.size;
+    }
+    hasDifferentFileTypes(theme1, theme2) {
+        const getFileTypes = (files) => new Set(files.map((f) => f.split('.').pop()?.toLowerCase() || 'unknown'));
+        const types1 = getFileTypes(theme1.affectedFiles);
+        const types2 = getFileTypes(theme2.affectedFiles);
+        // Check if they have any common file types
+        const commonTypes = new Set([...types1].filter((type) => types2.has(type)));
+        return commonTypes.size === 0;
+    }
+    calculatePatternSimilarity(theme1, theme2) {
+        // Extract patterns from context
+        const patterns1 = this.extractPatterns(theme1.context);
+        const patterns2 = this.extractPatterns(theme2.context);
+        const intersection = patterns1.filter((p) => patterns2.includes(p));
+        const union = new Set([...patterns1, ...patterns2]);
+        return union.size === 0 ? 0 : intersection.length / union.size;
+    }
+    calculateBusinessSimilarity(theme1, theme2) {
+        const business1 = this.extractBusinessKeywords(theme1.description);
+        const business2 = this.extractBusinessKeywords(theme2.description);
+        const intersection = business1.filter((k) => business2.includes(k));
+        const union = new Set([...business1, ...business2]);
+        return union.size === 0 ? 0 : intersection.length / union.size;
+    }
+    extractPatterns(context) {
+        const patterns = [];
+        const text = context.toLowerCase();
+        if (text.includes('add') || text.includes('implement'))
+            patterns.push('addition');
+        if (text.includes('remove') || text.includes('delete'))
+            patterns.push('removal');
+        if (text.includes('update') || text.includes('modify'))
+            patterns.push('modification');
+        if (text.includes('refactor'))
+            patterns.push('refactoring');
+        if (text.includes('interface') || text.includes('type'))
+            patterns.push('type_definition');
+        if (text.includes('service') || text.includes('class'))
+            patterns.push('service_implementation');
+        if (text.includes('test'))
+            patterns.push('testing');
+        if (text.includes('configuration') || text.includes('config'))
+            patterns.push('configuration');
+        return patterns;
+    }
+    extractBusinessKeywords(description) {
+        const keywords = [];
+        const text = description.toLowerCase();
+        if (text.includes('greeting'))
+            keywords.push('greeting');
+        if (text.includes('authentication') || text.includes('auth'))
+            keywords.push('authentication');
+        if (text.includes('user') || text.includes('customer'))
+            keywords.push('user_experience');
+        if (text.includes('api') || text.includes('service'))
+            keywords.push('api_service');
+        if (text.includes('data') || text.includes('storage'))
+            keywords.push('data_management');
+        if (text.includes('security'))
+            keywords.push('security');
+        if (text.includes('performance'))
+            keywords.push('performance');
+        if (text.includes('integration'))
+            keywords.push('integration');
+        if (text.includes('workflow') || text.includes('process'))
+            keywords.push('workflow');
+        return keywords;
+    }
+}
+exports.SimilarityCalculator = SimilarityCalculator;
+
+
+/***/ }),
+
+/***/ 1798:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.handleError = handleError;
+exports.logInfo = logInfo;
+exports.setOutput = setOutput;
+const core = __importStar(__nccwpck_require__(7484));
+function handleError(error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    core.error(`Action failed: ${errorMessage}`);
+    core.setFailed(errorMessage);
+}
+function logInfo(message) {
+    core.info(message);
+}
+function setOutput(name, value) {
+    core.setOutput(name, value);
+}
 
 
 /***/ }),
@@ -38105,381 +39070,6 @@ function setupCleanupHandlers() {
 }
 // Initialize cleanup handlers
 setupCleanupHandlers();
-
-
-/***/ }),
-
-/***/ 7831:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SimilarityCalculator = void 0;
-class SimilarityCalculator {
-    quickSimilarityCheck(theme1, theme2) {
-        // Quick name similarity check
-        const nameScore = this.calculateNameSimilarity(theme1.name, theme2.name);
-        // Exact or near-exact name match - very likely to merge
-        if (nameScore >= 0.95) {
-            return {
-                shouldSkipAI: true,
-                similarity: {
-                    nameScore,
-                    descriptionScore: 0.9, // Assume high description similarity
-                    fileOverlap: this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles),
-                    patternScore: 0.8,
-                    businessScore: 0.9,
-                    combinedScore: 0.92,
-                },
-                reason: 'Near-identical names detected, skipping AI',
-            };
-        }
-        // No file overlap and completely different file types - very unlikely to merge
-        const fileOverlap = this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
-        if (fileOverlap === 0 && this.hasDifferentFileTypes(theme1, theme2)) {
-            return {
-                shouldSkipAI: true,
-                similarity: {
-                    nameScore,
-                    descriptionScore: 0.2,
-                    fileOverlap: 0,
-                    patternScore: 0.1,
-                    businessScore: 0.2,
-                    combinedScore: 0.15,
-                },
-                reason: 'No file overlap and different file types, skipping AI',
-            };
-        }
-        // Very different names and no file overlap - unlikely to merge
-        if (nameScore < 0.1 && fileOverlap === 0) {
-            return {
-                shouldSkipAI: true,
-                similarity: {
-                    nameScore,
-                    descriptionScore: 0.2,
-                    fileOverlap: 0,
-                    patternScore: 0.2,
-                    businessScore: 0.2,
-                    combinedScore: 0.18,
-                },
-                reason: 'Very different names and no file overlap, skipping AI',
-            };
-        }
-        // Need AI analysis for uncertain cases
-        return {
-            shouldSkipAI: false,
-            reason: 'Uncertain case, using AI analysis',
-        };
-    }
-    calculateNameSimilarity(name1, name2) {
-        const words1 = name1.toLowerCase().split(/\s+/);
-        const words2 = name2.toLowerCase().split(/\s+/);
-        const intersection = words1.filter((word) => words2.includes(word));
-        const union = new Set([...words1, ...words2]);
-        return intersection.length / union.size;
-    }
-    calculateDescriptionSimilarity(desc1, desc2) {
-        const words1 = desc1.toLowerCase().split(/\s+/);
-        const words2 = desc2.toLowerCase().split(/\s+/);
-        const intersection = words1.filter((word) => words2.includes(word));
-        const union = new Set([...words1, ...words2]);
-        return intersection.length / union.size;
-    }
-    calculateFileOverlap(files1, files2) {
-        const set1 = new Set(files1);
-        const set2 = new Set(files2);
-        const intersection = new Set([...set1].filter((file) => set2.has(file)));
-        const union = new Set([...set1, ...set2]);
-        return union.size === 0 ? 0 : intersection.size / union.size;
-    }
-    hasDifferentFileTypes(theme1, theme2) {
-        const getFileTypes = (files) => new Set(files.map((f) => f.split('.').pop()?.toLowerCase() || 'unknown'));
-        const types1 = getFileTypes(theme1.affectedFiles);
-        const types2 = getFileTypes(theme2.affectedFiles);
-        // Check if they have any common file types
-        const commonTypes = new Set([...types1].filter((type) => types2.has(type)));
-        return commonTypes.size === 0;
-    }
-    calculatePatternSimilarity(theme1, theme2) {
-        // Extract patterns from context
-        const patterns1 = this.extractPatterns(theme1.context);
-        const patterns2 = this.extractPatterns(theme2.context);
-        const intersection = patterns1.filter((p) => patterns2.includes(p));
-        const union = new Set([...patterns1, ...patterns2]);
-        return union.size === 0 ? 0 : intersection.length / union.size;
-    }
-    calculateBusinessSimilarity(theme1, theme2) {
-        const business1 = this.extractBusinessKeywords(theme1.description);
-        const business2 = this.extractBusinessKeywords(theme2.description);
-        const intersection = business1.filter((k) => business2.includes(k));
-        const union = new Set([...business1, ...business2]);
-        return union.size === 0 ? 0 : intersection.length / union.size;
-    }
-    extractPatterns(context) {
-        const patterns = [];
-        const text = context.toLowerCase();
-        if (text.includes('add') || text.includes('implement'))
-            patterns.push('addition');
-        if (text.includes('remove') || text.includes('delete'))
-            patterns.push('removal');
-        if (text.includes('update') || text.includes('modify'))
-            patterns.push('modification');
-        if (text.includes('refactor'))
-            patterns.push('refactoring');
-        if (text.includes('interface') || text.includes('type'))
-            patterns.push('type_definition');
-        if (text.includes('service') || text.includes('class'))
-            patterns.push('service_implementation');
-        if (text.includes('test'))
-            patterns.push('testing');
-        if (text.includes('configuration') || text.includes('config'))
-            patterns.push('configuration');
-        return patterns;
-    }
-    extractBusinessKeywords(description) {
-        const keywords = [];
-        const text = description.toLowerCase();
-        if (text.includes('greeting'))
-            keywords.push('greeting');
-        if (text.includes('authentication') || text.includes('auth'))
-            keywords.push('authentication');
-        if (text.includes('user') || text.includes('customer'))
-            keywords.push('user_experience');
-        if (text.includes('api') || text.includes('service'))
-            keywords.push('api_service');
-        if (text.includes('data') || text.includes('storage'))
-            keywords.push('data_management');
-        if (text.includes('security'))
-            keywords.push('security');
-        if (text.includes('performance'))
-            keywords.push('performance');
-        if (text.includes('integration'))
-            keywords.push('integration');
-        if (text.includes('workflow') || text.includes('process'))
-            keywords.push('workflow');
-        return keywords;
-    }
-}
-exports.SimilarityCalculator = SimilarityCalculator;
-
-
-/***/ }),
-
-/***/ 6583:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ThemeFormatter = void 0;
-/**
- * Utility for formatting theme hierarchies for output
- */
-class ThemeFormatter {
-    /**
-     * Format themes for GitHub Actions output with deep hierarchy support
-     */
-    static formatThemesForOutput(themes) {
-        const themeCount = this.countTotalThemes(themes);
-        let output = `Found ${themeCount} themes:\\n`;
-        themes.forEach((theme, index) => {
-            output += this.formatThemeRecursively(theme, index + 1, 0);
-        });
-        return output;
-    }
-    /**
-     * Format a single theme recursively with proper indentation
-     */
-    static formatThemeRecursively(theme, number, depth, parentNumber) {
-        const indent = '   '.repeat(depth);
-        const confidence = (theme.confidence * 100).toFixed(0);
-        // Create theme number (e.g., "1", "1.1", "1.1.1")
-        const themeNumber = parentNumber
-            ? `${parentNumber}.${number}`
-            : `${number}`;
-        // Truncate description if too long
-        const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim(), this.MAX_DESCRIPTION_LENGTH);
-        let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
-        // Files on the same line or next line depending on length
-        const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
-        const fileList = theme.affectedFiles.length > this.MAX_FILES_SHOWN
-            ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
-            : files;
-        output += `\\n${indent}   ${fileList}`;
-        // Main description
-        output += `\\n${indent}   ${description}`;
-        // Show detailed description only if significantly different and adds value
-        if (theme.detailedDescription &&
-            theme.detailedDescription.length > 20 &&
-            !theme.description
-                .toLowerCase()
-                .includes(theme.detailedDescription.toLowerCase().substring(0, 10))) {
-            output += ` ${theme.detailedDescription}`;
-        }
-        // No merge indicators, no emoji, just content
-        // Show child themes recursively without announcement
-        if (theme.childThemes && theme.childThemes.length > 0) {
-            output += '\\n'; // Add blank line before sub-themes
-            theme.childThemes.forEach((childTheme, childIndex) => {
-                output += this.formatThemeRecursively(childTheme, childIndex + 1, depth + 1, themeNumber);
-            });
-        }
-        return output;
-    }
-    /**
-     * Create a concise summary of the theme analysis
-     */
-    static createThemeSummary(themes) {
-        const totalThemes = this.countTotalThemes(themes);
-        const maxDepth = this.calculateMaxDepth(themes);
-        const avgConfidence = this.calculateAverageConfidence(themes);
-        const rootThemes = themes.length;
-        const expandedThemes = this.countExpandedThemes(themes);
-        const mergedThemes = this.countMergedThemes(themes);
-        let summary = `Analyzed code changes and identified ${totalThemes} themes across ${maxDepth + 1} hierarchy levels. `;
-        summary += `Root themes: ${rootThemes}, Average confidence: ${(avgConfidence * 100).toFixed(0)}%. `;
-        if (expandedThemes > 0) {
-            summary += `${expandedThemes} themes expanded for detailed analysis. `;
-        }
-        if (mergedThemes > 0) {
-            summary += `${mergedThemes} themes consolidated from similar patterns.`;
-        }
-        return summary;
-    }
-    /**
-     * Format themes for JSON output (useful for integrations)
-     */
-    static formatThemesAsJson(themes) {
-        const formatted = themes.map((theme) => this.themeToJsonObject(theme));
-        return JSON.stringify(formatted, null, 2);
-    }
-    /**
-     * Create a flat list of all themes with hierarchy indicators
-     */
-    static createFlatThemeList(themes) {
-        const flatThemes = [];
-        const collectThemes = (themeList, parentPath = '') => {
-            themeList.forEach((theme, index) => {
-                const currentPath = parentPath
-                    ? `${parentPath}.${index + 1}`
-                    : `${index + 1}`;
-                flatThemes.push({ theme, path: currentPath });
-                if (theme.childThemes.length > 0) {
-                    collectThemes(theme.childThemes, currentPath);
-                }
-            });
-        };
-        collectThemes(themes);
-        let output = `Theme hierarchy (${flatThemes.length} total themes):\\n`;
-        flatThemes.forEach(({ theme, path }) => {
-            const confidence = (theme.confidence * 100).toFixed(0);
-            const level = path.split('.').length;
-            const indent = '  '.repeat(level - 1);
-            output += `\\n${indent}${path}. ${theme.name} (${confidence}%, ${theme.affectedFiles.length} files)`;
-        });
-        return output;
-    }
-    // Private helper methods
-    static countTotalThemes(themes) {
-        let count = 0;
-        const countRecursively = (themeList) => {
-            count += themeList.length;
-            themeList.forEach((theme) => {
-                if (theme.childThemes.length > 0) {
-                    countRecursively(theme.childThemes);
-                }
-            });
-        };
-        countRecursively(themes);
-        return count;
-    }
-    static calculateMaxDepth(themes) {
-        let maxDepth = 0;
-        const findMaxDepth = (themeList, currentDepth) => {
-            maxDepth = Math.max(maxDepth, currentDepth);
-            themeList.forEach((theme) => {
-                if (theme.childThemes.length > 0) {
-                    findMaxDepth(theme.childThemes, currentDepth + 1);
-                }
-            });
-        };
-        findMaxDepth(themes, 0);
-        return maxDepth;
-    }
-    static calculateAverageConfidence(themes) {
-        const allThemes = [];
-        const collectAllThemes = (themeList) => {
-            themeList.forEach((theme) => {
-                allThemes.push(theme);
-                if (theme.childThemes.length > 0) {
-                    collectAllThemes(theme.childThemes);
-                }
-            });
-        };
-        collectAllThemes(themes);
-        if (allThemes.length === 0)
-            return 0;
-        const totalConfidence = allThemes.reduce((sum, theme) => sum + theme.confidence, 0);
-        return totalConfidence / allThemes.length;
-    }
-    static countExpandedThemes(themes) {
-        let count = 0;
-        const countRecursively = (themeList) => {
-            themeList.forEach((theme) => {
-                if (theme.isExpanded || theme.consolidationMethod === 'expansion') {
-                    count++;
-                }
-                if (theme.childThemes.length > 0) {
-                    countRecursively(theme.childThemes);
-                }
-            });
-        };
-        countRecursively(themes);
-        return count;
-    }
-    static countMergedThemes(themes) {
-        let count = 0;
-        const countRecursively = (themeList) => {
-            themeList.forEach((theme) => {
-                if (theme.consolidationMethod === 'merge' &&
-                    theme.sourceThemes.length > 1) {
-                    count++;
-                }
-                if (theme.childThemes.length > 0) {
-                    countRecursively(theme.childThemes);
-                }
-            });
-        };
-        countRecursively(themes);
-        return count;
-    }
-    static truncateText(text, maxLength) {
-        if (text.length <= maxLength) {
-            return text;
-        }
-        return text.substring(0, maxLength - 3) + '...';
-    }
-    static themeToJsonObject(theme) {
-        return {
-            id: theme.id,
-            name: theme.name,
-            description: theme.description,
-            level: theme.level,
-            confidence: theme.confidence,
-            businessImpact: theme.businessImpact,
-            affectedFiles: theme.affectedFiles,
-            consolidationMethod: theme.consolidationMethod,
-            isExpanded: theme.isExpanded,
-            businessLogicPatterns: theme.businessLogicPatterns,
-            userFlowPatterns: theme.userFlowPatterns,
-            childThemes: theme.childThemes.map((child) => this.themeToJsonObject(child)),
-        };
-    }
-}
-exports.ThemeFormatter = ThemeFormatter;
-ThemeFormatter.MAX_FILES_SHOWN = 3;
-ThemeFormatter.MAX_DESCRIPTION_LENGTH = 200;
 
 
 /***/ }),

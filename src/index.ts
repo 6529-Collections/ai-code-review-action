@@ -2,11 +2,11 @@ import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import { validateInputs } from './validation';
 import { handleError, logInfo } from './utils';
-import { GitService } from './services/git-service';
-import { ThemeService } from './services/theme-service';
-import { ThemeFormatter } from './utils/theme-formatter';
-import { logger } from './utils/logger';
-import { performanceTracker } from './utils/performance-tracker';
+import { GitService } from '@/shared/services/git-service';
+import { ThemeService } from '@/mindmap/services/theme-service';
+import { ThemeFormatter } from '@/mindmap/utils/theme-formatter';
+import { logger } from '@/shared/utils/logger';
+import { performanceTracker } from '@/shared/utils/performance-tracker';
 
 export async function run(): Promise<void> {
   try {

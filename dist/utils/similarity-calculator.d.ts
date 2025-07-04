@@ -1,4 +1,4 @@
-import { Theme } from '../services/theme-service';
+import { Theme } from '@/shared/types/theme-types';
 import { QuickSimilarityResult } from '../types/similarity-types';
 export declare class SimilarityCalculator {
     quickSimilarityCheck(theme1: Theme, theme2: Theme): QuickSimilarityResult;
