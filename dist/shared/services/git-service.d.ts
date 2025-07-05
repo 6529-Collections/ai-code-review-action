@@ -1,4 +1,5 @@
 import { CodeChange } from '../utils/ai-code-analyzer';
+import { IGitService } from '../interfaces/git-service-interface';
 export interface ChangedFile {
     filename: string;
     status: 'added' | 'modified' | 'removed' | 'renamed';
@@ -15,7 +16,7 @@ export interface PullRequestContext {
     baseSha: string;
     headSha: string;
 }
-export declare class GitService {
+export declare class GitService implements IGitService {
     private readonly githubToken;
     private static readonly EXCLUDED_PATTERNS;
     private octokit;
@@ -24,14 +25,7 @@ export declare class GitService {
     constructor(githubToken: string, anthropicApiKey?: string);
     getEnhancedChangedFiles(): Promise<CodeChange[]>;
     getPullRequestContext(): Promise<PullRequestContext | null>;
-    private getPullRequestForBranch;
-    private createDevModeContext;
-    private getCurrentBranch;
-    private getCurrentCommitSha;
-    private getBranchCommitSha;
     getChangedFiles(): Promise<ChangedFile[]>;
     private getChangedFilesFromGitHub;
-    private getChangedFilesFromGit;
-    private mapGitStatusToChangedFileStatus;
     getDiffContent(baseSha: string, headSha: string): Promise<string>;
 }

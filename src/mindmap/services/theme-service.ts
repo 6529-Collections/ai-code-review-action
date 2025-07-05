@@ -484,7 +484,7 @@ export class ThemeService {
   }
 
   async analyzeThemesWithEnhancedContext(
-    gitService: import('@/shared/services/git-service').GitService
+    gitService: import('@/shared/interfaces/git-service-interface').IGitService
   ): Promise<ThemeAnalysisResult> {
     performanceTracker.startTiming('Code Analysis');
     console.log('[THEME-SERVICE] Starting enhanced theme analysis');

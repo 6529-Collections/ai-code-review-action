@@ -29960,10 +29960,20 @@ const exec = __importStar(__nccwpck_require__(5236));
 const validation_1 = __nccwpck_require__(4344);
 const utils_1 = __nccwpck_require__(1798);
 const git_service_1 = __nccwpck_require__(8416);
+const local_testing_1 = __nccwpck_require__(7354);
+const output_saver_1 = __nccwpck_require__(2090);
 const theme_service_1 = __nccwpck_require__(884);
 const theme_formatter_1 = __nccwpck_require__(2542);
 const logger_1 = __nccwpck_require__(411);
 const performance_tracker_1 = __nccwpck_require__(9600);
+/**
+ * Detect if we're running in local testing mode
+ */
+function isLocalTesting() {
+    return process.env.ACT === 'true' ||
+        process.env.LOCAL_TESTING === 'true' ||
+        process.env.NODE_ENV === 'development';
+}
 async function run() {
     try {
         // Reset performance tracker for this run
@@ -29972,29 +29982,39 @@ async function run() {
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+        // Detect environment and log mode
+        const isLocal = isLocalTesting();
+        (0, utils_1.logInfo)(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
         performance_tracker_1.performanceTracker.startTiming('Setup');
-        // Install Claude Code CLI
-        (0, utils_1.logInfo)('Installing Claude Code CLI...');
-        await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
-        (0, utils_1.logInfo)('Claude Code CLI installed successfully');
-        // Initialize Claude CLI configuration to avoid JSON config errors
-        (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
-        const claudeConfig = {
-            allowedTools: [],
-            hasTrustDialogAccepted: true,
-            permissions: {
-                allow: ['*'],
-            },
-        };
-        await exec.exec('bash', [
-            '-c',
-            `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
-        ], { silent: true });
-        (0, utils_1.logInfo)('Claude CLI configuration initialized');
+        // Install Claude Code CLI (only in production or when explicitly needed)
+        if (!isLocal) {
+            (0, utils_1.logInfo)('Installing Claude Code CLI...');
+            await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
+            (0, utils_1.logInfo)('Claude Code CLI installed successfully');
+            // Initialize Claude CLI configuration to avoid JSON config errors
+            (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
+            const claudeConfig = {
+                allowedTools: [],
+                hasTrustDialogAccepted: true,
+                permissions: {
+                    allow: ['*'],
+                },
+            };
+            await exec.exec('bash', [
+                '-c',
+                `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
+            ], { silent: true });
+            (0, utils_1.logInfo)('Claude CLI configuration initialized');
+        }
+        else {
+            (0, utils_1.logInfo)('Skipping Claude CLI installation in local testing mode');
+        }
         performance_tracker_1.performanceTracker.endTiming('Setup');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
-        // Initialize services with AI code analysis
-        const gitService = new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
+        // Initialize services based on environment
+        const gitService = isLocal
+            ? new local_testing_1.LocalGitService(inputs.anthropicApiKey)
+            : new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
         // Initialize theme service with AI-driven expansion
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
         (0, utils_1.logInfo)('Using AI-driven theme expansion for natural hierarchy depth');
@@ -30003,17 +30023,26 @@ async function run() {
         const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
         performance_tracker_1.performanceTracker.endTiming('Git Operations');
-        // Log dev mode info
-        if (prContext && prContext.number === 0) {
+        // Log mode-specific info
+        if (isLocal) {
+            if (gitService instanceof local_testing_1.LocalGitService) {
+                const modeInfo = gitService.getCurrentMode();
+                (0, utils_1.logInfo)(`Local testing mode: ${modeInfo.name} - ${modeInfo.description}`);
+            }
+        }
+        else if (prContext && prContext.number === 0) {
             (0, utils_1.logInfo)(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
             (0, utils_1.logInfo)(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
             (0, utils_1.logInfo)(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
         }
         (0, utils_1.logInfo)(`Found ${changedFiles.length} changed files`);
         if (changedFiles.length === 0) {
-            (0, utils_1.logInfo)('No files changed, skipping analysis');
+            const message = isLocal
+                ? 'No uncommitted changes found, skipping analysis'
+                : 'No files changed in this PR, skipping analysis';
+            (0, utils_1.logInfo)(message);
             core.setOutput('themes', JSON.stringify([]));
-            core.setOutput('summary', 'No files changed in this PR');
+            core.setOutput('summary', message);
             return;
         }
         // Analyze themes
@@ -30044,6 +30073,19 @@ async function run() {
             core.setOutput('themes', detailedThemes);
             core.setOutput('summary', safeSummary);
             logger_1.logger.debug('MAIN', 'Outputs set successfully');
+            // Save analysis results for local testing
+            if (isLocal && gitService instanceof local_testing_1.LocalGitService) {
+                try {
+                    const modeInfo = gitService.getCurrentMode();
+                    const savedPath = await output_saver_1.OutputSaver.saveAnalysis(detailedThemes, safeSummary, themeAnalysis, modeInfo.name);
+                    (0, utils_1.logInfo)(`Analysis saved to: ${savedPath}`);
+                    // Clean up old files (keep last 10)
+                    output_saver_1.OutputSaver.cleanupOldAnalyses(10);
+                }
+                catch (saveError) {
+                    logger_1.logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
+                }
+            }
             (0, utils_1.logInfo)(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
@@ -30081,6 +30123,763 @@ async function run() {
 if (require.main === require.cache[eval('__filename')]) {
     run();
 }
+
+
+/***/ }),
+
+/***/ 6219:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Configuration and types for local testing diff modes
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_DIFF_MODE_CONFIG = exports.DiffModeType = void 0;
+var DiffModeType;
+(function (DiffModeType) {
+    DiffModeType["UNCOMMITTED"] = "uncommitted";
+    // Future modes can be added here
+    // STAGED = 'staged',
+    // LAST_COMMIT = 'last-commit',
+    // BRANCH = 'branch',
+    // PR = 'pr'
+})(DiffModeType || (exports.DiffModeType = DiffModeType = {}));
+exports.DEFAULT_DIFF_MODE_CONFIG = {
+    mode: DiffModeType.UNCOMMITTED,
+};
+
+
+/***/ }),
+
+/***/ 7354:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Local testing module entry point
+ * Exports all components needed for local testing functionality
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OutputSaver = exports.LocalGitService = exports.LocalDiffService = void 0;
+// Configuration
+__exportStar(__nccwpck_require__(6219), exports);
+// Services
+var local_diff_service_1 = __nccwpck_require__(3836);
+Object.defineProperty(exports, "LocalDiffService", ({ enumerable: true, get: function () { return local_diff_service_1.LocalDiffService; } }));
+var local_git_service_1 = __nccwpck_require__(4275);
+Object.defineProperty(exports, "LocalGitService", ({ enumerable: true, get: function () { return local_git_service_1.LocalGitService; } }));
+var output_saver_1 = __nccwpck_require__(2090);
+Object.defineProperty(exports, "OutputSaver", ({ enumerable: true, get: function () { return output_saver_1.OutputSaver; } }));
+// Modes
+__exportStar(__nccwpck_require__(7881), exports);
+
+
+/***/ }),
+
+/***/ 432:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BaseDiffMode = void 0;
+/**
+ * Abstract base class for different diff modes in local testing
+ * Provides extensible foundation for future diff modes
+ */
+class BaseDiffMode {
+    /**
+     * Optional: Get a description of what this mode analyzes
+     */
+    getDescription() {
+        return `Analyzes changes using ${this.getName()} mode`;
+    }
+}
+exports.BaseDiffMode = BaseDiffMode;
+
+
+/***/ }),
+
+/***/ 7881:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Export barrel for all diff modes
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UncommittedMode = exports.BaseDiffMode = void 0;
+var base_diff_mode_1 = __nccwpck_require__(432);
+Object.defineProperty(exports, "BaseDiffMode", ({ enumerable: true, get: function () { return base_diff_mode_1.BaseDiffMode; } }));
+var uncommitted_mode_1 = __nccwpck_require__(1852);
+Object.defineProperty(exports, "UncommittedMode", ({ enumerable: true, get: function () { return uncommitted_mode_1.UncommittedMode; } }));
+// Future modes can be exported here
+// export { StagedMode } from './staged-mode';
+// export { LastCommitMode } from './last-commit-mode';
+// export { BranchMode } from './branch-mode';
+
+
+/***/ }),
+
+/***/ 1852:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UncommittedMode = void 0;
+const exec = __importStar(__nccwpck_require__(5236));
+const base_diff_mode_1 = __nccwpck_require__(432);
+/**
+ * UncommittedMode analyzes all uncommitted changes (staged + unstaged)
+ * This is the default mode for local testing
+ */
+class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
+    getName() {
+        return 'uncommitted';
+    }
+    getDescription() {
+        return 'Analyzes all uncommitted changes (staged and unstaged)';
+    }
+    shouldIncludeFile(filename) {
+        const isExcluded = UncommittedMode.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
+        console.log(`[UNCOMMITTED-MODE] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
+        return !isExcluded;
+    }
+    async getChangedFiles() {
+        console.log('[UNCOMMITTED-MODE] Getting uncommitted changes...');
+        const files = [];
+        // Get staged files
+        const stagedFiles = await this.getStagedFiles();
+        files.push(...stagedFiles);
+        // Get unstaged files (modified/deleted)
+        const unstagedFiles = await this.getUnstagedFiles();
+        files.push(...unstagedFiles);
+        // Get untracked files
+        const untrackedFiles = await this.getUntrackedFiles();
+        files.push(...untrackedFiles);
+        // Remove duplicates and filter
+        const uniqueFiles = this.deduplicateFiles(files);
+        const filteredFiles = uniqueFiles.filter(file => this.shouldIncludeFile(file.filename));
+        console.log(`[UNCOMMITTED-MODE] Found ${filteredFiles.length} uncommitted files for analysis`);
+        return filteredFiles;
+    }
+    async getDiffContent() {
+        console.log('[UNCOMMITTED-MODE] Getting full diff content...');
+        let diffOutput = '';
+        try {
+            // Get staged changes
+            await exec.exec('git', ['diff', '--cached'], {
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+            // Get unstaged changes
+            await exec.exec('git', ['diff'], {
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            console.error('[UNCOMMITTED-MODE] Failed to get diff content:', error);
+        }
+        return diffOutput;
+    }
+    async getStagedFiles() {
+        const files = [];
+        let fileList = '';
+        try {
+            await exec.exec('git', ['diff', '--cached', '--name-status'], {
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            console.warn('[UNCOMMITTED-MODE] No staged files found');
+            return [];
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const line of fileLines) {
+            const [status, filename] = line.split('\t');
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, status, true);
+            if (file)
+                files.push(file);
+        }
+        return files;
+    }
+    async getUnstagedFiles() {
+        const files = [];
+        let fileList = '';
+        try {
+            await exec.exec('git', ['diff', '--name-status'], {
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            console.warn('[UNCOMMITTED-MODE] No unstaged files found');
+            return [];
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const line of fileLines) {
+            const [status, filename] = line.split('\t');
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, status, false);
+            if (file)
+                files.push(file);
+        }
+        return files;
+    }
+    async getUntrackedFiles() {
+        const files = [];
+        let fileList = '';
+        try {
+            await exec.exec('git', ['ls-files', '--others', '--exclude-standard'], {
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            console.warn('[UNCOMMITTED-MODE] No untracked files found');
+            return [];
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const filename of fileLines) {
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, 'A', false);
+            if (file)
+                files.push(file);
+        }
+        return files;
+    }
+    async createChangedFile(filename, gitStatus, isStaged) {
+        try {
+            // Get patch for this file
+            const patch = await this.getFilePatch(filename, isStaged);
+            // Count additions/deletions from patch
+            const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
+            const deletions = (patch.match(/^-(?!-)/gm) || []).length;
+            return {
+                filename,
+                status: this.mapGitStatusToChangedFileStatus(gitStatus),
+                additions,
+                deletions,
+                patch,
+            };
+        }
+        catch (error) {
+            console.warn(`[UNCOMMITTED-MODE] Failed to process file ${filename}:`, error);
+            return null;
+        }
+    }
+    async getFilePatch(filename, isStaged) {
+        let patch = '';
+        try {
+            const diffArgs = isStaged
+                ? ['diff', '--cached', '--', filename]
+                : ['diff', '--', filename];
+            await exec.exec('git', diffArgs, {
+                listeners: {
+                    stdout: (data) => {
+                        patch += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            // For untracked files, we need to show the entire file as added
+            if (!isStaged) {
+                try {
+                    await exec.exec('git', ['diff', '--no-index', '/dev/null', filename], {
+                        listeners: {
+                            stdout: (data) => {
+                                patch += data.toString();
+                            },
+                        },
+                    });
+                }
+                catch (untrackedError) {
+                    console.warn(`[UNCOMMITTED-MODE] Could not get patch for ${filename}`);
+                }
+            }
+        }
+        return patch;
+    }
+    mapGitStatusToChangedFileStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'D':
+                return 'removed';
+            case 'M':
+                return 'modified';
+            case 'R':
+                return 'renamed';
+            default:
+                return 'modified';
+        }
+    }
+    deduplicateFiles(files) {
+        const fileMap = new Map();
+        for (const file of files) {
+            const existing = fileMap.get(file.filename);
+            if (!existing) {
+                fileMap.set(file.filename, file);
+            }
+            else {
+                // Merge staged and unstaged changes
+                fileMap.set(file.filename, {
+                    ...existing,
+                    additions: existing.additions + file.additions,
+                    deletions: existing.deletions + file.deletions,
+                    patch: existing.patch + '\n' + file.patch,
+                });
+            }
+        }
+        return Array.from(fileMap.values());
+    }
+}
+exports.UncommittedMode = UncommittedMode;
+// Patterns for files to exclude from analysis
+UncommittedMode.EXCLUDED_PATTERNS = [
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /package-lock\.json$/, // Exclude lock files
+    /mindmap-prd\.txt$/, // Exclude PRD files
+    /review-prd\.md$/, // Exclude PRD files
+    /\.md$/, // Exclude all markdown files
+];
+
+
+/***/ }),
+
+/***/ 3836:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LocalDiffService = void 0;
+const diff_modes_1 = __nccwpck_require__(6219);
+const modes_1 = __nccwpck_require__(7881);
+/**
+ * LocalDiffService orchestrates different diff modes for local testing
+ * Provides a unified interface for getting changed files based on mode
+ */
+class LocalDiffService {
+    constructor(modeConfig) {
+        const config = modeConfig || diff_modes_1.DEFAULT_DIFF_MODE_CONFIG;
+        this.mode = this.createMode(config);
+        console.log(`[LOCAL-DIFF-SERVICE] Initialized with mode: ${this.mode.getName()}`);
+        console.log(`[LOCAL-DIFF-SERVICE] ${this.mode.getDescription()}`);
+    }
+    /**
+     * Get changed files using the configured diff mode
+     */
+    async getChangedFiles() {
+        console.log(`[LOCAL-DIFF-SERVICE] Getting changed files using ${this.mode.getName()} mode`);
+        const files = await this.mode.getChangedFiles();
+        console.log(`[LOCAL-DIFF-SERVICE] Found ${files.length} changed files`);
+        if (files.length === 0) {
+            console.log('[LOCAL-DIFF-SERVICE] No changes found - returning empty result');
+        }
+        else {
+            const fileNames = files.map(f => f.filename).join(', ');
+            console.log(`[LOCAL-DIFF-SERVICE] Files: ${fileNames}`);
+        }
+        return files;
+    }
+    /**
+     * Get full diff content using the configured diff mode
+     */
+    async getDiffContent() {
+        console.log(`[LOCAL-DIFF-SERVICE] Getting diff content using ${this.mode.getName()} mode`);
+        const content = await this.mode.getDiffContent();
+        console.log(`[LOCAL-DIFF-SERVICE] Diff content length: ${content.length} characters`);
+        return content;
+    }
+    /**
+     * Get the current mode information
+     */
+    getCurrentMode() {
+        return {
+            name: this.mode.getName(),
+            description: this.mode.getDescription(),
+        };
+    }
+    /**
+     * Create a diff mode instance based on configuration
+     */
+    createMode(config) {
+        switch (config.mode) {
+            case diff_modes_1.DiffModeType.UNCOMMITTED:
+                return new modes_1.UncommittedMode();
+            // Future modes can be added here
+            // case DiffModeType.STAGED:
+            //   return new StagedMode();
+            // case DiffModeType.LAST_COMMIT:
+            //   return new LastCommitMode();
+            // case DiffModeType.BRANCH:
+            //   return new BranchMode(config.baseBranch || 'main');
+            default:
+                console.warn(`[LOCAL-DIFF-SERVICE] Unknown diff mode: ${config.mode}, falling back to uncommitted`);
+                return new modes_1.UncommittedMode();
+        }
+    }
+}
+exports.LocalDiffService = LocalDiffService;
+
+
+/***/ }),
+
+/***/ 4275:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LocalGitService = void 0;
+const ai_code_analyzer_1 = __nccwpck_require__(3562);
+const local_diff_service_1 = __nccwpck_require__(3836);
+/**
+ * LocalGitService provides Git operations specifically for local testing
+ * Simplified version focused on uncommitted changes analysis
+ */
+class LocalGitService {
+    constructor(anthropicApiKey, diffModeConfig) {
+        // Initialize AI analyzer for code analysis
+        if (!anthropicApiKey) {
+            throw new Error('[LOCAL-GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
+        }
+        this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(anthropicApiKey);
+        // Initialize local diff service
+        this.localDiffService = new local_diff_service_1.LocalDiffService(diffModeConfig);
+        console.log('[LOCAL-GIT-SERVICE] Initialized for local testing');
+        const modeInfo = this.localDiffService.getCurrentMode();
+        console.log(`[LOCAL-GIT-SERVICE] Using mode: ${modeInfo.name} - ${modeInfo.description}`);
+    }
+    /**
+     * Get enhanced changed files with AI code analysis for local testing
+     */
+    async getEnhancedChangedFiles() {
+        console.log('[LOCAL-GIT-SERVICE] Getting enhanced changed files for local testing');
+        // Get changed files using local diff service
+        const changedFiles = await this.localDiffService.getChangedFiles();
+        if (changedFiles.length === 0) {
+            console.log('[LOCAL-GIT-SERVICE] No changed files to analyze');
+            return [];
+        }
+        // Prepare files for concurrent AI analysis
+        const filesToAnalyze = changedFiles.map((file) => ({
+            filename: file.filename,
+            diffPatch: file.patch || '',
+            changeType: file.status === 'removed'
+                ? 'deleted'
+                : file.status,
+            linesAdded: file.additions,
+            linesRemoved: file.deletions,
+        }));
+        console.log(`[LOCAL-GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
+        // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+        const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
+        console.log(`[LOCAL-GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
+        // Log cache statistics
+        const cacheStats = this.aiAnalyzer.getCacheStats();
+        console.log(`[LOCAL-GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
+        return codeChanges;
+    }
+    /**
+     * Get basic changed files (without AI analysis) for local testing
+     */
+    async getChangedFiles() {
+        return await this.localDiffService.getChangedFiles();
+    }
+    /**
+     * Get synthetic PR context for local testing
+     * Always returns a dev mode context since we're not dealing with real PRs
+     */
+    async getPullRequestContext() {
+        console.log('[LOCAL-GIT-SERVICE] Creating synthetic PR context for local testing');
+        const modeInfo = this.localDiffService.getCurrentMode();
+        return {
+            number: 0, // Synthetic PR number
+            title: `Local ${modeInfo.name} changes`,
+            body: modeInfo.description,
+            baseBranch: 'local-base',
+            headBranch: 'local-head',
+            baseSha: 'local-base-sha',
+            headSha: 'local-head-sha',
+        };
+    }
+    /**
+     * Get full diff content for local testing
+     */
+    async getDiffContent() {
+        return await this.localDiffService.getDiffContent();
+    }
+    /**
+     * Get current mode information
+     */
+    getCurrentMode() {
+        return this.localDiffService.getCurrentMode();
+    }
+}
+exports.LocalGitService = LocalGitService;
+
+
+/***/ }),
+
+/***/ 2090:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OutputSaver = void 0;
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+/**
+ * OutputSaver handles saving local testing results to disk
+ */
+class OutputSaver {
+    /**
+     * Save analysis results to disk with timestamp and metadata
+     */
+    static async saveAnalysis(themes, summary, rawAnalysis, mode) {
+        // Ensure output directory exists
+        await this.ensureDirectoryExists();
+        // Generate metadata
+        const metadata = await this.generateMetadata(rawAnalysis, mode);
+        // Create saved analysis object
+        const savedAnalysis = {
+            metadata,
+            themes,
+            summary,
+            rawAnalysis,
+        };
+        // Generate filename with timestamp
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `analysis-${timestamp}.json`;
+        const filepath = path.join(this.LOCAL_DIR, filename);
+        // Save to file
+        const jsonContent = JSON.stringify(savedAnalysis, null, 2);
+        fs.writeFileSync(filepath, jsonContent, 'utf8');
+        console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);
+        console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);
+        return filepath;
+    }
+    /**
+     * Get list of saved analysis files
+     */
+    static getSavedAnalyses() {
+        if (!fs.existsSync(this.LOCAL_DIR)) {
+            return [];
+        }
+        return fs.readdirSync(this.LOCAL_DIR)
+            .filter(file => file.endsWith('.json') && file.startsWith('analysis-'))
+            .sort()
+            .reverse(); // Most recent first
+    }
+    /**
+     * Load a specific saved analysis
+     */
+    static loadAnalysis(filename) {
+        const filepath = path.join(this.LOCAL_DIR, filename);
+        if (!fs.existsSync(filepath)) {
+            return null;
+        }
+        try {
+            const content = fs.readFileSync(filepath, 'utf8');
+            return JSON.parse(content);
+        }
+        catch (error) {
+            console.error(`[OUTPUT-SAVER] Failed to load analysis ${filename}:`, error);
+            return null;
+        }
+    }
+    /**
+     * Clean up old analysis files (keep last N files)
+     */
+    static cleanupOldAnalyses(keepCount = 10) {
+        const files = this.getSavedAnalyses();
+        if (files.length <= keepCount) {
+            return;
+        }
+        const filesToDelete = files.slice(keepCount);
+        let deletedCount = 0;
+        for (const filename of filesToDelete) {
+            try {
+                const filepath = path.join(this.LOCAL_DIR, filename);
+                fs.unlinkSync(filepath);
+                deletedCount++;
+            }
+            catch (error) {
+                console.warn(`[OUTPUT-SAVER] Failed to delete ${filename}:`, error);
+            }
+        }
+        if (deletedCount > 0) {
+            console.log(`[OUTPUT-SAVER] Cleaned up ${deletedCount} old analysis files`);
+        }
+    }
+    /**
+     * Ensure output directories exist
+     */
+    static async ensureDirectoryExists() {
+        if (!fs.existsSync(this.OUTPUT_DIR)) {
+            fs.mkdirSync(this.OUTPUT_DIR, { recursive: true });
+        }
+        if (!fs.existsSync(this.LOCAL_DIR)) {
+            fs.mkdirSync(this.LOCAL_DIR, { recursive: true });
+        }
+    }
+    /**
+     * Generate metadata for the analysis
+     */
+    static async generateMetadata(analysis, mode) {
+        const metadata = {
+            timestamp: new Date().toISOString(),
+            mode,
+            totalFiles: analysis.themes?.length || 0, // Approximate from themes
+            totalThemes: analysis.totalThemes,
+            processingTimeMs: analysis.processingTime,
+        };
+        // Try to get git info
+        try {
+            const { execSync } = __nccwpck_require__(5317);
+            metadata.gitBranch = execSync('git branch --show-current', { encoding: 'utf8' }).trim();
+            metadata.gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim().substring(0, 8);
+        }
+        catch (error) {
+            // Git info is optional
+            console.debug('[OUTPUT-SAVER] Could not get git info:', error);
+        }
+        return metadata;
+    }
+    /**
+     * Get summary of all saved analyses
+     */
+    static getSavedAnalysesSummary() {
+        const files = this.getSavedAnalyses();
+        const summaries = [];
+        for (const filename of files.slice(0, 20)) { // Show last 20
+            const analysis = this.loadAnalysis(filename);
+            if (analysis) {
+                summaries.push({
+                    filename,
+                    metadata: analysis.metadata,
+                });
+            }
+        }
+        return summaries;
+    }
+}
+exports.OutputSaver = OutputSaver;
+OutputSaver.OUTPUT_DIR = '.ai-code-review';
+OutputSaver.LOCAL_DIR = path.join(OutputSaver.OUTPUT_DIR, 'local-results');
 
 
 /***/ }),
@@ -36062,7 +36861,7 @@ class GitService {
         return codeChanges;
     }
     async getPullRequestContext() {
-        // Check if we're in a GitHub Actions PR context
+        // Production mode: Only handle GitHub Actions PR context
         if (github.context.eventName === 'pull_request') {
             const pr = github.context.payload.pull_request;
             if (pr) {
@@ -36078,131 +36877,23 @@ class GitService {
                 };
             }
         }
-        // Dev mode: First try to find existing PR for current branch
-        const currentBranch = await this.getCurrentBranch();
-        const existingPR = await this.getPullRequestForBranch(currentBranch);
-        if (existingPR) {
-            console.log(`[GIT-SERVICE] Using existing PR #${existingPR.number} context for local testing`);
-            return existingPR;
-        }
-        // Fallback: create synthetic PR context from local git
-        console.log('[GIT-SERVICE] No PR found, using branch comparison mode');
-        return await this.createDevModeContext();
-    }
-    async getPullRequestForBranch(branchName) {
-        if (!this.octokit) {
-            console.log('[GIT-SERVICE] No GitHub token available, cannot check for existing PR');
-            return null;
-        }
-        try {
-            console.log(`[GIT-SERVICE] Checking for open PR for branch: ${branchName}`);
-            const { data: pulls } = await this.octokit.rest.pulls.list({
-                ...github.context.repo,
-                head: `${github.context.repo.owner}:${branchName}`,
-                state: 'open',
-            });
-            if (pulls.length > 0) {
-                const pr = pulls[0]; // Take the first matching PR
-                console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${branchName}`);
-                return {
-                    number: pr.number,
-                    title: pr.title,
-                    body: pr.body || '',
-                    baseBranch: pr.base.ref,
-                    headBranch: pr.head.ref,
-                    baseSha: pr.base.sha,
-                    headSha: pr.head.sha,
-                };
-            }
-            console.log(`[GIT-SERVICE] No open PR found for branch ${branchName}`);
-            return null;
-        }
-        catch (error) {
-            console.warn(`[GIT-SERVICE] Failed to check for PR on branch ${branchName}:`, error);
-            return null;
-        }
-    }
-    async createDevModeContext() {
-        try {
-            const currentBranch = await this.getCurrentBranch();
-            const baseBranch = 'main'; // Default comparison branch
-            const headSha = await this.getCurrentCommitSha();
-            const baseSha = await this.getBranchCommitSha(baseBranch);
-            return {
-                number: 0, // Synthetic PR number
-                title: `Local changes on ${currentBranch}`,
-                body: 'Development mode - comparing local changes against main branch',
-                baseBranch,
-                headBranch: currentBranch,
-                baseSha,
-                headSha,
-            };
-        }
-        catch (error) {
-            console.warn('Failed to create dev mode context:', error);
-            return null;
-        }
-    }
-    async getCurrentBranch() {
-        let branch = '';
-        await exec.exec('git', ['branch', '--show-current'], {
-            listeners: {
-                stdout: (data) => {
-                    branch += data.toString().trim();
-                },
-            },
-        });
-        return branch || 'unknown';
-    }
-    async getCurrentCommitSha() {
-        let sha = '';
-        await exec.exec('git', ['rev-parse', 'HEAD'], {
-            listeners: {
-                stdout: (data) => {
-                    sha += data.toString().trim();
-                },
-            },
-        });
-        return sha;
-    }
-    async getBranchCommitSha(branch) {
-        let sha = '';
-        try {
-            await exec.exec('git', ['rev-parse', `origin/${branch}`], {
-                listeners: {
-                    stdout: (data) => {
-                        sha += data.toString().trim();
-                    },
-                },
-            });
-        }
-        catch (error) {
-            // Fallback to local branch if remote doesn't exist
-            await exec.exec('git', ['rev-parse', branch], {
-                listeners: {
-                    stdout: (data) => {
-                        sha += data.toString().trim();
-                    },
-                },
-            });
-        }
-        return sha;
+        console.log('[GIT-SERVICE] No PR context found in GitHub Actions');
+        return null;
     }
     async getChangedFiles() {
         const prContext = await this.getPullRequestContext();
         if (!prContext) {
+            console.log('[GIT-SERVICE] No PR context available, returning empty file list');
             return [];
         }
-        console.log(`[GIT-DEBUG] PR Context: number=${prContext.number}, event=${github.context.eventName}, hasToken=${!!this.githubToken}`);
-        console.log(`[GIT-DEBUG] baseBranch=${prContext.baseBranch}, headBranch=${prContext.headBranch}`);
-        // Use GitHub API for real PRs (in GitHub Actions or when PR found locally)
+        console.log(`[GIT-SERVICE] PR Context: #${prContext.number}, event=${github.context.eventName}`);
+        // Production mode: Use GitHub API for PR files
         if (prContext.number > 0 && this.octokit) {
-            console.log(`[GIT-DEBUG] Using GitHub API for PR #${prContext.number} (exact same as live)`);
+            console.log(`[GIT-SERVICE] Using GitHub API for PR #${prContext.number}`);
             return await this.getChangedFilesFromGitHub(prContext.number);
         }
-        // Fallback to git commands for synthetic dev mode (no PR)
-        console.log(`[GIT-DEBUG] Using git commands method for branch comparison`);
-        return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
+        console.log('[GIT-SERVICE] No GitHub API access or invalid PR context');
+        return [];
     }
     async getChangedFilesFromGitHub(prNumber) {
         try {
@@ -36245,127 +36936,6 @@ class GitService {
         catch (error) {
             console.error('Failed to get changed files from GitHub:', error);
             return [];
-        }
-    }
-    async getChangedFilesFromGit(baseSha, headSha) {
-        console.log(`[GIT-DEBUG] Comparing ${baseSha.substring(0, 8)} (base) vs ${headSha.substring(0, 8)} (head)`);
-        const files = [];
-        let fileList = '';
-        let diffCommand = [];
-        // Method 1: Try exact SHA comparison (remove triple-dot syntax)
-        try {
-            diffCommand = ['diff', '--name-status', baseSha, headSha];
-            console.log(`[GIT-DEBUG] Method 1: git ${diffCommand.join(' ')}`);
-            await exec.exec('git', diffCommand, {
-                listeners: {
-                    stdout: (data) => {
-                        fileList += data.toString();
-                    },
-                },
-            });
-            console.log(`[GIT-DEBUG] Method 1 succeeded`);
-        }
-        catch (method1Error) {
-            console.log(`[GIT-DEBUG] Method 1 failed: ${method1Error}`);
-            // Method 2: Fetch base branch and compare
-            try {
-                const prContext = await this.getPullRequestContext();
-                const baseBranch = prContext?.baseBranch || 'main';
-                console.log(`[GIT-DEBUG] Method 2: Fetching base branch ${baseBranch}`);
-                await exec.exec('git', ['fetch', 'origin', baseBranch]);
-                diffCommand = ['diff', '--name-status', `origin/${baseBranch}`, 'HEAD'];
-                console.log(`[GIT-DEBUG] Method 2: git ${diffCommand.join(' ')}`);
-                fileList = ''; // Reset for retry
-                await exec.exec('git', diffCommand, {
-                    listeners: {
-                        stdout: (data) => {
-                            fileList += data.toString();
-                        },
-                    },
-                });
-                console.log(`[GIT-DEBUG] Method 2 succeeded`);
-            }
-            catch (method2Error) {
-                console.log(`[GIT-DEBUG] Method 2 failed: ${method2Error}`);
-                // Method 3: Emergency fallback - recent commits only
-                try {
-                    diffCommand = ['diff', '--name-status', 'HEAD~1', 'HEAD'];
-                    console.log(`[GIT-DEBUG] Method 3 (emergency): git ${diffCommand.join(' ')}`);
-                    fileList = ''; // Reset for retry
-                    await exec.exec('git', diffCommand, {
-                        listeners: {
-                            stdout: (data) => {
-                                fileList += data.toString();
-                            },
-                        },
-                    });
-                    console.log(`[GIT-DEBUG] Method 3 succeeded (showing recent commits only)`);
-                }
-                catch (method3Error) {
-                    console.error(`[GIT-DEBUG] All methods failed. Method 3 error: ${method3Error}`);
-                    throw new Error(`Git diff failed with all methods. Last error: ${method3Error}`);
-                }
-            }
-        }
-        // Parse file status
-        const fileLines = fileList
-            .trim()
-            .split('\n')
-            .filter((line) => line.trim());
-        console.log(`[GIT-DEBUG] Found ${fileLines.length} changed files total before filtering`);
-        try {
-            for (const line of fileLines) {
-                const [status, filename] = line.split('\t');
-                if (!filename || !this.shouldIncludeFile(filename))
-                    continue;
-                // Get diff patch for this file using the same command that succeeded for file list
-                let patch = '';
-                try {
-                    const patchCommand = [...diffCommand, '--', filename];
-                    await exec.exec('git', patchCommand, {
-                        listeners: {
-                            stdout: (data) => {
-                                patch += data.toString();
-                            },
-                        },
-                    });
-                }
-                catch (error) {
-                    console.warn(`[GIT-DEBUG] Failed to get patch for ${filename}:`, error);
-                    // Continue without patch - we still have the file status
-                }
-                // Count additions/deletions from patch
-                const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
-                const deletions = (patch.match(/^-(?!-)/gm) || []).length;
-                const file = {
-                    filename,
-                    status: this.mapGitStatusToChangedFileStatus(status),
-                    additions,
-                    deletions,
-                    patch,
-                };
-                files.push(file);
-            }
-            console.log(`[GIT-SERVICE] Found ${files.length} source files for analysis (excluded build artifacts)`);
-            return files;
-        }
-        catch (fileProcessingError) {
-            console.error('Failed to process files:', fileProcessingError);
-            return [];
-        }
-    }
-    mapGitStatusToChangedFileStatus(gitStatus) {
-        switch (gitStatus) {
-            case 'A':
-                return 'added';
-            case 'D':
-                return 'removed';
-            case 'M':
-                return 'modified';
-            case 'R':
-                return 'renamed';
-            default:
-                return 'modified';
         }
     }
     async getDiffContent(baseSha, headSha) {
