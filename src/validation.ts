@@ -33,7 +33,6 @@ function setDeduplicationEnvironmentVariables(): void {
     'min-themes-for-cross-level-dedup': 'MIN_THEMES_FOR_CROSS_LEVEL_DEDUP',
     'verbose-dedup-logging': 'VERBOSE_DEDUP_LOGGING',
     // PRD Compliance Controls
-    'max-atomic-size': 'MAX_ATOMIC_SIZE',
     're-evaluate-after-merge': 'RE_EVALUATE_AFTER_MERGE',
     'strict-atomic-limits': 'STRICT_ATOMIC_LIMITS'
   };

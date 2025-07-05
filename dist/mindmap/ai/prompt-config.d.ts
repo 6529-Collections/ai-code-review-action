@@ -121,14 +121,14 @@ export declare const ResponseSchemas: {
             affectedComponents: z.ZodArray<z.ZodString, "many">;
             relatedFiles: z.ZodArray<z.ZodString, "many">;
         }, "strip", z.ZodTypeAny, {
-            name: string;
             description: string;
+            name: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
         }, {
-            name: string;
             description: string;
+            name: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
@@ -136,26 +136,26 @@ export declare const ResponseSchemas: {
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         confidence: number;
-        reasoning: string;
         subThemes: {
-            name: string;
             description: string;
+            name: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
+        reasoning: string;
     }, {
         confidence: number;
-        reasoning: string;
         subThemes: {
-            name: string;
             description: string;
+            name: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
+        reasoning: string;
     }>;
     domain_extraction: z.ZodObject<{
         domains: z.ZodArray<z.ZodObject<{
@@ -214,14 +214,14 @@ export declare const ResponseSchemas: {
                 business: z.ZodNumber;
                 semantic: z.ZodNumber;
             }, "strip", z.ZodTypeAny, {
-                name: number;
                 description: number;
+                name: number;
                 pattern: number;
                 business: number;
                 semantic: number;
             }, {
-                name: number;
                 description: number;
+                name: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -231,8 +231,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                name: number;
                 description: number;
+                name: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -242,8 +242,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                name: number;
                 description: number;
+                name: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -255,8 +255,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                name: number;
                 description: number;
+                name: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -268,8 +268,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                name: number;
                 description: number;
+                name: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -283,13 +283,13 @@ export declare const ResponseSchemas: {
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         confidence: number;
-        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
         reasoning: string;
+        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
         relationship: "none" | "duplicate" | "parent_child";
     }, {
         confidence: number;
-        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
         reasoning: string;
+        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
         relationship: "none" | "duplicate" | "parent_child";
     }>;
 };

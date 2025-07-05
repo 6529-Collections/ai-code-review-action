@@ -91,7 +91,6 @@ class ClaudeService {
       enhancedContext += `\n\nPre-analyzed code structure:`;
       enhancedContext += `\nFile type: ${codeChange.fileType}`;
       enhancedContext += `\nComplexity: ${codeChange.codeComplexity}`;
-      enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
 
       if (codeChange.functionsChanged.length > 0) {
         enhancedContext += `\nFunctions changed: ${codeChange.functionsChanged.join(', ')}`;
@@ -368,13 +367,9 @@ class ThemeContextManager {
 
           // Update metrics
           if (existingTheme.codeMetrics && codeChange) {
-            existingTheme.codeMetrics.linesAdded += codeChange.linesAdded;
-            existingTheme.codeMetrics.linesRemoved += codeChange.linesRemoved;
             existingTheme.codeMetrics.filesChanged += 1;
           } else if (codeChange) {
             existingTheme.codeMetrics = {
-              linesAdded: codeChange.linesAdded,
-              linesRemoved: codeChange.linesRemoved,
               filesChanged: 1,
             };
           }
@@ -429,8 +424,6 @@ class ThemeContextManager {
         mainClassesChanged: analysis.mainClassesChanged,
         codeMetrics: codeChange
           ? {
-              linesAdded: codeChange.linesAdded,
-              linesRemoved: codeChange.linesRemoved,
               filesChanged: 1,
             }
           : undefined,
@@ -507,8 +500,6 @@ export class ThemeService {
     const changedFiles = codeChanges.map((change) => ({
       filename: change.file,
       status: change.changeType as 'added' | 'modified' | 'removed' | 'renamed',
-      additions: change.linesAdded,
-      deletions: change.linesRemoved,
       patch: change.diffHunk,
     }));
 

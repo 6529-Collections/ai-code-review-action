@@ -56,9 +56,6 @@ export class AIExpansionDecisionService {
       siblingThemes
     );
 
-    logInfo(
-      `Enhanced AI analysis for "${theme.name}": ${codeAnalysis.functionCount} functions, ${codeAnalysis.changeTypes.length} change types, ${codeAnalysis.expansionHints.length} hints`
-    );
 
     const decision = await this.getAIDecision(prompt);
 
@@ -75,15 +72,6 @@ export class AIExpansionDecisionService {
     return Buffer.from(content).toString('base64').slice(0, 16);
   }
 
-  /**
-   * Calculate total lines from code snippets (which contain full file patches)
-   */
-  private calculateTotalLines(theme: ConsolidatedTheme): number {
-    // Each code snippet contains a full file patch/diff
-    return theme.codeSnippets.reduce((count, snippet) => {
-      return count + snippet.split('\n').length;
-    }, 0);
-  }
 
   /**
    * Get AI decision from Claude
@@ -113,7 +101,6 @@ export class AIExpansionDecisionService {
             rationale: string;
             businessContext?: string;
             technicalContext?: string;
-            estimatedLines?: number;
           }>;
         };
 

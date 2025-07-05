@@ -79,9 +79,6 @@ export type CrossReferenceType = 'uses' | 'used-by' | 'modifies' | 'modified-by'
  * Node metrics for complexity assessment
  */
 export interface NodeMetrics {
-    linesAdded: number;
-    linesRemoved: number;
-    linesModified: number;
     complexity: 'low' | 'medium' | 'high';
     fileCount: number;
     testCoverage?: number;
@@ -216,10 +213,6 @@ export interface ValidationResult {
     coverage: {
         percentage: number;
         missingFiles: string[];
-        missingLines: Array<{
-            file: string;
-            lines: number[];
-        }>;
     };
     duplication: {
         score: number;
@@ -260,7 +253,6 @@ export interface HierarchicalId {
  */
 export interface MindmapOptions {
     maxDepth?: number;
-    targetLeafSize?: number;
     crossReferenceThreshold?: number;
     enablePatternDetection?: boolean;
     enableSmartDuplication?: boolean;

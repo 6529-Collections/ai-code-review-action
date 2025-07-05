@@ -49,8 +49,6 @@ export class LocalGitService implements IGitService {
         file.status === 'removed'
           ? ('deleted' as const)
           : (file.status as 'added' | 'modified' | 'renamed'),
-      linesAdded: file.additions,
-      linesRemoved: file.deletions,
     }));
 
     console.log(

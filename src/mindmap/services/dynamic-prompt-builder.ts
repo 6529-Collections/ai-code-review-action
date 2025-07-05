@@ -99,12 +99,6 @@ Ensure suggested sub-themes don't duplicate these existing themes.`;
 - Change Types: ${codeAnalysis.changeTypes.join(', ')}
 - Complexity: ${this.formatComplexityIndicators(codeAnalysis.complexityIndicators)}`;
 
-    if (codeAnalysis.expansionHints.length > 0) {
-      section += `
-
-EXPANSION INSIGHTS:
-${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
-    }
 
     return section;
   }
@@ -186,7 +180,7 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
+Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.length} code snippets
 Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
@@ -198,7 +192,7 @@ Create child nodes when:
 4. Mixed audiences (technical vs business)
 
 Stop expansion only when ALL true:
-1. Atomic: 5-15 lines of focused change
+1. Atomic: Single testable responsibility
 2. Unit-testable as-is
 3. Single responsibility
 4. Natural code boundary
@@ -246,7 +240,6 @@ RESPOND WITH PRD-COMPLIANT JSON:
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
       "files": ["REQUIRED: list files from parent theme that this sub-theme modifies"],
-      "estimatedLines": number,
       "rationale": "Why separate concern"
     }
   ] or null

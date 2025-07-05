@@ -10,8 +10,6 @@ export interface CodeChange {
   file: string;
   diffHunk: string;
   changeType: 'added' | 'modified' | 'deleted' | 'renamed';
-  linesAdded: number;
-  linesRemoved: number;
 
   // AI-enhanced extractions
   functionsChanged: string[];
@@ -112,9 +110,7 @@ export class AICodeAnalyzer {
   async processChangedFile(
     filename: string,
     diffPatch: string,
-    changeType: 'added' | 'modified' | 'deleted' | 'renamed',
-    linesAdded: number,
-    linesRemoved: number
+    changeType: 'added' | 'modified' | 'deleted' | 'renamed'
   ): Promise<CodeChange> {
     logger.trace('CODE-ANALYSIS', `Processing ${filename} (${changeType})`);
 
@@ -130,8 +126,6 @@ export class AICodeAnalyzer {
           file: filename,
           diffHunk: diffPatch,
           changeType,
-          linesAdded,
-          linesRemoved,
           functionsChanged: aiAnalysis.functionsChanged,
           classesChanged: aiAnalysis.classesChanged,
           importsChanged: aiAnalysis.importsChanged,
@@ -152,9 +146,7 @@ export class AICodeAnalyzer {
         return this.createMinimalAnalysis(
           filename,
           diffPatch,
-          changeType,
-          linesAdded,
-          linesRemoved
+          changeType
         );
       }
     });
@@ -168,8 +160,6 @@ export class AICodeAnalyzer {
       filename: string;
       diffPatch: string;
       changeType: 'added' | 'modified' | 'deleted' | 'renamed';
-      linesAdded: number;
-      linesRemoved: number;
     }>
   ): Promise<CodeChange[]> {
     logger.debug('CODE-ANALYSIS', `Processing ${files.length} files`);
@@ -180,9 +170,7 @@ export class AICodeAnalyzer {
         return await this.processChangedFile(
           file.filename,
           file.diffPatch,
-          file.changeType,
-          file.linesAdded,
-          file.linesRemoved
+          file.changeType
         );
       },
       {
@@ -328,16 +316,12 @@ Respond with ONLY the JSON object, no explanations.`;
   private createMinimalAnalysis(
     filename: string,
     diffPatch: string,
-    changeType: 'added' | 'modified' | 'deleted' | 'renamed',
-    linesAdded: number,
-    linesRemoved: number
+    changeType: 'added' | 'modified' | 'deleted' | 'renamed'
   ): CodeChange {
     return {
       file: filename,
       diffHunk: diffPatch,
       changeType,
-      linesAdded,
-      linesRemoved,
       functionsChanged: [],
       classesChanged: [],
       importsChanged: [],
@@ -434,10 +418,6 @@ Respond with ONLY the JSON object, no explanations.`;
     const fileTypes = [
       ...new Set(changes.map((c) => c.fileType).filter((type) => type)),
     ];
-    const totalLines = changes.reduce(
-      (sum, c) => sum + c.linesAdded + c.linesRemoved,
-      0
-    );
     const fileCount = changes.length;
 
     // Enhanced complexity scoring using AI results
@@ -448,9 +428,9 @@ Respond with ONLY the JSON object, no explanations.`;
     ).length;
 
     let codeComplexity: 'low' | 'medium' | 'high' = 'low';
-    if (highComplexity > 0 || fileCount > 10 || totalLines > 500) {
+    if (highComplexity > 0 || fileCount > 10) {
       codeComplexity = 'high';
-    } else if (mediumComplexity > 1 || fileCount > 3 || totalLines > 100) {
+    } else if (mediumComplexity > 1 || fileCount > 3) {
       codeComplexity = 'medium';
     }
 
@@ -584,15 +564,6 @@ Respond with ONLY the JSON object, no explanations.`;
   private extractSignificantChanges(changes: CodeChange[]): string[] {
     const significant = [];
 
-    // Large files
-    const largeChanges = changes.filter(
-      (c) => c.linesAdded + c.linesRemoved > 50
-    );
-    for (const change of largeChanges) {
-      significant.push(
-        `Large change in ${change.file} (+${change.linesAdded}/-${change.linesRemoved})`
-      );
-    }
 
     // New files
     const newFiles = changes.filter((c) => c.changeType === 'added');

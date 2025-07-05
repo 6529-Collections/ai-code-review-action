@@ -194,15 +194,10 @@ export class UncommittedMode extends BaseDiffMode {
       // Get patch for this file
       const patch = await this.getFilePatch(filename, isStaged);
       
-      // Count additions/deletions from patch
-      const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
-      const deletions = (patch.match(/^-(?!-)/gm) || []).length;
       
       return {
         filename,
         status: this.mapGitStatusToChangedFileStatus(gitStatus),
-        additions,
-        deletions,
         patch,
       };
     } catch (error) {
@@ -272,8 +267,6 @@ export class UncommittedMode extends BaseDiffMode {
         // Merge staged and unstaged changes
         fileMap.set(file.filename, {
           ...existing,
-          additions: existing.additions + file.additions,
-          deletions: existing.deletions + file.deletions,
           patch: existing.patch + '\n' + file.patch,
         });
       }

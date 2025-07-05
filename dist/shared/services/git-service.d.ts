@@ -3,8 +3,6 @@ import { IGitService } from '../interfaces/git-service-interface';
 export interface ChangedFile {
     filename: string;
     status: 'added' | 'modified' | 'removed' | 'renamed';
-    additions: number;
-    deletions: number;
     patch?: string;
 }
 export interface PullRequestContext {

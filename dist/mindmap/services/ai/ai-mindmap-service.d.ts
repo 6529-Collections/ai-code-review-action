@@ -39,10 +39,6 @@ export declare class AIMindmapService {
      */
     private groupFilesByType;
     /**
-     * Calculate total lines changed
-     */
-    private calculateTotalLines;
-    /**
      * Summarize semantic changes for prompt
      */
     private summarizeSemanticChanges;

@@ -139,32 +139,14 @@ export class DirectCodeAssignmentService {
    * Calculate metrics from assigned code
    */
   private calculateMetrics(codeDiffs: CodeDiff[]): NodeMetrics {
-    let linesAdded = 0;
-    let linesRemoved = 0;
-    let linesModified = 0;
     const files = new Set<string>();
 
     for (const diff of codeDiffs) {
       files.add(diff.file);
-
-      for (const hunk of diff.hunks) {
-        for (const change of hunk.changes) {
-          if (change.type === 'add') linesAdded++;
-          else if (change.type === 'delete') linesRemoved++;
-          else linesModified++;
-        }
-      }
     }
 
-    const totalLines = linesAdded + linesRemoved + linesModified;
-    const complexity =
-      totalLines < 10 ? 'low' : totalLines < 30 ? 'medium' : 'high';
-
     return {
-      linesAdded,
-      linesRemoved,
-      linesModified,
-      complexity,
+      complexity: 'medium',
       fileCount: files.size,
     };
   }

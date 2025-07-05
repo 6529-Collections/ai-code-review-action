@@ -500,12 +500,8 @@ export class HierarchicalSimilarityService {
     theme1: ConsolidatedTheme,
     theme2: ConsolidatedTheme
   ): boolean {
-    const size1 =
-      (theme1.affectedFiles?.length || 0) +
-      (theme1.codeMetrics?.linesAdded || 0);
-    const size2 =
-      (theme2.affectedFiles?.length || 0) +
-      (theme2.codeMetrics?.linesAdded || 0);
+    const size1 = theme1.affectedFiles?.length || 0;
+    const size2 = theme2.affectedFiles?.length || 0;
 
     if (size1 === 0 || size2 === 0) {
       return false; // Can't judge size mismatch

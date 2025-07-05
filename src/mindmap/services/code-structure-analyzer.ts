@@ -18,15 +18,8 @@ export class CodeStructureAnalyzer {
       changeTypes: this.identifyChangeTypes(theme),
       complexityIndicators: this.analyzeComplexity(theme),
       fileStructure: this.analyzeFileStructure(theme),
-      expansionHints: [],
     };
 
-    // Generate contextual hints based on analysis
-    analysis.expansionHints = this.generateExpansionHints(analysis, theme);
-
-    logInfo(
-      `Code structure analysis for "${theme.name}": ${analysis.functionCount} functions, ${analysis.classCount} classes, ${analysis.changeTypes.length} change types`
-    );
 
     return analysis;
   }
@@ -242,152 +235,6 @@ export class CodeStructureAnalyzer {
     return analysis;
   }
 
-  /**
-   * Generate contextual expansion hints based on analysis
-   */
-  private generateExpansionHints(
-    analysis: CodeStructureAnalysis,
-    theme: ConsolidatedTheme
-  ): string[] {
-    const hints: string[] = [];
-
-    // Function-based hints
-    if (analysis.functionCount > 3) {
-      hints.push(
-        `This theme modifies ${analysis.functionCount} functions - consider analyzing each function's purpose separately`
-      );
-    } else if (analysis.functionCount > 1) {
-      hints.push(
-        `Multiple functions modified (${analysis.functionCount}) - each may serve a distinct purpose`
-      );
-    }
-
-    // Class-based hints
-    if (analysis.classCount > 2) {
-      hints.push(
-        `Multiple classes/interfaces affected (${analysis.classCount}) - each likely represents a separate concern`
-      );
-    }
-
-    // Change type hints
-    if (analysis.changeTypes.length > 2) {
-      hints.push(
-        `Mixed change types detected (${analysis.changeTypes.join(', ')}) - different types often benefit from separation`
-      );
-    }
-
-    // Complexity hints
-    if (
-      analysis.complexityIndicators.hasConditionals &&
-      analysis.complexityIndicators.hasErrorHandling
-    ) {
-      hints.push(
-        'Both control flow and error handling present - these are typically distinct responsibilities'
-      );
-    }
-
-    if (
-      analysis.complexityIndicators.hasAsyncOperations &&
-      analysis.complexityIndicators.hasConditionals
-    ) {
-      hints.push(
-        'Async operations with conditional logic - consider separating flow control from async handling'
-      );
-    }
-
-    if (analysis.complexityIndicators.branchingFactor > 3) {
-      hints.push(
-        `High branching complexity (${analysis.complexityIndicators.branchingFactor} branches) - multiple decision points suggest multiple concerns`
-      );
-    }
-
-    // File structure hints
-    if (analysis.fileStructure.isMultiDirectory) {
-      hints.push(
-        'Changes span multiple directories - different locations often indicate different architectural concerns'
-      );
-    }
-
-    if (
-      analysis.fileStructure.hasTestFiles &&
-      analysis.changeTypes.includes('implementation')
-    ) {
-      hints.push(
-        'Both implementation and test changes - consider separating test updates from feature implementation'
-      );
-    }
-
-    if (
-      analysis.changeTypes.includes('config') &&
-      analysis.changeTypes.includes('logic')
-    ) {
-      hints.push(
-        'Configuration and logic changes - these typically serve different purposes and can be analyzed separately'
-      );
-    }
-
-    // Module-based hints
-    if (analysis.moduleCount > 3) {
-      hints.push(
-        `Multiple modules affected (${analysis.moduleCount}) - each module likely represents a distinct component or service`
-      );
-    }
-
-    // PRD-aligned testability and atomicity hints
-    const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-
-    // PRD: "5-15 lines of focused change"
-    if (totalLines > 15) {
-      hints.push(
-        `Exceeds PRD atomic size (${totalLines} > 15 lines) - split into smaller, testable units`
-      );
-    }
-
-    // PRD: "Changes aren't independently testable" → expand
-    if (analysis.functionCount > 1) {
-      hints.push(
-        `Multiple functions modified (${analysis.functionCount}) - separate for independent testing`
-      );
-    }
-
-    // PRD: "Multiple concerns" → create child nodes
-    if (
-      analysis.complexityIndicators.hasConditionals &&
-      analysis.complexityIndicators.branchingFactor > 1
-    ) {
-      hints.push(
-        `Multiple test scenarios (${analysis.complexityIndicators.branchingFactor} branches) - split by test case`
-      );
-    }
-
-    // PRD: Mixed dependencies and logic should be separated
-    if (
-      analysis.complexityIndicators.hasAsyncOperations &&
-      analysis.functionCount > 1
-    ) {
-      hints.push(
-        'Mixed dependencies and logic - separate setup from behavior for testability'
-      );
-    }
-
-    if (theme.description.toLowerCase().includes(' and ')) {
-      hints.push(
-        'Description contains "and" - multiple concerns should be separated per PRD'
-      );
-    }
-
-    // Add generic expansion encouragement if no specific hints
-    if (
-      hints.length === 0 &&
-      theme.codeSnippets.join('\n').split('\n').length > 10
-    ) {
-      hints.push(
-        'This change has sufficient complexity to potentially benefit from decomposition into more specific sub-themes'
-      );
-    }
-
-    return hints;
-  }
 }
 
 /**
@@ -400,7 +247,6 @@ export interface CodeStructureAnalysis {
   changeTypes: ChangeType[];
   complexityIndicators: ComplexityIndicators;
   fileStructure: FileStructureAnalysis;
-  expansionHints: string[];
 }
 
 /**

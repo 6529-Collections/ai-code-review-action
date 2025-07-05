@@ -28,8 +28,6 @@ export interface Theme {
   mainFunctionsChanged?: string[]; // Key functions/methods
   mainClassesChanged?: string[]; // Key classes/components
   codeMetrics?: {
-    linesAdded: number;
-    linesRemoved: number;
     filesChanged: number;
   };
 

@@ -64,8 +64,6 @@ export interface ConsolidatedTheme {
   mainFunctionsChanged?: string[];
   mainClassesChanged?: string[];
   codeMetrics?: {
-    linesAdded: number;
-    linesRemoved: number;
     filesChanged: number;
   };
   codeExamples?: Array<{

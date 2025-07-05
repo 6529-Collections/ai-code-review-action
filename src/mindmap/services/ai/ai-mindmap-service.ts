@@ -77,10 +77,7 @@ export class AIMindmapService {
     currentDepth: number
   ): string {
     const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
-    const lineCount =
-      node.metrics.linesAdded +
-      node.metrics.linesRemoved +
-      node.metrics.linesModified;
+    const fileCount = node.metrics.fileCount;
 
     return `Analyze this code change node for expansion with DIRECT CODE ASSIGNMENT.
 
@@ -89,23 +86,23 @@ Description: ${node.description}
 Business Context: ${node.businessContext}
 Technical Context: ${node.technicalContext}
 Depth: ${currentDepth}
-Metrics: ${lineCount} lines across ${node.metrics.fileCount} files
+Metrics: ${fileCount} files, complexity: ${node.metrics.complexity}
 
 COMPLETE CODE CHANGES:
 ${completeCodeDiff}
 
 ATOMIC CRITERIA (Stop expansion when ALL true):
 1. Single responsibility (does exactly ONE thing)
-2. <20 lines of meaningful code changes
+2. Single cohesive functionality or responsibility
 3. Single method or cohesive code block
 4. No mixed concerns (e.g., validation AND persistence)
 5. Can be understood without looking elsewhere
 
 IF YOU EXPAND:
-- You MUST assign EVERY line of code to exactly ONE child
+- You MUST assign EVERY code change to exactly ONE child
 - Each child must have a single, clear responsibility
 - Return the complete CodeDiff structure for each child
-- No line numbers - return actual code content
+- Focus on logical code boundaries, not size
 
 RESPOND WITH JSON:
 {
@@ -337,13 +334,11 @@ RESPOND WITH JSON:
    */
   private buildRootThemePrompt(semanticDiff: SemanticDiff): string {
     const filesByType = this.groupFilesByType(semanticDiff);
-    const totalLines = this.calculateTotalLines(semanticDiff);
 
     return `Analyze this pull request and identify distinct business themes (user stories/capabilities).
 
 PR OVERVIEW:
 Total files: ${semanticDiff.files.length}
-Total changes: ${totalLines} lines
 Complexity: ${semanticDiff.totalComplexity}
 
 FILES BY TYPE:
@@ -399,20 +394,6 @@ CRITICAL: Respond with ONLY valid JSON:
     return grouped;
   }
 
-  /**
-   * Calculate total lines changed
-   */
-  private calculateTotalLines(semanticDiff: SemanticDiff): number {
-    let total = 0;
-
-    for (const file of semanticDiff.files) {
-      for (const hunk of file.hunks) {
-        total += hunk.changes.filter((c) => c.type !== 'context').length;
-      }
-    }
-
-    return total;
-  }
 
   /**
    * Summarize semantic changes for prompt

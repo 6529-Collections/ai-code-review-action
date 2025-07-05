@@ -489,8 +489,6 @@ export class ThemeSimilarityService {
       description: string;
       snippet: string;
     }> = [];
-    let totalLinesAdded = 0;
-    let totalLinesRemoved = 0;
 
     themes.forEach((theme) => {
       theme.affectedFiles.forEach((file) => allFiles.add(file));
@@ -504,10 +502,6 @@ export class ThemeSimilarityService {
       if (theme.mainClassesChanged)
         theme.mainClassesChanged.forEach((c) => allClasses.add(c));
       if (theme.codeExamples) allCodeExamples.push(...theme.codeExamples);
-      if (theme.codeMetrics) {
-        totalLinesAdded += theme.codeMetrics.linesAdded;
-        totalLinesRemoved += theme.codeMetrics.linesRemoved;
-      }
     });
 
     // Generate AI-powered name and description for merged themes
@@ -552,14 +546,11 @@ export class ThemeSimilarityService {
         allFunctions.size > 0 ? Array.from(allFunctions) : undefined,
       mainClassesChanged:
         allClasses.size > 0 ? Array.from(allClasses) : undefined,
-      codeMetrics:
-        totalLinesAdded > 0 || totalLinesRemoved > 0
-          ? {
-              linesAdded: totalLinesAdded,
-              linesRemoved: totalLinesRemoved,
-              filesChanged: allFiles.size,
-            }
-          : undefined,
+      codeMetrics: allFiles.size > 0
+        ? {
+            filesChanged: allFiles.size,
+          }
+        : undefined,
       codeExamples: allCodeExamples.length > 0 ? allCodeExamples : undefined, // Include all examples
     };
   }

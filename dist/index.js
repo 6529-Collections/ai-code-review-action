@@ -30425,14 +30425,9 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
         try {
             // Get patch for this file
             const patch = await this.getFilePatch(filename, isStaged);
-            // Count additions/deletions from patch
-            const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
-            const deletions = (patch.match(/^-(?!-)/gm) || []).length;
             return {
                 filename,
                 status: this.mapGitStatusToChangedFileStatus(gitStatus),
-                additions,
-                deletions,
                 patch,
             };
         }
@@ -30499,8 +30494,6 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
                 // Merge staged and unstaged changes
                 fileMap.set(file.filename, {
                     ...existing,
-                    additions: existing.additions + file.additions,
-                    deletions: existing.deletions + file.deletions,
                     patch: existing.patch + '\n' + file.patch,
                 });
             }
@@ -30647,8 +30640,6 @@ class LocalGitService {
             changeType: file.status === 'removed'
                 ? 'deleted'
                 : file.status,
-            linesAdded: file.additions,
-            linesRemoved: file.deletions,
         }));
         console.log(`[LOCAL-GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
         // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
@@ -31234,7 +31225,6 @@ class AIExpansionDecisionService {
         const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
         // Build dynamic, context-aware prompt
         const prompt = this.promptBuilder.buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes);
-        (0, utils_1.logInfo)(`Enhanced AI analysis for "${theme.name}": ${codeAnalysis.functionCount} functions, ${codeAnalysis.changeTypes.length} change types, ${codeAnalysis.expansionHints.length} hints`);
         const decision = await this.getAIDecision(prompt);
         this.decisionCache.set(cacheKey, decision);
         return decision;
@@ -31246,15 +31236,6 @@ class AIExpansionDecisionService {
         const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
         // Simple hash - in production you might want a proper hash function
         return Buffer.from(content).toString('base64').slice(0, 16);
-    }
-    /**
-     * Calculate total lines from code snippets (which contain full file patches)
-     */
-    calculateTotalLines(theme) {
-        // Each code snippet contains a full file patch/diff
-        return theme.codeSnippets.reduce((count, snippet) => {
-            return count + snippet.split('\n').length;
-        }, 0);
     }
     /**
      * Get AI decision from Claude
@@ -31403,8 +31384,8 @@ CRITICAL: Respond with ONLY valid JSON.
         details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
         // Add code metrics if available
         if (theme.codeMetrics) {
-            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+            const { filesChanged } = theme.codeMetrics;
+            details += `\nCode Metrics: ${filesChanged} files changed`;
         }
         // Add main functions/classes if available
         if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
@@ -32190,13 +32171,12 @@ exports.BusinessDomainService = BusinessDomainService;
 /***/ }),
 
 /***/ 5873:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+/***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CodeStructureAnalyzer = void 0;
-const utils_1 = __nccwpck_require__(1798);
 /**
  * Analyzes code structure to provide intelligent hints for theme expansion
  */
@@ -32212,11 +32192,7 @@ class CodeStructureAnalyzer {
             changeTypes: this.identifyChangeTypes(theme),
             complexityIndicators: this.analyzeComplexity(theme),
             fileStructure: this.analyzeFileStructure(theme),
-            expansionHints: [],
         };
-        // Generate contextual hints based on analysis
-        analysis.expansionHints = this.generateExpansionHints(analysis, theme);
-        (0, utils_1.logInfo)(`Code structure analysis for "${theme.name}": ${analysis.functionCount} functions, ${analysis.classCount} classes, ${analysis.changeTypes.length} change types`);
         return analysis;
     }
     /**
@@ -32397,84 +32373,6 @@ class CodeStructureAnalyzer {
         analysis.isMultiLanguage = analysis.fileExtensions.size > 2; // More than 2 different extensions
         return analysis;
     }
-    /**
-     * Generate contextual expansion hints based on analysis
-     */
-    generateExpansionHints(analysis, theme) {
-        const hints = [];
-        // Function-based hints
-        if (analysis.functionCount > 3) {
-            hints.push(`This theme modifies ${analysis.functionCount} functions - consider analyzing each function's purpose separately`);
-        }
-        else if (analysis.functionCount > 1) {
-            hints.push(`Multiple functions modified (${analysis.functionCount}) - each may serve a distinct purpose`);
-        }
-        // Class-based hints
-        if (analysis.classCount > 2) {
-            hints.push(`Multiple classes/interfaces affected (${analysis.classCount}) - each likely represents a separate concern`);
-        }
-        // Change type hints
-        if (analysis.changeTypes.length > 2) {
-            hints.push(`Mixed change types detected (${analysis.changeTypes.join(', ')}) - different types often benefit from separation`);
-        }
-        // Complexity hints
-        if (analysis.complexityIndicators.hasConditionals &&
-            analysis.complexityIndicators.hasErrorHandling) {
-            hints.push('Both control flow and error handling present - these are typically distinct responsibilities');
-        }
-        if (analysis.complexityIndicators.hasAsyncOperations &&
-            analysis.complexityIndicators.hasConditionals) {
-            hints.push('Async operations with conditional logic - consider separating flow control from async handling');
-        }
-        if (analysis.complexityIndicators.branchingFactor > 3) {
-            hints.push(`High branching complexity (${analysis.complexityIndicators.branchingFactor} branches) - multiple decision points suggest multiple concerns`);
-        }
-        // File structure hints
-        if (analysis.fileStructure.isMultiDirectory) {
-            hints.push('Changes span multiple directories - different locations often indicate different architectural concerns');
-        }
-        if (analysis.fileStructure.hasTestFiles &&
-            analysis.changeTypes.includes('implementation')) {
-            hints.push('Both implementation and test changes - consider separating test updates from feature implementation');
-        }
-        if (analysis.changeTypes.includes('config') &&
-            analysis.changeTypes.includes('logic')) {
-            hints.push('Configuration and logic changes - these typically serve different purposes and can be analyzed separately');
-        }
-        // Module-based hints
-        if (analysis.moduleCount > 3) {
-            hints.push(`Multiple modules affected (${analysis.moduleCount}) - each module likely represents a distinct component or service`);
-        }
-        // PRD-aligned testability and atomicity hints
-        const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-        // PRD: "5-15 lines of focused change"
-        if (totalLines > 15) {
-            hints.push(`Exceeds PRD atomic size (${totalLines} > 15 lines) - split into smaller, testable units`);
-        }
-        // PRD: "Changes aren't independently testable" → expand
-        if (analysis.functionCount > 1) {
-            hints.push(`Multiple functions modified (${analysis.functionCount}) - separate for independent testing`);
-        }
-        // PRD: "Multiple concerns" → create child nodes
-        if (analysis.complexityIndicators.hasConditionals &&
-            analysis.complexityIndicators.branchingFactor > 1) {
-            hints.push(`Multiple test scenarios (${analysis.complexityIndicators.branchingFactor} branches) - split by test case`);
-        }
-        // PRD: Mixed dependencies and logic should be separated
-        if (analysis.complexityIndicators.hasAsyncOperations &&
-            analysis.functionCount > 1) {
-            hints.push('Mixed dependencies and logic - separate setup from behavior for testability');
-        }
-        if (theme.description.toLowerCase().includes(' and ')) {
-            hints.push('Description contains "and" - multiple concerns should be separated per PRD');
-        }
-        // Add generic expansion encouragement if no specific hints
-        if (hints.length === 0 &&
-            theme.codeSnippets.join('\n').split('\n').length > 10) {
-            hints.push('This change has sufficient complexity to potentially benefit from decomposition into more specific sub-themes');
-        }
-        return hints;
-    }
 }
 exports.CodeStructureAnalyzer = CodeStructureAnalyzer;
 
@@ -32554,12 +32452,6 @@ Ensure suggested sub-themes don't duplicate these existing themes.`;
 - Modules/Files: ${codeAnalysis.moduleCount}
 - Change Types: ${codeAnalysis.changeTypes.join(', ')}
 - Complexity: ${this.formatComplexityIndicators(codeAnalysis.complexityIndicators)}`;
-        if (codeAnalysis.expansionHints.length > 0) {
-            section += `
-
-EXPANSION INSIGHTS:
-${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
-        }
         return section;
     }
     /**
@@ -32618,7 +32510,7 @@ Goal: Natural depth (2-30 levels) based on code complexity.
 
 CURRENT THEME: "${theme.name}"
 Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
+Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.length} code snippets
 Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
 
 EXPANSION DECISION FRAMEWORK (from PRD):
@@ -32630,7 +32522,7 @@ Create child nodes when:
 4. Mixed audiences (technical vs business)
 
 Stop expansion only when ALL true:
-1. Atomic: 5-15 lines of focused change
+1. Atomic: Single testable responsibility
 2. Unit-testable as-is
 3. Single responsibility
 4. Natural code boundary
@@ -32677,7 +32569,6 @@ RESPOND WITH PRD-COMPLIANT JSON:
       "businessContext": "Why this matters",
       "technicalContext": "What this does",
       "files": ["REQUIRED: list files from parent theme that this sub-theme modifies"],
-      "estimatedLines": number,
       "rationale": "Why separate concern"
     }
   ] or null
@@ -33234,10 +33125,8 @@ class HierarchicalSimilarityService {
      * Check if themes have severe size mismatch (one much larger than other)
      */
     hasSevereSizeMismatch(theme1, theme2) {
-        const size1 = (theme1.affectedFiles?.length || 0) +
-            (theme1.codeMetrics?.linesAdded || 0);
-        const size2 = (theme2.affectedFiles?.length || 0) +
-            (theme2.codeMetrics?.linesAdded || 0);
+        const size1 = theme1.affectedFiles?.length || 0;
+        const size2 = theme2.affectedFiles?.length || 0;
         if (size1 === 0 || size2 === 0) {
             return false; // Can't judge size mismatch
         }
@@ -33672,11 +33561,11 @@ class ThemeExpansionService {
             console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
         });
         // Log themes that exceeded PRD limits but were marked atomic
-        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
+        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && r.fileCount > 1);
         if (oversizedAtomic.length > 0) {
             console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
             oversizedAtomic.forEach((r) => {
-                console.log(`  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`);
+                console.log(`  - "${r.themeName}" (${r.fileCount} files) at depth ${r.depth}`);
             });
         }
         return expandedThemes;
@@ -33787,21 +33676,10 @@ class ThemeExpansionService {
         }
         // Combine all child themes
         const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
-        // DEBUG: Log theme combination details
-        console.log(`[COMBINE] Parent: "${result.expandedTheme.name}" (ID: ${result.expandedTheme.id})`);
-        console.log(`[COMBINE] Existing children: ${expandedExistingChildren.length}`);
-        expandedExistingChildren.forEach((child, i) => console.log(`  [EXISTING-${i}] "${child.name}" (ID: ${child.id})`));
-        console.log(`[COMBINE] New sub-themes: ${expandedSubThemes.length}`);
-        expandedSubThemes.forEach((child, i) => console.log(`  [NEW-${i}] "${child.name}" (ID: ${child.id})`));
-        console.log(`[COMBINE] Total after combination: ${allChildThemes.length}`);
-        allChildThemes.forEach((child, i) => console.log(`  [TOTAL-${i}] "${child.name}" (ID: ${child.id})`));
         // Deduplicate child themes using AI
         const deduplicatedChildren = await this.deduplicateSubThemes(allChildThemes);
         // NEW: Re-evaluate merged themes for potential expansion (PRD compliance)
         const finalChildren = await this.reEvaluateMergedThemes(deduplicatedChildren, currentDepth + 1, result.expandedTheme);
-        // DEBUG: Log final theme assembly
-        console.log(`[FINAL-ASSEMBLY] Theme "${result.expandedTheme.name}" (ID: ${result.expandedTheme.id}) final children: ${finalChildren.length}`);
-        finalChildren.forEach((child, i) => console.log(`  [FINAL-CHILD-${i}] "${child.name}" (ID: ${child.id})`));
         return {
             ...result.expandedTheme,
             childThemes: finalChildren,
@@ -33817,35 +33695,21 @@ class ThemeExpansionService {
         // Get sibling themes for context
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
         // Let AI decide based on full context
-        console.log(`[AI-DECISION-INPUT] Calling AI for theme: "${theme.name}"`);
-        console.log(`[AI-DECISION-INPUT] Parent: "${parentTheme?.name || 'none'}"`);
-        console.log(`[AI-DECISION-INPUT] Siblings: ${siblingThemes.length} themes`);
-        console.log(`[AI-DECISION-INPUT] Depth: ${currentDepth}`);
         const expansionDecision = await this.aiDecisionService.shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes);
-        console.log(`[AI-DECISION-OUTPUT] Result for "${theme.name}": expand=${expansionDecision.shouldExpand}`);
         // Update theme with PRD-aligned decision metadata
         theme.isAtomic = expansionDecision.isAtomic;
-        // Track expansion metrics for PRD analysis
-        const expansionMetrics = {
-            naturalDepth: currentDepth,
-            reason: 'complexity-driven',
-            atomicSize: theme.codeSnippets.join('\n').split('\n').length,
-            reasoning: expansionDecision.reasoning,
-        };
         // If theme is atomic or shouldn't expand, return null
         if (!expansionDecision.shouldExpand) {
             // Detailed logging for expansion decisions
             console.log(`[EXPANSION-DECISION] Evaluating theme: "${theme.name}" at depth ${currentDepth}`);
             console.log(`[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`);
-            const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
-            console.log(`[EXPANSION-DECISION] Code lines: ${totalLines}`);
+            console.log(`[EXPANSION-DECISION] Files: ${theme.affectedFiles.length}, Snippets: ${theme.codeSnippets.length}`);
             // Debug: Log first few lines of each snippet
-            if (totalLines <= 10 && theme.codeSnippets.length > 0) {
+            if (theme.codeSnippets.length > 0 && theme.codeSnippets.length <= 3) {
                 console.log(`[EXPANSION-DECISION] DEBUG - snippets count: ${theme.codeSnippets.length}`);
                 theme.codeSnippets.forEach((snippet, idx) => {
-                    const lines = snippet.split('\n');
-                    console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx}: ${lines.length} lines`);
-                    if (lines.length <= 3) {
+                    console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx}: ${snippet.length} chars`);
+                    if (snippet.length <= 100) {
                         console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx} content: ${JSON.stringify(snippet)}`);
                     }
                 });
@@ -33873,13 +33737,8 @@ class ThemeExpansionService {
                 reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
                 details: expansionDecision.reasoning,
                 fileCount: theme.affectedFiles.length,
-                lineCount: theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0),
             });
             logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
-            // Log PRD metrics
-            if (expansionMetrics.atomicSize > 15) {
-                logger_1.logger.warn('EXPANSION', `Atomic theme exceeds PRD size (${expansionMetrics.atomicSize} > 15 lines)`);
-            }
             return null;
         }
         // Return candidate for expansion
@@ -33901,17 +33760,15 @@ class ThemeExpansionService {
             return themes;
         }
         const reEvaluatedThemes = [];
-        const maxAtomicSize = parseInt(process.env.MAX_ATOMIC_SIZE || '15');
         const strictAtomicLimits = process.env.STRICT_ATOMIC_LIMITS !== 'false';
         for (const theme of themes) {
             // Check if this was a merged theme (has multiple source themes)
             if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-                const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
-                console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${totalLines} lines, ${theme.affectedFiles.length} files)`);
-                // PRD: If merged theme exceeds atomic size, it should be re-evaluated
-                const exceedsLineLimit = strictAtomicLimits && totalLines > maxAtomicSize;
+                console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`);
+                // PRD: If merged theme has complexity indicators, it should be re-evaluated
                 const exceedsFileLimit = strictAtomicLimits && theme.affectedFiles.length > 1;
-                if (exceedsLineLimit || exceedsFileLimit) {
+                const hasMultipleSources = theme.sourceThemes.length > 2;
+                if (exceedsFileLimit || hasMultipleSources) {
                     console.log(`[RE-EVALUATION] Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`);
                     // Re-evaluate if it should expand
                     const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
@@ -33922,7 +33779,7 @@ class ThemeExpansionService {
                         reEvaluatedThemes.push(expanded);
                     }
                     else {
-                        console.log(`[RE-EVALUATION] Merged theme "${theme.name}" remains atomic despite size`);
+                        console.log(`[RE-EVALUATION] Merged theme "${theme.name}" remains atomic despite complexity`);
                         reEvaluatedThemes.push(theme);
                     }
                 }
@@ -33942,9 +33799,6 @@ class ThemeExpansionService {
      * Deduplicate sub-themes using AI to identify duplicates
      */
     async deduplicateSubThemes(subThemes) {
-        // DEBUG: Log deduplication input
-        console.log(`[DEDUP-IN] Processing ${subThemes.length} sub-themes:`);
-        subThemes.forEach((theme, i) => console.log(`  [DEDUP-IN-${i}] "${theme.name}" (ID: ${theme.id})`));
         if (subThemes.length <= 1) {
             console.log(`[DEDUP-OUT] Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
             return subThemes;
@@ -33963,8 +33817,7 @@ class ThemeExpansionService {
         // Pre-deduplication state logging
         console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
         subThemes.forEach((t) => {
-            const lines = t.codeSnippets.join('\n').split('\n').length;
-            console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${lines} lines)`);
+            console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
         });
         logger_1.logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
         // Calculate optimal batch size based on theme count
@@ -34035,12 +33888,11 @@ class ThemeExpansionService {
             // Post-deduplication state logging (after second pass)
             console.log(`[DEDUP-AFTER] Final themes after second pass deduplication:`);
             secondPassResult.forEach((t) => {
-                const lines = t.codeSnippets.join('\n').split('\n').length;
                 if (t.sourceThemes && t.sourceThemes.length > 1) {
-                    console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
+                    console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
                 }
                 else {
-                    console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${lines} lines)`);
+                    console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
                 }
             });
             return secondPassResult;
@@ -34054,12 +33906,11 @@ class ThemeExpansionService {
         // Post-deduplication state logging (no second pass)
         console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
         finalThemes.forEach((t) => {
-            const lines = t.codeSnippets.join('\n').split('\n').length;
             if (t.sourceThemes && t.sourceThemes.length > 1) {
-                console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
+                console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
             }
             else {
-                console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${lines} lines)`);
+                console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
             }
         });
         // DEBUG: Log deduplication output
@@ -34380,23 +34231,9 @@ CRITICAL: Respond with ONLY valid JSON.
         // We already have the expansion decision from evaluateExpansionCandidate
         if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
             // Debug: Log what AI provided
-            console.log(`[DEBUG-SUBTHEMES] AI suggested ${expansionCandidate.expansionDecision.suggestedSubThemes.length} sub-themes:`);
-            expansionCandidate.expansionDecision.suggestedSubThemes.forEach((st, i) => {
-                console.log(`  ${i + 1}. "${st.name}" - files: ${st.files ? JSON.stringify(st.files) : 'UNDEFINED'}`);
-            });
             // Convert suggested sub-themes to ConsolidatedThemes
             const suggestedSubThemes = expansionCandidate.expansionDecision.suggestedSubThemes;
-            // DEBUG: Log AI-generated sub-themes before conversion
-            console.log(`[AI-SUBTHEMES] Parent: "${theme.name}" (ID: ${theme.id}) AI generated ${suggestedSubThemes.length} sub-themes:`);
-            suggestedSubThemes.forEach((suggested, i) => {
-                console.log(`  [AI-SUBTHEME-${i}] "${suggested.name}"`);
-            });
             const subThemes = this.convertSuggestedToConsolidatedThemes(suggestedSubThemes, theme);
-            // DEBUG: Log converted sub-themes
-            console.log(`[AI-CONVERTED] Converted to ${subThemes.length} ConsolidatedThemes:`);
-            subThemes.forEach((converted, i) => {
-                console.log(`  [AI-CONVERTED-${i}] "${converted.name}" (ID: ${converted.id})`);
-            });
             return {
                 subThemes,
                 shouldExpand: true,
@@ -34435,7 +34272,7 @@ ${theme.codeSnippets.join('\n---\n')}
 CREATE SUB-THEMES:
 ${depth < 3
             ? `Focus on distinct business capabilities or user features within this theme.`
-            : `Focus on atomic, testable units (5-15 lines, single responsibility).`}
+            : `Focus on atomic, testable units (single responsibility, single concern).`}
 
 Return JSON with specific sub-themes:
 {
@@ -34485,7 +34322,7 @@ Return JSON with specific sub-themes:
             console.error(`[EXPANSION-ERROR] Theme level: ${theme.level}`);
             console.error(`[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`);
             console.error(`[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`);
-            console.error(`[EXPANSION-ERROR] Total code lines: ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)}`);
+            console.error(`[EXPANSION-ERROR] Total files affected: ${theme.affectedFiles.length}`);
             console.error(`[EXPANSION-ERROR] Error: ${error}`);
             console.error(`[EXPANSION-ERROR] Stack trace:`, error instanceof Error ? error.stack : 'No stack trace available');
             logger_1.logger.info('EXPANSION', `AI analysis failed for theme ${theme.name}: ${error}`);
@@ -34522,9 +34359,6 @@ Return JSON with specific sub-themes:
                 throw new Error(`AI provided invalid files for sub-theme "${suggested.name}". ` +
                     `Suggested files ${JSON.stringify(relevantFiles)} are not in parent's files: ${JSON.stringify(parentTheme.affectedFiles)}`);
             }
-            console.log(`[FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
-            console.log(`  - AI suggested files: ${JSON.stringify(relevantFiles)}`);
-            console.log(`  - Valid files assigned: ${JSON.stringify(validFiles)}`);
             return {
                 id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', parentTheme.id, index),
                 name: suggested.name,
@@ -34917,7 +34751,6 @@ class ClaudeService {
             enhancedContext += `\n\nPre-analyzed code structure:`;
             enhancedContext += `\nFile type: ${codeChange.fileType}`;
             enhancedContext += `\nComplexity: ${codeChange.codeComplexity}`;
-            enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
             if (codeChange.functionsChanged.length > 0) {
                 enhancedContext += `\nFunctions changed: ${codeChange.functionsChanged.join(', ')}`;
             }
@@ -35109,14 +34942,10 @@ class ThemeContextManager {
                     existingTheme.codeChanges.push(codeChange);
                     // Update metrics
                     if (existingTheme.codeMetrics && codeChange) {
-                        existingTheme.codeMetrics.linesAdded += codeChange.linesAdded;
-                        existingTheme.codeMetrics.linesRemoved += codeChange.linesRemoved;
                         existingTheme.codeMetrics.filesChanged += 1;
                     }
                     else if (codeChange) {
                         existingTheme.codeMetrics = {
-                            linesAdded: codeChange.linesAdded,
-                            linesRemoved: codeChange.linesRemoved,
                             filesChanged: 1,
                         };
                     }
@@ -35171,8 +35000,6 @@ class ThemeContextManager {
                 mainClassesChanged: analysis.mainClassesChanged,
                 codeMetrics: codeChange
                     ? {
-                        linesAdded: codeChange.linesAdded,
-                        linesRemoved: codeChange.linesRemoved,
                         filesChanged: 1,
                     }
                     : undefined,
@@ -35220,8 +35047,6 @@ class ThemeService {
         const changedFiles = codeChanges.map((change) => ({
             filename: change.file,
             status: change.changeType,
-            additions: change.linesAdded,
-            deletions: change.linesRemoved,
             patch: change.diffHunk,
         }));
         const analysisResult = {
@@ -35910,8 +35735,6 @@ class ThemeSimilarityService {
         const allFunctions = new Set();
         const allClasses = new Set();
         const allCodeExamples = [];
-        let totalLinesAdded = 0;
-        let totalLinesRemoved = 0;
         themes.forEach((theme) => {
             theme.affectedFiles.forEach((file) => allFiles.add(file));
             allSnippets.push(...theme.codeSnippets);
@@ -35925,10 +35748,6 @@ class ThemeSimilarityService {
                 theme.mainClassesChanged.forEach((c) => allClasses.add(c));
             if (theme.codeExamples)
                 allCodeExamples.push(...theme.codeExamples);
-            if (theme.codeMetrics) {
-                totalLinesAdded += theme.codeMetrics.linesAdded;
-                totalLinesRemoved += theme.codeMetrics.linesRemoved;
-            }
         });
         // Generate AI-powered name and description for merged themes
         const { name, description } = await this.themeNamingService.generateMergedThemeNameAndDescription(themes);
@@ -35963,10 +35782,8 @@ class ThemeSimilarityService {
             keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,
             mainFunctionsChanged: allFunctions.size > 0 ? Array.from(allFunctions) : undefined,
             mainClassesChanged: allClasses.size > 0 ? Array.from(allClasses) : undefined,
-            codeMetrics: totalLinesAdded > 0 || totalLinesRemoved > 0
+            codeMetrics: allFiles.size > 0
                 ? {
-                    linesAdded: totalLinesAdded,
-                    linesRemoved: totalLinesRemoved,
                     filesChanged: allFiles.size,
                 }
                 : undefined,
@@ -36848,8 +36665,6 @@ class GitService {
             changeType: file.status === 'removed'
                 ? 'deleted'
                 : file.status,
-            linesAdded: file.additions,
-            linesRemoved: file.deletions,
         }));
         console.log(`[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
         // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
@@ -37044,7 +36859,7 @@ class AICodeAnalyzer {
      * Process a single changed file with AI analysis
      * Replaces the static processChangedFile method
      */
-    async processChangedFile(filename, diffPatch, changeType, linesAdded, linesRemoved) {
+    async processChangedFile(filename, diffPatch, changeType) {
         logger_1.logger.trace('CODE-ANALYSIS', `Processing ${filename} (${changeType})`);
         return await this.cache.getOrAnalyze(filename, diffPatch, async () => {
             try {
@@ -37053,8 +36868,6 @@ class AICodeAnalyzer {
                     file: filename,
                     diffHunk: diffPatch,
                     changeType,
-                    linesAdded,
-                    linesRemoved,
                     functionsChanged: aiAnalysis.functionsChanged,
                     classesChanged: aiAnalysis.classesChanged,
                     importsChanged: aiAnalysis.importsChanged,
@@ -37070,7 +36883,7 @@ class AICodeAnalyzer {
             catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 console.warn(`[AI-CODE-ANALYZER] AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`);
-                return this.createMinimalAnalysis(filename, diffPatch, changeType, linesAdded, linesRemoved);
+                return this.createMinimalAnalysis(filename, diffPatch, changeType);
             }
         });
     }
@@ -37080,7 +36893,7 @@ class AICodeAnalyzer {
     async processChangedFilesConcurrently(files) {
         logger_1.logger.debug('CODE-ANALYSIS', `Processing ${files.length} files`);
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(files, async (file) => {
-            return await this.processChangedFile(file.filename, file.diffPatch, file.changeType, file.linesAdded, file.linesRemoved);
+            return await this.processChangedFile(file.filename, file.diffPatch, file.changeType);
         }, {
             concurrencyLimit: 5,
             maxRetries: 3,
@@ -37176,13 +36989,11 @@ Respond with ONLY the JSON object, no explanations.`;
     /**
      * Create minimal analysis when AI fails
      */
-    createMinimalAnalysis(filename, diffPatch, changeType, linesAdded, linesRemoved) {
+    createMinimalAnalysis(filename, diffPatch, changeType) {
         return {
             file: filename,
             diffHunk: diffPatch,
             changeType,
-            linesAdded,
-            linesRemoved,
             functionsChanged: [],
             classesChanged: [],
             importsChanged: [],
@@ -37265,17 +37076,16 @@ Respond with ONLY the JSON object, no explanations.`;
         const fileTypes = [
             ...new Set(changes.map((c) => c.fileType).filter((type) => type)),
         ];
-        const totalLines = changes.reduce((sum, c) => sum + c.linesAdded + c.linesRemoved, 0);
         const fileCount = changes.length;
         // Enhanced complexity scoring using AI results
         const complexityScores = changes.map((c) => c.codeComplexity);
         const highComplexity = complexityScores.filter((c) => c === 'high').length;
         const mediumComplexity = complexityScores.filter((c) => c === 'medium').length;
         let codeComplexity = 'low';
-        if (highComplexity > 0 || fileCount > 10 || totalLines > 500) {
+        if (highComplexity > 0 || fileCount > 10) {
             codeComplexity = 'high';
         }
-        else if (mediumComplexity > 1 || fileCount > 3 || totalLines > 100) {
+        else if (mediumComplexity > 1 || fileCount > 3) {
             codeComplexity = 'medium';
         }
         return {
@@ -37358,11 +37168,6 @@ Respond with ONLY the JSON object, no explanations.`;
     }
     extractSignificantChanges(changes) {
         const significant = [];
-        // Large files
-        const largeChanges = changes.filter((c) => c.linesAdded + c.linesRemoved > 50);
-        for (const change of largeChanges) {
-            significant.push(`Large change in ${change.file} (+${change.linesAdded}/-${change.linesRemoved})`);
-        }
         // New files
         const newFiles = changes.filter((c) => c.changeType === 'added');
         for (const file of newFiles) {
@@ -39121,7 +38926,6 @@ function setDeduplicationEnvironmentVariables() {
         'min-themes-for-cross-level-dedup': 'MIN_THEMES_FOR_CROSS_LEVEL_DEDUP',
         'verbose-dedup-logging': 'VERBOSE_DEDUP_LOGGING',
         // PRD Compliance Controls
-        'max-atomic-size': 'MAX_ATOMIC_SIZE',
         're-evaluate-after-merge': 'RE_EVALUATE_AFTER_MERGE',
         'strict-atomic-limits': 'STRICT_ATOMIC_LIMITS'
     };

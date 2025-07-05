@@ -58,7 +58,6 @@ export interface ExpansionStopReason {
     reason: 'atomic' | 'ai-decision' | 'max-depth' | 'error';
     details: string;
     fileCount: number;
-    lineCount: number;
 }
 export declare class ThemeExpansionService {
     private claudeClient;

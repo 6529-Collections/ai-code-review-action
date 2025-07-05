@@ -770,15 +770,15 @@ export class EnhancedGitService {
         data: 0.6,
       };
 
-      // Calculate file complexity
-      const linesChanged = file.hunks.reduce(
+      // Calculate file complexity based on semantic factors
+      const changeCount = file.hunks.reduce(
         (sum, hunk) =>
           sum + hunk.changes.filter((c) => c.type !== 'context').length,
         0
       );
 
       const fileComplexity =
-        (linesChanged *
+        (Math.min(changeCount, 10) * // Cap change impact at 10
           typeWeight[file.fileType] *
           (file.semanticChanges.length + 1) *
           (file.imports.length + file.exports.length + 1)) /

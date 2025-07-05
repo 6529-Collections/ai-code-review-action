@@ -6,8 +6,6 @@ import { IGitService } from '../interfaces/git-service-interface';
 export interface ChangedFile {
   filename: string;
   status: 'added' | 'modified' | 'removed' | 'renamed';
-  additions: number;
-  deletions: number;
   patch?: string;
 }
 
@@ -91,8 +89,6 @@ export class GitService implements IGitService {
         file.status === 'removed'
           ? ('deleted' as const)
           : (file.status as 'added' | 'modified' | 'renamed'),
-      linesAdded: file.additions,
-      linesRemoved: file.deletions,
     }));
 
     console.log(

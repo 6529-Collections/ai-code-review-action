@@ -19,10 +19,6 @@ export declare class AIExpansionDecisionService {
      */
     private getAnalysisHash;
     /**
-     * Calculate total lines from code snippets (which contain full file patches)
-     */
-    private calculateTotalLines;
-    /**
      * Get AI decision from Claude
      */
     private getAIDecision;

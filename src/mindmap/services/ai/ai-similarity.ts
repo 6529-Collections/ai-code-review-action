@@ -112,8 +112,8 @@ CRITICAL: Respond with ONLY valid JSON.
 
     // Add code metrics if available
     if (theme.codeMetrics) {
-      const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-      details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+      const { filesChanged } = theme.codeMetrics;
+      details += `\nCode Metrics: ${filesChanged} files changed`;
     }
 
     // Add main functions/classes if available
