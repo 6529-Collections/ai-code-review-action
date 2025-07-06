@@ -166,13 +166,6 @@ export class ThemeExpansionService {
       `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`
     );
 
-    // DEBUG: Log all input themes with IDs
-    console.log(
-      `[INPUT-THEMES] Starting with ${consolidatedThemes.length} root themes:`
-    );
-    consolidatedThemes.forEach((theme, i) => {
-      console.log(`  [INPUT-THEME-${i}] "${theme.name}" (ID: ${theme.id})`);
-    });
 
     // Reset effectiveness tracking
     this.resetEffectiveness();
@@ -308,12 +301,6 @@ export class ThemeExpansionService {
       currentDepth
     );
     if (!expansionCandidate) {
-      console.log(
-        `[EXPANSION-FLOW] Theme "${theme.name}" NOT selected for expansion at depth ${currentDepth}`
-      );
-      console.log(
-        `[EXPANSION-FLOW] Will only process existing ${theme.childThemes.length} child themes`
-      );
       // Still process existing child themes recursively
       const childResults = await this.processConcurrentlyWithLimit(
         theme.childThemes,
@@ -514,53 +501,6 @@ export class ThemeExpansionService {
 
     // If theme is atomic or shouldn't expand, return null
     if (!expansionDecision.shouldExpand) {
-      // Detailed logging for expansion decisions
-      console.log(
-        `[EXPANSION-DECISION] Evaluating theme: "${theme.name}" at depth ${currentDepth}`
-      );
-      console.log(
-        `[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`
-      );
-      console.log(`[EXPANSION-DECISION] Files: ${theme.affectedFiles.length}, Snippets: ${theme.codeSnippets.length}`);
-      // Debug: Log first few lines of each snippet
-      if (theme.codeSnippets.length > 0 && theme.codeSnippets.length <= 3) {
-        console.log(
-          `[EXPANSION-DECISION] DEBUG - snippets count: ${theme.codeSnippets.length}`
-        );
-        theme.codeSnippets.forEach((snippet, idx) => {
-          console.log(
-            `[EXPANSION-DECISION] DEBUG - snippet ${idx}: ${snippet.length} chars`
-          );
-          if (snippet.length <= 100) {
-            console.log(
-              `[EXPANSION-DECISION] DEBUG - snippet ${idx} content: ${JSON.stringify(snippet)}`
-            );
-          }
-        });
-      }
-      console.log(
-        `[EXPANSION-DECISION] AI Decision: shouldExpand=${expansionDecision.shouldExpand}, isAtomic=${expansionDecision.isAtomic}`
-      );
-      console.log(
-        `[EXPANSION-DECISION] AI Reasoning: "${expansionDecision.reasoning}"`
-      );
-      console.log(
-        `[EXPANSION-DECISION] Business Context: "${expansionDecision.businessContext}"`
-      );
-      console.log(
-        `[EXPANSION-DECISION] Technical Context: "${expansionDecision.technicalContext}"`
-      );
-      console.log(
-        `[EXPANSION-DECISION] Testability: "${expansionDecision.testabilityAssessment}"`
-      );
-      if (expansionDecision.suggestedSubThemes) {
-        console.log(
-          `[EXPANSION-DECISION] Suggested sub-themes: ${expansionDecision.suggestedSubThemes.length} items`
-        );
-      } else {
-        console.log(`[EXPANSION-DECISION] No sub-themes suggested`);
-      }
-      console.log('---');
 
       if (expansionDecision.isAtomic) {
         this.effectiveness.atomicThemesIdentified++;

@@ -29,6 +29,10 @@ export declare class DirectCodeAssignmentService {
      */
     private extractAffectedFiles;
     /**
+     * Calculate confidence based on assignment quality
+     */
+    private calculateConfidence;
+    /**
      * Generate child node ID
      */
     private generateChildId;

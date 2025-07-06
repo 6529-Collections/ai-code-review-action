@@ -22,16 +22,13 @@ export class LocalGitService implements IGitService {
     // Initialize local diff service
     this.localDiffService = new LocalDiffService(diffModeConfig);
     
-    console.log('[LOCAL-GIT-SERVICE] Initialized for local testing');
     const modeInfo = this.localDiffService.getCurrentMode();
-    console.log(`[LOCAL-GIT-SERVICE] Using mode: ${modeInfo.name} - ${modeInfo.description}`);
   }
 
   /**
    * Get enhanced changed files with AI code analysis for local testing
    */
   async getEnhancedChangedFiles(): Promise<CodeChange[]> {
-    console.log('[LOCAL-GIT-SERVICE] Getting enhanced changed files for local testing');
 
     // Get changed files using local diff service
     const changedFiles = await this.localDiffService.getChangedFiles();

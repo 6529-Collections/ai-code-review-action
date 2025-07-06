@@ -23,8 +23,12 @@ export interface SavedAnalysis {
  * OutputSaver handles saving local testing results to disk
  */
 export class OutputSaver {
-  private static readonly OUTPUT_DIR = '.ai-code-review';
-  private static readonly LOCAL_DIR = path.join(OutputSaver.OUTPUT_DIR, 'local-results');
+  private static readonly OUTPUT_DIR = process.env.ACT === 'true' 
+    ? '/github/workspace/output'
+    : '.ai-code-review';
+  private static readonly LOCAL_DIR = process.env.ACT === 'true'
+    ? '/github/workspace/output'
+    : path.join(OutputSaver.OUTPUT_DIR, 'local-results');
 
   /**
    * Save analysis results to disk with timestamp and metadata
@@ -35,6 +39,10 @@ export class OutputSaver {
     rawAnalysis: ThemeAnalysisResult,
     mode: string
   ): Promise<string> {
+    console.log(`[OUTPUT-SAVER-DEBUG] ACT env: ${process.env.ACT}`);
+    console.log(`[OUTPUT-SAVER-DEBUG] OUTPUT_DIR: ${this.OUTPUT_DIR}`);
+    console.log(`[OUTPUT-SAVER-DEBUG] LOCAL_DIR: ${this.LOCAL_DIR}`);
+    
     // Ensure output directory exists
     await this.ensureDirectoryExists();
 

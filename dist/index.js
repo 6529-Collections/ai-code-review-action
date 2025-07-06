@@ -30618,15 +30618,12 @@ class LocalGitService {
         this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(anthropicApiKey);
         // Initialize local diff service
         this.localDiffService = new local_diff_service_1.LocalDiffService(diffModeConfig);
-        console.log('[LOCAL-GIT-SERVICE] Initialized for local testing');
         const modeInfo = this.localDiffService.getCurrentMode();
-        console.log(`[LOCAL-GIT-SERVICE] Using mode: ${modeInfo.name} - ${modeInfo.description}`);
     }
     /**
      * Get enhanced changed files with AI code analysis for local testing
      */
     async getEnhancedChangedFiles() {
-        console.log('[LOCAL-GIT-SERVICE] Getting enhanced changed files for local testing');
         // Get changed files using local diff service
         const changedFiles = await this.localDiffService.getChangedFiles();
         if (changedFiles.length === 0) {
@@ -30741,6 +30738,9 @@ class OutputSaver {
      * Save analysis results to disk with timestamp and metadata
      */
     static async saveAnalysis(themes, summary, rawAnalysis, mode) {
+        console.log(`[OUTPUT-SAVER-DEBUG] ACT env: ${process.env.ACT}`);
+        console.log(`[OUTPUT-SAVER-DEBUG] OUTPUT_DIR: ${this.OUTPUT_DIR}`);
+        console.log(`[OUTPUT-SAVER-DEBUG] LOCAL_DIR: ${this.LOCAL_DIR}`);
         // Ensure output directory exists
         await this.ensureDirectoryExists();
         // Generate metadata
@@ -30869,8 +30869,12 @@ class OutputSaver {
     }
 }
 exports.OutputSaver = OutputSaver;
-OutputSaver.OUTPUT_DIR = '.ai-code-review';
-OutputSaver.LOCAL_DIR = path.join(OutputSaver.OUTPUT_DIR, 'local-results');
+OutputSaver.OUTPUT_DIR = process.env.ACT === 'true'
+    ? '/github/workspace/output'
+    : '.ai-code-review';
+OutputSaver.LOCAL_DIR = process.env.ACT === 'true'
+    ? '/github/workspace/output'
+    : path.join(OutputSaver.OUTPUT_DIR, 'local-results');
 
 
 /***/ }),
@@ -33502,11 +33506,6 @@ class ThemeExpansionService {
         const initialAICalls = this.claudeClient.getMetrics().totalCalls;
         logger_1.logger.info('EXPANSION', `Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
         logger_1.logger.debug('EXPANSION', `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
-        // DEBUG: Log all input themes with IDs
-        console.log(`[INPUT-THEMES] Starting with ${consolidatedThemes.length} root themes:`);
-        consolidatedThemes.forEach((theme, i) => {
-            console.log(`  [INPUT-THEME-${i}] "${theme.name}" (ID: ${theme.id})`);
-        });
         // Reset effectiveness tracking
         this.resetEffectiveness();
         // Process themes with concurrency limit and retry logic
@@ -33583,8 +33582,6 @@ class ThemeExpansionService {
         // Check if theme is candidate for expansion
         const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
         if (!expansionCandidate) {
-            console.log(`[EXPANSION-FLOW] Theme "${theme.name}" NOT selected for expansion at depth ${currentDepth}`);
-            console.log(`[EXPANSION-FLOW] Will only process existing ${theme.childThemes.length} child themes`);
             // Still process existing child themes recursively
             const childResults = await this.processConcurrentlyWithLimit(theme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, theme), {
                 onProgress: (completed, total) => {
@@ -33700,32 +33697,6 @@ class ThemeExpansionService {
         theme.isAtomic = expansionDecision.isAtomic;
         // If theme is atomic or shouldn't expand, return null
         if (!expansionDecision.shouldExpand) {
-            // Detailed logging for expansion decisions
-            console.log(`[EXPANSION-DECISION] Evaluating theme: "${theme.name}" at depth ${currentDepth}`);
-            console.log(`[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`);
-            console.log(`[EXPANSION-DECISION] Files: ${theme.affectedFiles.length}, Snippets: ${theme.codeSnippets.length}`);
-            // Debug: Log first few lines of each snippet
-            if (theme.codeSnippets.length > 0 && theme.codeSnippets.length <= 3) {
-                console.log(`[EXPANSION-DECISION] DEBUG - snippets count: ${theme.codeSnippets.length}`);
-                theme.codeSnippets.forEach((snippet, idx) => {
-                    console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx}: ${snippet.length} chars`);
-                    if (snippet.length <= 100) {
-                        console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx} content: ${JSON.stringify(snippet)}`);
-                    }
-                });
-            }
-            console.log(`[EXPANSION-DECISION] AI Decision: shouldExpand=${expansionDecision.shouldExpand}, isAtomic=${expansionDecision.isAtomic}`);
-            console.log(`[EXPANSION-DECISION] AI Reasoning: "${expansionDecision.reasoning}"`);
-            console.log(`[EXPANSION-DECISION] Business Context: "${expansionDecision.businessContext}"`);
-            console.log(`[EXPANSION-DECISION] Technical Context: "${expansionDecision.technicalContext}"`);
-            console.log(`[EXPANSION-DECISION] Testability: "${expansionDecision.testabilityAssessment}"`);
-            if (expansionDecision.suggestedSubThemes) {
-                console.log(`[EXPANSION-DECISION] Suggested sub-themes: ${expansionDecision.suggestedSubThemes.length} items`);
-            }
-            else {
-                console.log(`[EXPANSION-DECISION] No sub-themes suggested`);
-            }
-            console.log('---');
             if (expansionDecision.isAtomic) {
                 this.effectiveness.atomicThemesIdentified++;
             }
@@ -35034,15 +35005,12 @@ class ThemeService {
     }
     async analyzeThemesWithEnhancedContext(gitService) {
         performance_tracker_1.performanceTracker.startTiming('Code Analysis');
-        console.log('[THEME-SERVICE] Starting enhanced theme analysis');
         const startTime = Date.now();
         // Get enhanced code changes instead of basic changed files
         const codeChanges = await gitService.getEnhancedChangedFiles();
-        console.log(`[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`);
         // Analyze the code changes to build smart context with AI
         const aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(this.anthropicApiKey);
         const smartContext = await aiAnalyzer.analyzeCodeChanges(codeChanges);
-        console.log(`[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`);
         // Convert to the legacy format for ChunkProcessor compatibility
         const changedFiles = codeChanges.map((change) => ({
             filename: change.file,

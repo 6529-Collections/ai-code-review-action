@@ -480,21 +480,14 @@ export class ThemeService {
     gitService: import('@/shared/interfaces/git-service-interface').IGitService
   ): Promise<ThemeAnalysisResult> {
     performanceTracker.startTiming('Code Analysis');
-    console.log('[THEME-SERVICE] Starting enhanced theme analysis');
     const startTime = Date.now();
 
     // Get enhanced code changes instead of basic changed files
     const codeChanges = await gitService.getEnhancedChangedFiles();
-    console.log(
-      `[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`
-    );
 
     // Analyze the code changes to build smart context with AI
     const aiAnalyzer = new AICodeAnalyzer(this.anthropicApiKey);
     const smartContext = await aiAnalyzer.analyzeCodeChanges(codeChanges);
-    console.log(
-      `[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`
-    );
 
     // Convert to the legacy format for ChunkProcessor compatibility
     const changedFiles = codeChanges.map((change) => ({

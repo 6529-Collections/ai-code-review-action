@@ -56,6 +56,7 @@ export class DirectCodeAssignmentService {
   ): Promise<MindmapNode> {
     const metrics = this.calculateMetrics(assignment.assignedCode);
     const affectedFiles = this.extractAffectedFiles(assignment.assignedCode);
+    const confidence = this.calculateConfidence(assignment, parent);
 
     return {
       id: this.generateChildId(parent.id),
@@ -71,7 +72,7 @@ export class DirectCodeAssignmentService {
       children: [],
       crossReferences: assignment.crossReferences || [],
       isPrimary: assignment.ownership === 'primary',
-      expansionConfidence: 0.8,
+      expansionConfidence: confidence,
     };
   }
 
@@ -156,6 +157,35 @@ export class DirectCodeAssignmentService {
    */
   private extractAffectedFiles(codeDiffs: CodeDiff[]): string[] {
     return Array.from(new Set(codeDiffs.map((diff) => diff.file)));
+  }
+
+  /**
+   * Calculate confidence based on assignment quality
+   */
+  private calculateConfidence(assignment: DirectChildAssignment, parent: MindmapNode): number {
+    let confidence = 0.8; // Base confidence
+    
+    // Boost for primary ownership
+    if (assignment.ownership === 'primary') {
+      confidence += 0.1;
+    }
+    
+    // Boost for cross-references
+    if (assignment.crossReferences && assignment.crossReferences.length > 0) {
+      confidence += 0.05;
+    }
+    
+    // Adjust based on code size relative to parent
+    const assignedLineCount = this.extractAllLines(assignment.assignedCode).length;
+    const parentLineCount = this.extractAllLines(parent.codeDiff).length;
+    const ratio = assignedLineCount / parentLineCount;
+    
+    // Penalize very small or very large assignments
+    if (ratio < 0.1 || ratio > 0.8) {
+      confidence -= 0.1;
+    }
+    
+    return Math.max(0.1, Math.min(1.0, confidence));
   }
 
   /**
