@@ -13,16 +13,11 @@ export class LocalGitService implements IGitService {
   private localDiffService: LocalDiffService;
 
   constructor(anthropicApiKey: string, diffModeConfig?: DiffModeConfig) {
-    // Initialize AI analyzer for code analysis
     if (!anthropicApiKey) {
-      throw new Error('[LOCAL-GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
+      throw new Error('ANTHROPIC_API_KEY is required for AI code analysis');
     }
     this.aiAnalyzer = new AICodeAnalyzer(anthropicApiKey);
-    
-    // Initialize local diff service
     this.localDiffService = new LocalDiffService(diffModeConfig);
-    
-    const modeInfo = this.localDiffService.getCurrentMode();
   }
 
   /**
@@ -34,7 +29,6 @@ export class LocalGitService implements IGitService {
     const changedFiles = await this.localDiffService.getChangedFiles();
 
     if (changedFiles.length === 0) {
-      console.log('[LOCAL-GIT-SERVICE] No changed files to analyze');
       return [];
     }
 
@@ -48,23 +42,12 @@ export class LocalGitService implements IGitService {
           : (file.status as 'added' | 'modified' | 'renamed'),
     }));
 
-    console.log(
-      `[LOCAL-GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`
-    );
 
     // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
     const codeChanges =
       await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
 
-    console.log(
-      `[LOCAL-GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`
-    );
 
-    // Log cache statistics
-    const cacheStats = this.aiAnalyzer.getCacheStats();
-    console.log(
-      `[LOCAL-GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`
-    );
 
     return codeChanges;
   }
@@ -81,8 +64,6 @@ export class LocalGitService implements IGitService {
    * Always returns a dev mode context since we're not dealing with real PRs
    */
   async getPullRequestContext(): Promise<PullRequestContext | null> {
-    console.log('[LOCAL-GIT-SERVICE] Creating synthetic PR context for local testing');
-    
     const modeInfo = this.localDiffService.getCurrentMode();
     
     return {

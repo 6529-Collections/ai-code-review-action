@@ -30294,11 +30294,9 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
     }
     shouldIncludeFile(filename) {
         const isExcluded = UncommittedMode.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        console.log(`[UNCOMMITTED-MODE] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
         return !isExcluded;
     }
     async getChangedFiles() {
-        console.log('[UNCOMMITTED-MODE] Getting uncommitted changes...');
         const files = [];
         // Get staged files
         const stagedFiles = await this.getStagedFiles();
@@ -30312,15 +30310,14 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
         // Remove duplicates and filter
         const uniqueFiles = this.deduplicateFiles(files);
         const filteredFiles = uniqueFiles.filter(file => this.shouldIncludeFile(file.filename));
-        console.log(`[UNCOMMITTED-MODE] Found ${filteredFiles.length} uncommitted files for analysis`);
         return filteredFiles;
     }
     async getDiffContent() {
-        console.log('[UNCOMMITTED-MODE] Getting full diff content...');
         let diffOutput = '';
         try {
             // Get staged changes
             await exec.exec('git', ['diff', '--cached'], {
+                silent: true,
                 listeners: {
                     stdout: (data) => {
                         diffOutput += data.toString();
@@ -30329,6 +30326,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
             });
             // Get unstaged changes
             await exec.exec('git', ['diff'], {
+                silent: true,
                 listeners: {
                     stdout: (data) => {
                         diffOutput += data.toString();
@@ -30346,6 +30344,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
         let fileList = '';
         try {
             await exec.exec('git', ['diff', '--cached', '--name-status'], {
+                silent: true,
                 listeners: {
                     stdout: (data) => {
                         fileList += data.toString();
@@ -30354,7 +30353,6 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
             });
         }
         catch (error) {
-            console.warn('[UNCOMMITTED-MODE] No staged files found');
             return [];
         }
         const fileLines = fileList.trim().split('\n').filter(line => line.trim());
@@ -30373,6 +30371,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
         let fileList = '';
         try {
             await exec.exec('git', ['diff', '--name-status'], {
+                silent: true,
                 listeners: {
                     stdout: (data) => {
                         fileList += data.toString();
@@ -30381,7 +30380,6 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
             });
         }
         catch (error) {
-            console.warn('[UNCOMMITTED-MODE] No unstaged files found');
             return [];
         }
         const fileLines = fileList.trim().split('\n').filter(line => line.trim());
@@ -30400,6 +30398,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
         let fileList = '';
         try {
             await exec.exec('git', ['ls-files', '--others', '--exclude-standard'], {
+                silent: true,
                 listeners: {
                     stdout: (data) => {
                         fileList += data.toString();
@@ -30408,7 +30407,6 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
             });
         }
         catch (error) {
-            console.warn('[UNCOMMITTED-MODE] No untracked files found');
             return [];
         }
         const fileLines = fileList.trim().split('\n').filter(line => line.trim());
@@ -30432,7 +30430,6 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
             };
         }
         catch (error) {
-            console.warn(`[UNCOMMITTED-MODE] Failed to process file ${filename}:`, error);
             return null;
         }
     }
@@ -30443,6 +30440,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
                 ? ['diff', '--cached', '--', filename]
                 : ['diff', '--', filename];
             await exec.exec('git', diffArgs, {
+                silent: true,
                 listeners: {
                     stdout: (data) => {
                         patch += data.toString();
@@ -30455,6 +30453,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
             if (!isStaged) {
                 try {
                     await exec.exec('git', ['diff', '--no-index', '/dev/null', filename], {
+                        silent: true,
                         listeners: {
                             stdout: (data) => {
                                 patch += data.toString();
@@ -30463,7 +30462,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
                     });
                 }
                 catch (untrackedError) {
-                    console.warn(`[UNCOMMITTED-MODE] Could not get patch for ${filename}`);
+                    // Ignore untracked file patch errors
                 }
             }
         }
@@ -30534,33 +30533,18 @@ class LocalDiffService {
     constructor(modeConfig) {
         const config = modeConfig || diff_modes_1.DEFAULT_DIFF_MODE_CONFIG;
         this.mode = this.createMode(config);
-        console.log(`[LOCAL-DIFF-SERVICE] Initialized with mode: ${this.mode.getName()}`);
-        console.log(`[LOCAL-DIFF-SERVICE] ${this.mode.getDescription()}`);
     }
     /**
      * Get changed files using the configured diff mode
      */
     async getChangedFiles() {
-        console.log(`[LOCAL-DIFF-SERVICE] Getting changed files using ${this.mode.getName()} mode`);
-        const files = await this.mode.getChangedFiles();
-        console.log(`[LOCAL-DIFF-SERVICE] Found ${files.length} changed files`);
-        if (files.length === 0) {
-            console.log('[LOCAL-DIFF-SERVICE] No changes found - returning empty result');
-        }
-        else {
-            const fileNames = files.map(f => f.filename).join(', ');
-            console.log(`[LOCAL-DIFF-SERVICE] Files: ${fileNames}`);
-        }
-        return files;
+        return await this.mode.getChangedFiles();
     }
     /**
      * Get full diff content using the configured diff mode
      */
     async getDiffContent() {
-        console.log(`[LOCAL-DIFF-SERVICE] Getting diff content using ${this.mode.getName()} mode`);
-        const content = await this.mode.getDiffContent();
-        console.log(`[LOCAL-DIFF-SERVICE] Diff content length: ${content.length} characters`);
-        return content;
+        return await this.mode.getDiffContent();
     }
     /**
      * Get the current mode information
@@ -30586,7 +30570,6 @@ class LocalDiffService {
             // case DiffModeType.BRANCH:
             //   return new BranchMode(config.baseBranch || 'main');
             default:
-                console.warn(`[LOCAL-DIFF-SERVICE] Unknown diff mode: ${config.mode}, falling back to uncommitted`);
                 return new modes_1.UncommittedMode();
         }
     }
@@ -30611,14 +30594,11 @@ const local_diff_service_1 = __nccwpck_require__(3836);
  */
 class LocalGitService {
     constructor(anthropicApiKey, diffModeConfig) {
-        // Initialize AI analyzer for code analysis
         if (!anthropicApiKey) {
-            throw new Error('[LOCAL-GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
+            throw new Error('ANTHROPIC_API_KEY is required for AI code analysis');
         }
         this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(anthropicApiKey);
-        // Initialize local diff service
         this.localDiffService = new local_diff_service_1.LocalDiffService(diffModeConfig);
-        const modeInfo = this.localDiffService.getCurrentMode();
     }
     /**
      * Get enhanced changed files with AI code analysis for local testing
@@ -30627,7 +30607,6 @@ class LocalGitService {
         // Get changed files using local diff service
         const changedFiles = await this.localDiffService.getChangedFiles();
         if (changedFiles.length === 0) {
-            console.log('[LOCAL-GIT-SERVICE] No changed files to analyze');
             return [];
         }
         // Prepare files for concurrent AI analysis
@@ -30638,13 +30617,8 @@ class LocalGitService {
                 ? 'deleted'
                 : file.status,
         }));
-        console.log(`[LOCAL-GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
         // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
         const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
-        console.log(`[LOCAL-GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
-        // Log cache statistics
-        const cacheStats = this.aiAnalyzer.getCacheStats();
-        console.log(`[LOCAL-GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
         return codeChanges;
     }
     /**
@@ -30658,7 +30632,6 @@ class LocalGitService {
      * Always returns a dev mode context since we're not dealing with real PRs
      */
     async getPullRequestContext() {
-        console.log('[LOCAL-GIT-SERVICE] Creating synthetic PR context for local testing');
         const modeInfo = this.localDiffService.getCurrentMode();
         return {
             number: 0, // Synthetic PR number
@@ -30738,9 +30711,6 @@ class OutputSaver {
      * Save analysis results to disk with timestamp and metadata
      */
     static async saveAnalysis(themes, summary, rawAnalysis, mode) {
-        console.log(`[OUTPUT-SAVER-DEBUG] ACT env: ${process.env.ACT}`);
-        console.log(`[OUTPUT-SAVER-DEBUG] OUTPUT_DIR: ${this.OUTPUT_DIR}`);
-        console.log(`[OUTPUT-SAVER-DEBUG] LOCAL_DIR: ${this.LOCAL_DIR}`);
         // Ensure output directory exists
         await this.ensureDirectoryExists();
         // Generate metadata
@@ -30761,6 +30731,25 @@ class OutputSaver {
         fs.writeFileSync(filepath, jsonContent, 'utf8');
         console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);
         console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);
+        // Also save a copy to multiple locations for ACT debugging
+        if (process.env.ACT === 'true') {
+            // Try multiple potential mount points
+            const debugPaths = [
+                `/github/workspace/${filename}`,
+                `/tmp/${filename}`,
+                `/github/workspace/test-output/${filename}`,
+                `/var/tmp/${filename}`
+            ];
+            for (const debugPath of debugPaths) {
+                try {
+                    fs.writeFileSync(debugPath, jsonContent, 'utf8');
+                    console.log(`[OUTPUT-SAVER] Debug copy saved to: ${debugPath}`);
+                }
+                catch (error) {
+                    // Try next path
+                }
+            }
+        }
         return filepath;
     }
     /**
@@ -30841,12 +30830,11 @@ class OutputSaver {
         // Try to get git info
         try {
             const { execSync } = __nccwpck_require__(5317);
-            metadata.gitBranch = execSync('git branch --show-current', { encoding: 'utf8' }).trim();
-            metadata.gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim().substring(0, 8);
+            metadata.gitBranch = execSync('git branch --show-current', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+            metadata.gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().substring(0, 8);
         }
         catch (error) {
             // Git info is optional
-            console.debug('[OUTPUT-SAVER] Could not get git info:', error);
         }
         return metadata;
     }
@@ -30870,10 +30858,10 @@ class OutputSaver {
 }
 exports.OutputSaver = OutputSaver;
 OutputSaver.OUTPUT_DIR = process.env.ACT === 'true'
-    ? '/github/workspace/output'
+    ? '/github/workspace/test-output'
     : '.ai-code-review';
 OutputSaver.LOCAL_DIR = process.env.ACT === 'true'
-    ? '/github/workspace/output'
+    ? '/github/workspace/test-output'
     : path.join(OutputSaver.OUTPUT_DIR, 'local-results');
 
 
@@ -35052,7 +35040,6 @@ class ThemeService {
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
             // Parallel processing: analyze all chunks concurrently, then update context sequentially
-            console.log(`[THEME-SERVICE] Starting concurrent analysis of ${chunks.length} chunks`);
             const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(chunks, (chunk) => {
                 const codeChange = codeChangeMap.get(chunk.filename);
                 return contextManager.analyzeChunkOnly(chunk, codeChange);
@@ -35061,10 +35048,10 @@ class ThemeService {
                 maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
                 enableLogging: false,
                 onProgress: (completed, total) => {
-                    console.log(`[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`);
+                    // Progress tracking without logging
                 },
                 onError: (error, chunk, retryCount) => {
-                    console.warn(`[THEME-SERVICE] Retry ${retryCount} for chunk ${chunk.filename}: ${error.message}`);
+                    // Error handling without logging
                 },
             });
             // Transform results to handle ConcurrencyManager's mixed return types
@@ -35074,7 +35061,6 @@ class ThemeService {
                 if (result && typeof result === 'object' && 'error' in result) {
                     // Convert ConcurrencyManager error format to ChunkAnalysisResult format
                     const errorResult = result;
-                    console.warn(`[THEME-SERVICE] Chunk analysis failed for ${errorResult.item.filename}: ${errorResult.error.message}`);
                     analysisResults.push({
                         chunk: errorResult.item,
                         analysis: {
@@ -35092,13 +35078,11 @@ class ThemeService {
                     analysisResults.push(result);
                 }
             }
-            console.log(`[THEME-SERVICE] Analysis completed: ${analysisResults.length} chunks processed`);
             // Sequential context updates to maintain thread safety
             contextManager.processBatchResults(analysisResults, codeChangeMap);
             contextManager.setProcessingState('complete');
             const originalThemes = contextManager.getRootThemes();
             // Pipeline optimization: Overlap consolidation and expansion preparation
-            console.log('[THEME-SERVICE] Starting pipeline optimization with overlapped phases');
             performance_tracker_1.performanceTracker.endTiming('Code Analysis');
             performance_tracker_1.performanceTracker.startTiming('Theme Consolidation');
             const consolidationStartTime = Date.now();
@@ -35114,26 +35098,21 @@ class ThemeService {
             // Track consolidation effectiveness
             performance_tracker_1.performanceTracker.trackEffectiveness('Theme Consolidation', originalThemes.length, consolidatedThemes.length, consolidationTime);
             performance_tracker_1.performanceTracker.endTiming('Theme Consolidation');
-            console.log(`[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`);
             // Apply hierarchical expansion if enabled
             let expansionTime = 0;
             let expansionStats = undefined;
             if (this.expansionEnabled && consolidatedThemes.length > 0) {
                 performance_tracker_1.performanceTracker.startTiming('Theme Expansion');
-                console.log('[THEME-SERVICE] Starting AI-driven hierarchical expansion');
                 const expansionStartTime = Date.now();
                 try {
                     // Expand themes hierarchically using pre-identified candidates for optimization
-                    console.log(`[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`);
                     const beforeExpansionCount = consolidatedThemes.length;
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
-                    console.log(`[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`);
                     // Apply cross-level deduplication
                     const minThemesForCrossLevel = parseInt(process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20');
                     if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
                         expandedThemes.length >= minThemesForCrossLevel) {
                         performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
-                        console.log('[THEME-SERVICE] Running cross-level deduplication...');
                         const beforeDedup = expandedThemes.length;
                         const dedupStartTime = Date.now();
                         await this.hierarchicalSimilarityService.deduplicateHierarchy(expandedThemes);
@@ -35141,23 +35120,15 @@ class ThemeService {
                         performance_tracker_1.performanceTracker.trackEffectiveness('Cross-Level Deduplication', beforeDedup, expandedThemes.length, Date.now() - dedupStartTime);
                         performance_tracker_1.performanceTracker.endTiming('Cross-Level Deduplication');
                     }
-                    else if (process.env.SKIP_CROSS_LEVEL_DEDUP === 'true') {
-                        console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
-                    }
-                    else {
-                        console.log(`[THEME-SERVICE] Skipping cross-level deduplication: ${expandedThemes.length} themes < minimum ${minThemesForCrossLevel}`);
-                    }
                     // Track expansion effectiveness
                     performance_tracker_1.performanceTracker.trackEffectiveness('Theme Expansion', beforeExpansionCount, expandedThemes.length, Date.now() - expansionStartTime);
                     // Update consolidated themes with expanded and deduplicated results
                     consolidatedThemes = expandedThemes; // For now, use expanded themes directly
-                    console.log(`[DEBUG-THEME-SERVICE] Final themes after processing: ${consolidatedThemes.length}`);
                     // Calculate expansion statistics
                     expansionStats = this.calculateExpansionStats(consolidatedThemes);
-                    console.log(`[THEME-SERVICE] Expansion complete: ${expansionStats.expandedThemes} themes expanded, max depth: ${expansionStats.maxDepth}`);
                 }
                 catch (error) {
-                    console.warn('[THEME-SERVICE] Expansion failed, using consolidated themes:', error);
+                    // Expansion failed, continue with consolidated themes
                 }
                 expansionTime = Date.now() - expansionStartTime;
                 performance_tracker_1.performanceTracker.endTiming('Theme Expansion');
@@ -35291,7 +35262,6 @@ class ThemeService {
      * PRD: "Progressive rendering of deep trees" and "Lazy expansion for large PRs"
      */
     async identifyExpansionCandidates(themes) {
-        console.log(`[THEME-SERVICE] Identifying expansion candidates for ${themes.length} themes`);
         const candidates = [];
         // Quick heuristic-based candidate identification (fast, runs in parallel with consolidation)
         for (const theme of themes) {
@@ -35299,7 +35269,6 @@ class ThemeService {
                 candidates.push(theme);
             }
         }
-        console.log(`[THEME-SERVICE] Identified ${candidates.length} expansion candidates`);
         return candidates;
     }
     /**

@@ -12,42 +12,20 @@ export class LocalDiffService {
   constructor(modeConfig?: DiffModeConfig) {
     const config = modeConfig || DEFAULT_DIFF_MODE_CONFIG;
     this.mode = this.createMode(config);
-    
-    console.log(`[LOCAL-DIFF-SERVICE] Initialized with mode: ${this.mode.getName()}`);
-    console.log(`[LOCAL-DIFF-SERVICE] ${this.mode.getDescription()}`);
   }
 
   /**
    * Get changed files using the configured diff mode
    */
   async getChangedFiles(): Promise<ChangedFile[]> {
-    console.log(`[LOCAL-DIFF-SERVICE] Getting changed files using ${this.mode.getName()} mode`);
-    
-    const files = await this.mode.getChangedFiles();
-    
-    console.log(`[LOCAL-DIFF-SERVICE] Found ${files.length} changed files`);
-    
-    if (files.length === 0) {
-      console.log('[LOCAL-DIFF-SERVICE] No changes found - returning empty result');
-    } else {
-      const fileNames = files.map(f => f.filename).join(', ');
-      console.log(`[LOCAL-DIFF-SERVICE] Files: ${fileNames}`);
-    }
-    
-    return files;
+    return await this.mode.getChangedFiles();
   }
 
   /**
    * Get full diff content using the configured diff mode
    */
   async getDiffContent(): Promise<string> {
-    console.log(`[LOCAL-DIFF-SERVICE] Getting diff content using ${this.mode.getName()} mode`);
-    
-    const content = await this.mode.getDiffContent();
-    
-    console.log(`[LOCAL-DIFF-SERVICE] Diff content length: ${content.length} characters`);
-    
-    return content;
+    return await this.mode.getDiffContent();
   }
 
   /**
@@ -77,7 +55,6 @@ export class LocalDiffService {
       //   return new BranchMode(config.baseBranch || 'main');
       
       default:
-        console.warn(`[LOCAL-DIFF-SERVICE] Unknown diff mode: ${config.mode}, falling back to uncommitted`);
         return new UncommittedMode();
     }
   }

@@ -24,10 +24,10 @@ export interface SavedAnalysis {
  */
 export class OutputSaver {
   private static readonly OUTPUT_DIR = process.env.ACT === 'true' 
-    ? '/github/workspace/output'
+    ? '/github/workspace/test-output'
     : '.ai-code-review';
   private static readonly LOCAL_DIR = process.env.ACT === 'true'
-    ? '/github/workspace/output'
+    ? '/github/workspace/test-output'
     : path.join(OutputSaver.OUTPUT_DIR, 'local-results');
 
   /**
@@ -39,9 +39,6 @@ export class OutputSaver {
     rawAnalysis: ThemeAnalysisResult,
     mode: string
   ): Promise<string> {
-    console.log(`[OUTPUT-SAVER-DEBUG] ACT env: ${process.env.ACT}`);
-    console.log(`[OUTPUT-SAVER-DEBUG] OUTPUT_DIR: ${this.OUTPUT_DIR}`);
-    console.log(`[OUTPUT-SAVER-DEBUG] LOCAL_DIR: ${this.LOCAL_DIR}`);
     
     // Ensure output directory exists
     await this.ensureDirectoryExists();
@@ -68,6 +65,26 @@ export class OutputSaver {
 
     console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);
     console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);
+    
+    // Also save a copy to multiple locations for ACT debugging
+    if (process.env.ACT === 'true') {
+      // Try multiple potential mount points
+      const debugPaths = [
+        `/github/workspace/${filename}`,
+        `/tmp/${filename}`,
+        `/github/workspace/test-output/${filename}`,
+        `/var/tmp/${filename}`
+      ];
+      
+      for (const debugPath of debugPaths) {
+        try {
+          fs.writeFileSync(debugPath, jsonContent, 'utf8');
+          console.log(`[OUTPUT-SAVER] Debug copy saved to: ${debugPath}`);
+        } catch (error) {
+          // Try next path
+        }
+      }
+    }
 
     return filepath;
   }
@@ -164,11 +181,10 @@ export class OutputSaver {
     // Try to get git info
     try {
       const { execSync } = require('child_process');
-      metadata.gitBranch = execSync('git branch --show-current', { encoding: 'utf8' }).trim();
-      metadata.gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim().substring(0, 8);
+      metadata.gitBranch = execSync('git branch --show-current', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+      metadata.gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().substring(0, 8);
     } catch (error) {
       // Git info is optional
-      console.debug('[OUTPUT-SAVER] Could not get git info:', error);
     }
 
     return metadata;

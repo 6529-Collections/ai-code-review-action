@@ -537,9 +537,6 @@ export class ThemeService {
       const chunks = chunkProcessor.splitChangedFiles(changedFiles);
 
       // Parallel processing: analyze all chunks concurrently, then update context sequentially
-      console.log(
-        `[THEME-SERVICE] Starting concurrent analysis of ${chunks.length} chunks`
-      );
 
       const results = await ConcurrencyManager.processConcurrentlyWithLimit(
         chunks,
@@ -552,14 +549,10 @@ export class ThemeService {
           maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
           enableLogging: false,
           onProgress: (completed, total) => {
-            console.log(
-              `[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`
-            );
+            // Progress tracking without logging
           },
           onError: (error, chunk, retryCount) => {
-            console.warn(
-              `[THEME-SERVICE] Retry ${retryCount} for chunk ${chunk.filename}: ${error.message}`
-            );
+            // Error handling without logging
           },
         }
       );
@@ -571,9 +564,6 @@ export class ThemeService {
         if (result && typeof result === 'object' && 'error' in result) {
           // Convert ConcurrencyManager error format to ChunkAnalysisResult format
           const errorResult = result as { error: Error; item: CodeChunk };
-          console.warn(
-            `[THEME-SERVICE] Chunk analysis failed for ${errorResult.item.filename}: ${errorResult.error.message}`
-          );
           analysisResults.push({
             chunk: errorResult.item,
             analysis: {
@@ -591,9 +581,6 @@ export class ThemeService {
         }
       }
 
-      console.log(
-        `[THEME-SERVICE] Analysis completed: ${analysisResults.length} chunks processed`
-      );
 
       // Sequential context updates to maintain thread safety
       contextManager.processBatchResults(analysisResults, codeChangeMap);
@@ -603,9 +590,6 @@ export class ThemeService {
       const originalThemes = contextManager.getRootThemes();
 
       // Pipeline optimization: Overlap consolidation and expansion preparation
-      console.log(
-        '[THEME-SERVICE] Starting pipeline optimization with overlapped phases'
-      );
       performanceTracker.endTiming('Code Analysis');
 
       performanceTracker.startTiming('Theme Consolidation');
@@ -635,9 +619,6 @@ export class ThemeService {
 
       performanceTracker.endTiming('Theme Consolidation');
 
-      console.log(
-        `[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`
-      );
 
       // Apply hierarchical expansion if enabled
       let expansionTime = 0;
@@ -645,24 +626,15 @@ export class ThemeService {
 
       if (this.expansionEnabled && consolidatedThemes.length > 0) {
         performanceTracker.startTiming('Theme Expansion');
-        console.log(
-          '[THEME-SERVICE] Starting AI-driven hierarchical expansion'
-        );
         const expansionStartTime = Date.now();
 
         try {
           // Expand themes hierarchically using pre-identified candidates for optimization
-          console.log(
-            `[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`
-          );
           const beforeExpansionCount = consolidatedThemes.length;
           const expandedThemes =
             await this.expansionService.expandThemesHierarchically(
               consolidatedThemes
             );
-          console.log(
-            `[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`
-          );
 
           // Apply cross-level deduplication
           const minThemesForCrossLevel = parseInt(
@@ -673,7 +645,6 @@ export class ThemeService {
             expandedThemes.length >= minThemesForCrossLevel
           ) {
             performanceTracker.startTiming('Cross-Level Deduplication');
-            console.log('[THEME-SERVICE] Running cross-level deduplication...');
             const beforeDedup = expandedThemes.length;
             const dedupStartTime = Date.now();
 
@@ -690,14 +661,6 @@ export class ThemeService {
             );
 
             performanceTracker.endTiming('Cross-Level Deduplication');
-          } else if (process.env.SKIP_CROSS_LEVEL_DEDUP === 'true') {
-            console.log(
-              '[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)'
-            );
-          } else {
-            console.log(
-              `[THEME-SERVICE] Skipping cross-level deduplication: ${expandedThemes.length} themes < minimum ${minThemesForCrossLevel}`
-            );
           }
 
           // Track expansion effectiveness
@@ -710,21 +673,12 @@ export class ThemeService {
 
           // Update consolidated themes with expanded and deduplicated results
           consolidatedThemes = expandedThemes; // For now, use expanded themes directly
-          console.log(
-            `[DEBUG-THEME-SERVICE] Final themes after processing: ${consolidatedThemes.length}`
-          );
 
           // Calculate expansion statistics
           expansionStats = this.calculateExpansionStats(consolidatedThemes);
 
-          console.log(
-            `[THEME-SERVICE] Expansion complete: ${expansionStats.expandedThemes} themes expanded, max depth: ${expansionStats.maxDepth}`
-          );
         } catch (error) {
-          console.warn(
-            '[THEME-SERVICE] Expansion failed, using consolidated themes:',
-            error
-          );
+          // Expansion failed, continue with consolidated themes
         }
 
         expansionTime = Date.now() - expansionStartTime;
@@ -893,10 +847,6 @@ export class ThemeService {
    * PRD: "Progressive rendering of deep trees" and "Lazy expansion for large PRs"
    */
   private async identifyExpansionCandidates(themes: Theme[]): Promise<Theme[]> {
-    console.log(
-      `[THEME-SERVICE] Identifying expansion candidates for ${themes.length} themes`
-    );
-
     const candidates: Theme[] = [];
 
     // Quick heuristic-based candidate identification (fast, runs in parallel with consolidation)
@@ -906,9 +856,6 @@ export class ThemeService {
       }
     }
 
-    console.log(
-      `[THEME-SERVICE] Identified ${candidates.length} expansion candidates`
-    );
     return candidates;
   }
 

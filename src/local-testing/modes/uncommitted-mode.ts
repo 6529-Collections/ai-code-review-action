@@ -31,14 +31,10 @@ export class UncommittedMode extends BaseDiffMode {
     const isExcluded = UncommittedMode.EXCLUDED_PATTERNS.some((pattern) =>
       pattern.test(filename)
     );
-    console.log(
-      `[UNCOMMITTED-MODE] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`
-    );
     return !isExcluded;
   }
 
   async getChangedFiles(): Promise<ChangedFile[]> {
-    console.log('[UNCOMMITTED-MODE] Getting uncommitted changes...');
     
     const files: ChangedFile[] = [];
     
@@ -58,21 +54,18 @@ export class UncommittedMode extends BaseDiffMode {
     const uniqueFiles = this.deduplicateFiles(files);
     const filteredFiles = uniqueFiles.filter(file => this.shouldIncludeFile(file.filename));
     
-    console.log(
-      `[UNCOMMITTED-MODE] Found ${filteredFiles.length} uncommitted files for analysis`
-    );
     
     return filteredFiles;
   }
 
   async getDiffContent(): Promise<string> {
-    console.log('[UNCOMMITTED-MODE] Getting full diff content...');
     
     let diffOutput = '';
     
     try {
       // Get staged changes
       await exec.exec('git', ['diff', '--cached'], {
+        silent: true,
         listeners: {
           stdout: (data: Buffer) => {
             diffOutput += data.toString();
@@ -82,6 +75,7 @@ export class UncommittedMode extends BaseDiffMode {
       
       // Get unstaged changes
       await exec.exec('git', ['diff'], {
+        silent: true,
         listeners: {
           stdout: (data: Buffer) => {
             diffOutput += data.toString();
@@ -102,6 +96,7 @@ export class UncommittedMode extends BaseDiffMode {
     
     try {
       await exec.exec('git', ['diff', '--cached', '--name-status'], {
+        silent: true,
         listeners: {
           stdout: (data: Buffer) => {
             fileList += data.toString();
@@ -109,7 +104,6 @@ export class UncommittedMode extends BaseDiffMode {
         },
       });
     } catch (error) {
-      console.warn('[UNCOMMITTED-MODE] No staged files found');
       return [];
     }
     
@@ -132,6 +126,7 @@ export class UncommittedMode extends BaseDiffMode {
     
     try {
       await exec.exec('git', ['diff', '--name-status'], {
+        silent: true,
         listeners: {
           stdout: (data: Buffer) => {
             fileList += data.toString();
@@ -139,7 +134,6 @@ export class UncommittedMode extends BaseDiffMode {
         },
       });
     } catch (error) {
-      console.warn('[UNCOMMITTED-MODE] No unstaged files found');
       return [];
     }
     
@@ -162,6 +156,7 @@ export class UncommittedMode extends BaseDiffMode {
     
     try {
       await exec.exec('git', ['ls-files', '--others', '--exclude-standard'], {
+        silent: true,
         listeners: {
           stdout: (data: Buffer) => {
             fileList += data.toString();
@@ -169,7 +164,6 @@ export class UncommittedMode extends BaseDiffMode {
         },
       });
     } catch (error) {
-      console.warn('[UNCOMMITTED-MODE] No untracked files found');
       return [];
     }
     
@@ -201,7 +195,6 @@ export class UncommittedMode extends BaseDiffMode {
         patch,
       };
     } catch (error) {
-      console.warn(`[UNCOMMITTED-MODE] Failed to process file ${filename}:`, error);
       return null;
     }
   }
@@ -215,6 +208,7 @@ export class UncommittedMode extends BaseDiffMode {
         : ['diff', '--', filename];
         
       await exec.exec('git', diffArgs, {
+        silent: true,
         listeners: {
           stdout: (data: Buffer) => {
             patch += data.toString();
@@ -226,6 +220,7 @@ export class UncommittedMode extends BaseDiffMode {
       if (!isStaged) {
         try {
           await exec.exec('git', ['diff', '--no-index', '/dev/null', filename], {
+            silent: true,
             listeners: {
               stdout: (data: Buffer) => {
                 patch += data.toString();
@@ -233,7 +228,7 @@ export class UncommittedMode extends BaseDiffMode {
             },
           });
         } catch (untrackedError) {
-          console.warn(`[UNCOMMITTED-MODE] Could not get patch for ${filename}`);
+          // Ignore untracked file patch errors
         }
       }
     }
