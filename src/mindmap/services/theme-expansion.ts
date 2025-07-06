@@ -2,10 +2,6 @@ import { ConsolidatedTheme } from '../types/similarity-types';
 import { GenericCache } from '@/shared/cache/generic-cache';
 import { ClaudeClient } from '@/shared/utils/claude-client';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
-import {
-  ConcurrencyManager,
-  ConcurrencyOptions,
-} from '@/shared/utils/concurrency-manager';
 import { SecureFileNamer } from '../utils/secure-file-namer';
 import {
   AIExpansionDecisionService,
@@ -16,24 +12,12 @@ import { logger } from '@/shared/utils/logger';
 // Configuration for theme expansion
 export interface ExpansionConfig {
   maxDepth: number; // Maximum hierarchy depth - set high to allow natural stopping
-  concurrencyLimit: number; // Maximum concurrent operations (default: 5)
-  maxRetries: number; // Maximum retry attempts (default: 3)
-  retryDelay: number; // Base retry delay in ms (default: 1000)
-  retryBackoffMultiplier: number; // Backoff multiplier (default: 2)
-  enableProgressLogging: boolean; // Enable progress logging (default: true)
-  dynamicConcurrency: boolean; // Enable dynamic concurrency (default: true)
-  enableJitter: boolean; // Enable jitter in retries (default: true)
+  enableProgressLogging: boolean; // Enable progress logging (default: false)
 }
 
 export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
   maxDepth: 20, // Allow very deep natural expansion
-  concurrencyLimit: 5,
-  maxRetries: 3,
-  retryDelay: 1000,
-  retryBackoffMultiplier: 2,
   enableProgressLogging: false,
-  dynamicConcurrency: true,
-  enableJitter: true,
 };
 
 export interface ExpansionCandidate {
@@ -114,39 +98,9 @@ export class ThemeExpansionService {
   }
 
   /**
-   * Process items concurrently with limit and retry logic
+   * Process items sequentially with retry logic
+   * ClaudeClient handles rate limiting and queuing
    */
-  private async processConcurrentlyWithLimit<T, R>(
-    items: T[],
-    processor: (item: T) => Promise<R>,
-    options?: {
-      concurrencyLimit?: number;
-      maxRetries?: number;
-      retryDelay?: number;
-      onProgress?: (completed: number, total: number) => void;
-      onError?: (error: Error, item: T, retryCount: number) => void;
-    }
-  ): Promise<Array<R | { error: Error; item: T }>> {
-    const concurrencyOptions: ConcurrencyOptions<T> = {
-      concurrencyLimit:
-        options?.concurrencyLimit || this.config.concurrencyLimit,
-      maxRetries: options?.maxRetries || this.config.maxRetries,
-      retryDelay: options?.retryDelay || this.config.retryDelay,
-      retryBackoffMultiplier: this.config.retryBackoffMultiplier,
-      onProgress:
-        options?.onProgress && this.config.enableProgressLogging
-          ? options.onProgress
-          : undefined,
-      onError: options?.onError,
-      enableLogging: this.config.enableProgressLogging,
-    };
-
-    return ConcurrencyManager.processConcurrentlyWithLimit(
-      items,
-      processor,
-      concurrencyOptions
-    );
-  }
 
   /**
    * Main entry point for expanding themes hierarchically
@@ -170,25 +124,19 @@ export class ThemeExpansionService {
     // Reset effectiveness tracking
     this.resetEffectiveness();
 
-    // Process themes with concurrency limit and retry logic
-    const results = await this.processConcurrentlyWithLimit(
-      consolidatedThemes,
-      (theme) => this.expandThemeRecursively(theme, 0),
-      {
-        onProgress: (completed, total) => {
-          if (this.config.enableProgressLogging) {
-            console.log(
-              `[THEME-EXPANSION] Progress: ${completed}/${total} root themes expanded`
-            );
-          }
-        },
-        onError: (error, theme, retryCount) => {
-          console.warn(
-            `[THEME-EXPANSION] Retry ${retryCount} for theme "${theme.name}": ${error.message}`
-          );
-        },
+    // Process all themes concurrently - let ClaudeClient handle rate limiting
+    console.log(`[THEME-EXPANSION] Processing all ${consolidatedThemes.length} themes concurrently`);
+    
+    const themePromises = consolidatedThemes.map(async (theme) => {
+      try {
+        return await this.expandThemeRecursively(theme, 0);
+      } catch (error) {
+        console.warn(`[THEME-EXPANSION] Failed to expand theme "${theme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return { error: error instanceof Error ? error : new Error(String(error)), item: theme };
       }
-    );
+    });
+    
+    const results = await Promise.all(themePromises);
 
     // Separate successful and failed results
     const expandedThemes: ConsolidatedTheme[] = [];
@@ -302,20 +250,17 @@ export class ThemeExpansionService {
     );
     if (!expansionCandidate) {
       // Still process existing child themes recursively
-      const childResults = await this.processConcurrentlyWithLimit(
-        theme.childThemes,
-        (child: ConsolidatedTheme) =>
-          this.expandThemeRecursively(child, currentDepth + 1, theme),
-        {
-          onProgress: (completed, total) => {
-            if (this.config.enableProgressLogging && total > 1) {
-              console.log(
-                `[THEME-EXPANSION] Child themes progress: ${completed}/${total} for "${theme.name}"`
-              );
-            }
-          },
+      // Process child themes concurrently - let ClaudeClient handle rate limiting
+      const childPromises = theme.childThemes.map(async (child) => {
+        try {
+          return await this.expandThemeRecursively(child, currentDepth + 1, theme);
+        } catch (error) {
+          console.warn(`[THEME-EXPANSION] Failed to expand child theme "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+          return { error: error instanceof Error ? error : new Error(String(error)), item: child };
         }
-      );
+      });
+      
+      const childResults = await Promise.all(childPromises);
 
       // Extract successful results, keep failed themes as fallback
       const expandedChildren: ConsolidatedTheme[] = [];
@@ -372,25 +317,21 @@ export class ThemeExpansionService {
     // Track successful expansion
     this.effectiveness.themesExpanded++;
 
-    // Recursively expand new sub-themes
-    const subThemeResults = await this.processConcurrentlyWithLimit(
-      result.subThemes,
-      (subTheme: ConsolidatedTheme) =>
-        this.expandThemeRecursively(
+    // Recursively expand new sub-themes concurrently
+    const subThemePromises = result.subThemes.map(async (subTheme) => {
+      try {
+        return await this.expandThemeRecursively(
           subTheme,
           currentDepth + 1,
           result.expandedTheme
-        ),
-      {
-        onProgress: (completed, total) => {
-          if (this.config.enableProgressLogging && total > 1) {
-            console.log(
-              `[THEME-EXPANSION] Sub-themes progress: ${completed}/${total} for "${theme.name}"`
-            );
-          }
-        },
+        );
+      } catch (error) {
+        console.warn(`[THEME-EXPANSION] Failed to expand sub-theme "${subTheme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return { error: error instanceof Error ? error : new Error(String(error)), item: subTheme };
       }
-    );
+    });
+    
+    const subThemeResults = await Promise.all(subThemePromises);
 
     // Extract successful sub-themes
     const expandedSubThemes: ConsolidatedTheme[] = [];
@@ -409,25 +350,21 @@ export class ThemeExpansionService {
     const expandedExistingChildren: ConsolidatedTheme[] = [];
 
     if (result.subThemes.length === 0) {
-      // Only process existing children if we didn't create new sub-themes
-      const existingChildResults = await this.processConcurrentlyWithLimit(
-        result.expandedTheme!.childThemes,
-        (child: ConsolidatedTheme) =>
-          this.expandThemeRecursively(
+      // Only process existing children if we didn't create new sub-themes concurrently
+      const existingChildPromises = result.expandedTheme!.childThemes.map(async (child) => {
+        try {
+          return await this.expandThemeRecursively(
             child,
             currentDepth + 1,
             result.expandedTheme
-          ),
-        {
-          onProgress: (completed, total) => {
-            if (this.config.enableProgressLogging && total > 1) {
-              console.log(
-                `[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`
-              );
-            }
-          },
+          );
+        } catch (error) {
+          console.warn(`[THEME-EXPANSION] Failed to expand existing child "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+          return { error: error instanceof Error ? error : new Error(String(error)), item: child };
         }
-      );
+      });
+      
+      const existingChildResults = await Promise.all(existingChildPromises);
 
       // Extract successful existing children
       for (const childResult of existingChildResults) {
@@ -668,37 +605,25 @@ export class ThemeExpansionService {
       batches.push(subThemes.slice(i, i + batchSize));
     }
 
-    // Process each batch with concurrency limit and context-aware settings
-    const deduplicationResults =
-      await ConcurrencyManager.processConcurrentlyWithLimit(
-        batches,
-        (batch) => this.deduplicateBatch(batch),
-        {
-          dynamicConcurrency: true,
-          context: 'theme_processing',
-          enableJitter: true,
-          enableLogging: this.config.enableProgressLogging,
-          onProgress: (completed, total) => {
-            if (this.config.enableProgressLogging && total > 1) {
-              console.log(
-                `[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches (batch size: ${batchSize})`
-              );
-            }
-          },
-        }
-      );
-
-    // Extract successful results
+    // Process each batch sequentially
+    // ClaudeClient handles rate limiting and queuing
     const successfulResults: ConsolidatedTheme[][][] = [];
-    for (const result of deduplicationResults) {
-      if (result && typeof result === 'object' && 'error' in result) {
+    
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      try {
+        const result = await this.deduplicateBatch(batch);
+        successfulResults.push(result);
+        
+        if (this.config.enableProgressLogging && batches.length > 1) {
+          console.log(
+            `[THEME-EXPANSION] Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`
+          );
+        }
+      } catch (error) {
         console.warn(
-          `[THEME-EXPANSION] Deduplication batch failed: ${(result as { error?: Error }).error?.message || 'Unknown error'}`
+          `[THEME-EXPANSION] Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`
         );
-        // For failed batches, we could return the original batch as fallback
-        // but for now, we'll skip failed batches
-      } else {
-        successfulResults.push(result as ConsolidatedTheme[][]);
       }
     }
 
@@ -852,7 +777,7 @@ CRITICAL: Respond with ONLY valid JSON.
 If no duplicates found, return: {"duplicateGroups": []}`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,
         'object',
@@ -963,7 +888,7 @@ CRITICAL: Respond with ONLY valid JSON.
 }`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,
         'object',
@@ -1085,7 +1010,7 @@ CRITICAL: Respond with ONLY valid JSON.
 }`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,
         'object',
@@ -1280,7 +1205,7 @@ Return JSON with specific sub-themes:
 }`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
 
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,

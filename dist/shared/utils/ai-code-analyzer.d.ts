@@ -53,7 +53,8 @@ export declare class AICodeAnalyzer {
      */
     processChangedFile(filename: string, diffPatch: string, changeType: 'added' | 'modified' | 'deleted' | 'renamed'): Promise<CodeChange>;
     /**
-     * Process multiple files concurrently using ConcurrencyManager
+     * Process multiple files in parallel batches
+     * ClaudeClient handles rate limiting and concurrency
      */
     processChangedFilesConcurrently(files: Array<{
         filename: string;

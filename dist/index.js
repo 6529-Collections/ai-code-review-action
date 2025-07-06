@@ -30617,7 +30617,7 @@ class LocalGitService {
                 ? 'deleted'
                 : file.status,
         }));
-        // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+        // Use AICodeAnalyzer for processing changed files
         const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
         return codeChanges;
     }
@@ -30850,7 +30850,6 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AIDomainAnalyzer = void 0;
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
-const concurrency_manager_1 = __nccwpck_require__(4482);
 const utils_1 = __nccwpck_require__(1798);
 /**
  * AI-driven business domain analyzer
@@ -30868,7 +30867,7 @@ class AIDomainAnalyzer {
     async classifyBusinessDomain(context, semanticDiff) {
         const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'domain-classification');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
                 'domain',
                 'userValue',
@@ -31029,7 +31028,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
     async analyzeMultiDomainChanges(contexts) {
         const prompt = this.buildMultiDomainAnalysisPrompt(contexts);
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'multi-domain-analysis');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
                 'primaryDomains',
             ]);
@@ -31042,35 +31041,29 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         }
         // Fallback: analyze each individually with concurrency control
         console.log(`[AI-DOMAIN] Fallback to individual analysis for ${contexts.length} contexts`);
-        const domains = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(contexts, async (ctx) => await this.classifyBusinessDomain(ctx), {
-            concurrencyLimit: 5,
-            maxRetries: 2,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                console.log(`[AI-DOMAIN] Individual analysis progress: ${completed}/${total}`);
-            },
-            onError: (error, ctx, retryCount) => {
-                console.warn(`[AI-DOMAIN] Retry ${retryCount} for context: ${error.message}`);
-            },
-        });
-        // Filter successful results and handle errors
-        const successfulDomains = [];
-        for (const result of domains) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback`);
-                // Add fallback domain for failed analysis
-                successfulDomains.push({
+        // Process all contexts concurrently - let ClaudeClient handle rate limiting
+        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+        console.log(`[AI-DOMAIN] Processing all ${contexts.length} contexts concurrently`);
+        const contextPromises = contexts.map(async (ctx) => {
+            try {
+                const result = await this.classifyBusinessDomain(ctx);
+                return result;
+            }
+            catch (error) {
+                console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                // Return fallback domain for failed analysis
+                return {
                     domain: 'System Enhancement',
                     userValue: 'Improve system functionality',
                     businessCapability: 'Enhance system capabilities',
                     confidence: 0.3,
                     reasoning: 'AI analysis failed - using fallback',
-                });
+                };
             }
-            else {
-                successfulDomains.push(result);
-            }
-        }
+        });
+        // Wait for all contexts to complete - ClaudeClient manages the 10 concurrent limit
+        const successfulDomains = await Promise.all(contextPromises);
+        console.log(`[AI-DOMAIN] All ${successfulDomains.length} contexts processed`);
         return {
             primaryDomains: successfulDomains,
             crossCuttingDomains: [],
@@ -31208,7 +31201,7 @@ class AIExpansionDecisionService {
      */
     async getAIDecision(prompt) {
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'expansion-decision');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'reasoning']);
             if (extractionResult.success) {
                 const data = extractionResult.data;
@@ -31444,207 +31437,6 @@ exports.AISimilarityService = AISimilarityService;
 
 /***/ }),
 
-/***/ 1174:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BatchProcessor = void 0;
-const json_extractor_1 = __nccwpck_require__(8168);
-const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(5584);
-class BatchProcessor {
-    constructor() {
-        this.batchSize = 8; // Process 8 theme pairs per AI batch call
-        this.batchFailures = 0; // Track consecutive batch failures
-    }
-    async processBatchSimilarity(pairs) {
-        const prompt = this.buildBatchSimilarityPrompt(pairs);
-        try {
-            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
-            let output = '';
-            try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                    silent: true,
-                    listeners: {
-                        stdout: (data) => {
-                            output += data.toString();
-                        },
-                    },
-                });
-                const results = this.parseBatchSimilarityResponse(output, pairs);
-                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
-                return results;
-            }
-            finally {
-                cleanup(); // Ensure file is cleaned up even if execution fails
-            }
-        }
-        catch (error) {
-            console.error('Batch AI similarity failed:', error);
-            throw error;
-        }
-    }
-    getAdaptiveBatchSize() {
-        return Math.max(2, this.batchSize - Math.floor(this.batchFailures / 2));
-    }
-    incrementFailures() {
-        this.batchFailures++;
-    }
-    decrementFailures() {
-        this.batchFailures = Math.max(0, this.batchFailures - 1);
-    }
-    getFailureCount() {
-        return this.batchFailures;
-    }
-    chunkArray(array, chunkSize) {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
-        }
-        return chunks;
-    }
-    buildBatchSimilarityPrompt(pairs) {
-        const pairDescriptions = pairs
-            .map((pair, index) => `Pair ${index + 1}: ID="${pair.id}"
-- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
-- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
-- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
-- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`)
-            .join('\n\n');
-        return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
-
-THEME PAIRS:
-${pairDescriptions}
-
-RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
-[
-${pairs
-            .map((pair, index) => `  {
-    "pairId": "${pair.id}",
-    "nameScore": 0.5,
-    "descriptionScore": 0.5,
-    "patternScore": 0.5,
-    "businessScore": 0.5,
-    "semanticScore": 0.5,
-    "shouldMerge": false,
-    "confidence": 0.5,
-    "reasoning": "analysis for pair ${index + 1}"
-  }${index < pairs.length - 1 ? ',' : ''}`)
-            .join('\n')}
-]
-
-Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
-    }
-    parseBatchSimilarityResponse(output, pairs) {
-        console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
-        console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
-        if (extractionResult.success) {
-            const parsed = extractionResult.data;
-            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
-            // Handle case where AI returns fewer results than expected
-            const results = [];
-            for (let i = 0; i < pairs.length; i++) {
-                const item = parsed[i];
-                const pair = pairs[i];
-                if (item && typeof item === 'object') {
-                    results.push({
-                        pairId: item.pairId || pair.id,
-                        similarity: {
-                            nameScore: this.clampScore(item.nameScore),
-                            descriptionScore: this.clampScore(item.descriptionScore),
-                            patternScore: this.clampScore(item.patternScore),
-                            businessScore: this.clampScore(item.businessScore),
-                            semanticScore: this.clampScore(item.semanticScore),
-                            shouldMerge: Boolean(item.shouldMerge),
-                            confidence: this.clampScore(item.confidence),
-                            reasoning: String(item.reasoning || 'No reasoning provided'),
-                        },
-                    });
-                }
-                else {
-                    // Missing or invalid item - create fallback
-                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
-                    results.push({
-                        pairId: pair.id,
-                        similarity: this.createFallbackSimilarity(),
-                        error: `Missing AI response for pair ${i + 1}`,
-                    });
-                }
-            }
-            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
-            return results;
-        }
-        // JSON extraction failed
-        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
-        }
-        console.warn('[BATCH-DEBUG] Using fallback for all pairs');
-        // Fallback: create error results for all pairs
-        return pairs.map((pair) => ({
-            pairId: pair.id,
-            similarity: this.createFallbackSimilarity(),
-            error: `Failed to parse batch AI response: ${extractionResult.error}`,
-        }));
-    }
-    clampScore(value) {
-        const num = Number(value);
-        return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
-    }
-    createFallbackSimilarity() {
-        return {
-            nameScore: 0.3,
-            descriptionScore: 0.3,
-            patternScore: 0.3,
-            businessScore: 0.3,
-            semanticScore: 0.3,
-            shouldMerge: false,
-            confidence: 0.2,
-            reasoning: 'Fallback similarity due to parsing error',
-        };
-    }
-}
-exports.BatchProcessor = BatchProcessor;
-
-
-/***/ }),
-
 /***/ 6:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -31686,7 +31478,6 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BusinessDomainService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const concurrency_manager_1 = __nccwpck_require__(4482);
 const secure_file_namer_1 = __nccwpck_require__(5584);
 const ai_domain_analyzer_1 = __nccwpck_require__(9918);
 class BusinessDomainService {
@@ -31698,30 +31489,21 @@ class BusinessDomainService {
         // Use batch processing for significant performance improvement
         const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
         const batches = this.createDomainBatches(themes, batchSize);
-        // Process batches concurrently
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
-            return await this.processDomainBatch(batch);
-        }, {
-            concurrencyLimit: 3, // Fewer concurrent batches since each is larger
-            maxRetries: 2,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                const themesCompleted = completed * batchSize;
-                const totalThemes = themes.length;
-            },
-            onError: (error, batch, retryCount) => {
-            },
-        });
+        // Process batches using Promise.all
+        // ClaudeClient handles rate limiting and queuing
+        const results = await Promise.all(batches.map(async (batch) => {
+            try {
+                return await this.processDomainBatch(batch);
+            }
+            catch (error) {
+                console.warn(`[BUSINESS-DOMAIN] Batch failed: ${error}`);
+                return []; // Return empty array for failed batch
+            }
+        }));
         // Flatten batch results and group by domain
         const flatResults = [];
         for (const batchResult of results) {
-            if (batchResult &&
-                typeof batchResult === 'object' &&
-                'error' in batchResult) {
-                // Handle failed batch - use fallback for all themes in the failed batch
-                continue;
-            }
-            else if (Array.isArray(batchResult)) {
+            if (Array.isArray(batchResult)) {
                 flatResults.push(...batchResult);
             }
         }
@@ -32032,14 +31814,15 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
      * PRD: "Dynamic batch sizing" - adapt to content complexity
      */
     calculateOptimalDomainBatchSize(totalThemes) {
-        // Smaller batches for domain classification due to context complexity
+        // Optimize for concurrency while respecting domain analysis complexity
+        // Target: Create enough batches to utilize 6-10 concurrent request slots
         if (totalThemes <= 5)
-            return Math.max(1, totalThemes); // Very small PRs
+            return Math.max(1, Math.ceil(totalThemes / 3)); // 2-3 small batches
         if (totalThemes <= 20)
-            return 10; // Small PRs - moderate batching
+            return Math.max(2, Math.ceil(totalThemes / 8)); // 6-8 batches
         if (totalThemes <= 50)
-            return 15; // Medium PRs - larger batches
-        return 20; // Large PRs - maximum batch size for domain analysis
+            return Math.max(5, Math.ceil(totalThemes / 10)); // 8-10 batches
+        return Math.max(8, Math.ceil(totalThemes / 10)); // Target 10 batches for large sets
     }
     /**
      * Split themes into optimally-sized batches for domain processing
@@ -32732,7 +32515,6 @@ const generic_cache_1 = __nccwpck_require__(282);
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
-const concurrency_manager_1 = __nccwpck_require__(4482);
 const logger_1 = __nccwpck_require__(411);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
@@ -32793,29 +32575,30 @@ class HierarchicalSimilarityService {
         }
         // Process comparisons with controlled concurrency
         console.log(`[HIERARCHICAL] Starting ${comparisons.length} Claude API calls with concurrency limit of 10`);
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(comparisons, async (comparison) => {
-            return await this.analyzeCrossLevelSimilarityPair(comparison);
-        }, {
-            concurrencyLimit: 5,
-            maxRetries: 3,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                console.log(`[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`);
-            },
-            onError: (error, comparison, retryCount) => {
-                console.warn(`[HIERARCHICAL] Retry ${retryCount} for comparison ${comparison.id}: ${error.message}`);
-            },
+        // Process all comparisons concurrently - let ClaudeClient handle rate limiting
+        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+        console.log(`[HIERARCHICAL] Processing all ${comparisons.length} comparisons concurrently`);
+        const comparisonPromises = comparisons.map(async (comparison) => {
+            try {
+                const result = await this.analyzeCrossLevelSimilarityPair(comparison);
+                return { success: true, result };
+            }
+            catch (error) {
+                console.warn(`[HIERARCHICAL] Failed comparison: ${comparison.id} - ${error instanceof Error ? error.message : 'Unknown error'}`);
+                return { success: false };
+            }
         });
-        // Extract successful results
+        // Wait for all comparisons to complete - ClaudeClient manages the 10 concurrent limit
+        const allResults = await Promise.all(comparisonPromises);
+        // Separate successful and failed results
         const successfulResults = [];
         let failedCount = 0;
-        for (const result of results) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                failedCount++;
-                console.warn(`[HIERARCHICAL] Failed comparison after all retries: ${result.item.id}`);
+        for (const result of allResults) {
+            if (result.success) {
+                successfulResults.push(result.result);
             }
             else {
-                successfulResults.push(result);
+                failedCount++;
             }
         }
         if (failedCount > 0) {
@@ -33176,7 +32959,7 @@ Focus on business value and avoid merging themes with distinct business purposes
 `;
         try {
             console.log(`[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`);
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'hierarchical-analysis');
             console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
                 'similarityScore',
@@ -33385,19 +33168,12 @@ exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
 const generic_cache_1 = __nccwpck_require__(282);
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
-const concurrency_manager_1 = __nccwpck_require__(4482);
 const secure_file_namer_1 = __nccwpck_require__(5584);
 const ai_expansion_decision_service_1 = __nccwpck_require__(7867);
 const logger_1 = __nccwpck_require__(411);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
-    concurrencyLimit: 5,
-    maxRetries: 3,
-    retryDelay: 1000,
-    retryBackoffMultiplier: 2,
     enableProgressLogging: false,
-    dynamicConcurrency: true,
-    enableJitter: true,
 };
 class ThemeExpansionService {
     constructor(anthropicApiKey, config = {}) {
@@ -33417,22 +33193,9 @@ class ThemeExpansionService {
         this.aiDecisionService = new ai_expansion_decision_service_1.AIExpansionDecisionService(anthropicApiKey);
     }
     /**
-     * Process items concurrently with limit and retry logic
+     * Process items sequentially with retry logic
+     * ClaudeClient handles rate limiting and queuing
      */
-    async processConcurrentlyWithLimit(items, processor, options) {
-        const concurrencyOptions = {
-            concurrencyLimit: options?.concurrencyLimit || this.config.concurrencyLimit,
-            maxRetries: options?.maxRetries || this.config.maxRetries,
-            retryDelay: options?.retryDelay || this.config.retryDelay,
-            retryBackoffMultiplier: this.config.retryBackoffMultiplier,
-            onProgress: options?.onProgress && this.config.enableProgressLogging
-                ? options.onProgress
-                : undefined,
-            onError: options?.onError,
-            enableLogging: this.config.enableProgressLogging,
-        };
-        return concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(items, processor, concurrencyOptions);
-    }
     /**
      * Main entry point for expanding themes hierarchically
      */
@@ -33443,17 +33206,18 @@ class ThemeExpansionService {
         logger_1.logger.debug('EXPANSION', `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
         // Reset effectiveness tracking
         this.resetEffectiveness();
-        // Process themes with concurrency limit and retry logic
-        const results = await this.processConcurrentlyWithLimit(consolidatedThemes, (theme) => this.expandThemeRecursively(theme, 0), {
-            onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging) {
-                    console.log(`[THEME-EXPANSION] Progress: ${completed}/${total} root themes expanded`);
-                }
-            },
-            onError: (error, theme, retryCount) => {
-                console.warn(`[THEME-EXPANSION] Retry ${retryCount} for theme "${theme.name}": ${error.message}`);
-            },
+        // Process all themes concurrently - let ClaudeClient handle rate limiting
+        console.log(`[THEME-EXPANSION] Processing all ${consolidatedThemes.length} themes concurrently`);
+        const themePromises = consolidatedThemes.map(async (theme) => {
+            try {
+                return await this.expandThemeRecursively(theme, 0);
+            }
+            catch (error) {
+                console.warn(`[THEME-EXPANSION] Failed to expand theme "${theme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                return { error: error instanceof Error ? error : new Error(String(error)), item: theme };
+            }
         });
+        const results = await Promise.all(themePromises);
         // Separate successful and failed results
         const expandedThemes = [];
         const failedThemes = [];
@@ -33518,13 +33282,17 @@ class ThemeExpansionService {
         const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
         if (!expansionCandidate) {
             // Still process existing child themes recursively
-            const childResults = await this.processConcurrentlyWithLimit(theme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, theme), {
-                onProgress: (completed, total) => {
-                    if (this.config.enableProgressLogging && total > 1) {
-                        console.log(`[THEME-EXPANSION] Child themes progress: ${completed}/${total} for "${theme.name}"`);
-                    }
-                },
+            // Process child themes concurrently - let ClaudeClient handle rate limiting
+            const childPromises = theme.childThemes.map(async (child) => {
+                try {
+                    return await this.expandThemeRecursively(child, currentDepth + 1, theme);
+                }
+                catch (error) {
+                    console.warn(`[THEME-EXPANSION] Failed to expand child theme "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    return { error: error instanceof Error ? error : new Error(String(error)), item: child };
+                }
             });
+            const childResults = await Promise.all(childPromises);
             // Extract successful results, keep failed themes as fallback
             const expandedChildren = [];
             for (const result of childResults) {
@@ -33561,14 +33329,17 @@ class ThemeExpansionService {
         }
         // Track successful expansion
         this.effectiveness.themesExpanded++;
-        // Recursively expand new sub-themes
-        const subThemeResults = await this.processConcurrentlyWithLimit(result.subThemes, (subTheme) => this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme), {
-            onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging && total > 1) {
-                    console.log(`[THEME-EXPANSION] Sub-themes progress: ${completed}/${total} for "${theme.name}"`);
-                }
-            },
+        // Recursively expand new sub-themes concurrently
+        const subThemePromises = result.subThemes.map(async (subTheme) => {
+            try {
+                return await this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme);
+            }
+            catch (error) {
+                console.warn(`[THEME-EXPANSION] Failed to expand sub-theme "${subTheme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                return { error: error instanceof Error ? error : new Error(String(error)), item: subTheme };
+            }
         });
+        const subThemeResults = await Promise.all(subThemePromises);
         // Extract successful sub-themes
         const expandedSubThemes = [];
         for (const subResult of subThemeResults) {
@@ -33583,14 +33354,17 @@ class ThemeExpansionService {
         // Process existing children only if we didn't create new sub-themes
         const expandedExistingChildren = [];
         if (result.subThemes.length === 0) {
-            // Only process existing children if we didn't create new sub-themes
-            const existingChildResults = await this.processConcurrentlyWithLimit(result.expandedTheme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme), {
-                onProgress: (completed, total) => {
-                    if (this.config.enableProgressLogging && total > 1) {
-                        console.log(`[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`);
-                    }
-                },
+            // Only process existing children if we didn't create new sub-themes concurrently
+            const existingChildPromises = result.expandedTheme.childThemes.map(async (child) => {
+                try {
+                    return await this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme);
+                }
+                catch (error) {
+                    console.warn(`[THEME-EXPANSION] Failed to expand existing child "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    return { error: error instanceof Error ? error : new Error(String(error)), item: child };
+                }
             });
+            const existingChildResults = await Promise.all(existingChildPromises);
             // Extract successful existing children
             for (const childResult of existingChildResults) {
                 if ('error' in childResult) {
@@ -33732,28 +33506,20 @@ class ThemeExpansionService {
         for (let i = 0; i < subThemes.length; i += batchSize) {
             batches.push(subThemes.slice(i, i + batchSize));
         }
-        // Process each batch with concurrency limit and context-aware settings
-        const deduplicationResults = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, (batch) => this.deduplicateBatch(batch), {
-            dynamicConcurrency: true,
-            context: 'theme_processing',
-            enableJitter: true,
-            enableLogging: this.config.enableProgressLogging,
-            onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging && total > 1) {
-                    console.log(`[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches (batch size: ${batchSize})`);
-                }
-            },
-        });
-        // Extract successful results
+        // Process each batch sequentially
+        // ClaudeClient handles rate limiting and queuing
         const successfulResults = [];
-        for (const result of deduplicationResults) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                console.warn(`[THEME-EXPANSION] Deduplication batch failed: ${result.error?.message || 'Unknown error'}`);
-                // For failed batches, we could return the original batch as fallback
-                // but for now, we'll skip failed batches
-            }
-            else {
+        for (let i = 0; i < batches.length; i++) {
+            const batch = batches[i];
+            try {
+                const result = await this.deduplicateBatch(batch);
                 successfulResults.push(result);
+                if (this.config.enableProgressLogging && batches.length > 1) {
+                    console.log(`[THEME-EXPANSION] Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`);
+                }
+            }
+            catch (error) {
+                console.warn(`[THEME-EXPANSION] Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
         }
         // Flatten and combine results
@@ -33863,7 +33629,7 @@ CRITICAL: Respond with ONLY valid JSON.
 
 If no duplicates found, return: {"duplicateGroups": []}`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['duplicateGroups']);
             if (!extractionResult.success) {
                 // No duplicates found or parsing failed
@@ -33950,7 +33716,7 @@ CRITICAL: Respond with ONLY valid JSON.
   ]
 }`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['groups']);
             if (!extractionResult.success) {
                 logger_1.logger.info('EXPANSION', `Failed to parse deduplication response: ${extractionResult.error}`);
@@ -34036,7 +33802,7 @@ CRITICAL: Respond with ONLY valid JSON.
   "reasoning": "why this unified version is better"
 }`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['name', 'description']);
             if (!extractionResult.success) {
                 // Use the first theme as fallback
@@ -34194,7 +33960,7 @@ Return JSON with specific sub-themes:
   "reasoning": "Overall expansion rationale (max 20 words)"
 }`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['subThemes']);
             if (!extractionResult.success) {
                 logger_1.logger.info('EXPANSION', `Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`);
@@ -34599,13 +34365,10 @@ const theme_expansion_1 = __nccwpck_require__(8430);
 const hierarchical_similarity_1 = __nccwpck_require__(4200);
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const json_extractor_1 = __nccwpck_require__(8168);
-const concurrency_manager_1 = __nccwpck_require__(4482);
 const performance_tracker_1 = __nccwpck_require__(9600);
-// Concurrency configuration
-const PARALLEL_CONFIG = {
-    CONCURRENCY_LIMIT: 5,
+// Processing configuration
+const PROCESSING_CONFIG = {
     CHUNK_TIMEOUT: 120000, // 2 minutes
-    MAX_RETRIES: 3,
 };
 class ClaudeService {
     constructor(_apiKey) {
@@ -34973,44 +34736,38 @@ class ThemeService {
             const chunkProcessor = new ChunkProcessor();
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
-            // Parallel processing: analyze all chunks concurrently, then update context sequentially
-            const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(chunks, (chunk) => {
-                const codeChange = codeChangeMap.get(chunk.filename);
-                return contextManager.analyzeChunkOnly(chunk, codeChange);
-            }, {
-                concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
-                maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-                enableLogging: false,
-                onProgress: (completed, total) => {
-                    // Progress tracking without logging
-                },
-                onError: (error, chunk, retryCount) => {
-                    // Error handling without logging
-                },
-            });
-            // Transform results to handle ConcurrencyManager's mixed return types
+            // Process chunks in parallel batches
+            // ClaudeClient handles rate limiting and queuing
             const analysisResults = [];
-            for (let i = 0; i < results.length; i++) {
-                const result = results[i];
-                if (result && typeof result === 'object' && 'error' in result) {
-                    // Convert ConcurrencyManager error format to ChunkAnalysisResult format
-                    const errorResult = result;
-                    analysisResults.push({
-                        chunk: errorResult.item,
-                        analysis: {
-                            themeName: `Changes in ${errorResult.item.filename}`,
-                            description: 'Analysis failed - using fallback',
-                            businessImpact: 'Unknown impact',
-                            confidence: 0.3,
-                            codePattern: 'File modification',
-                            suggestedParent: undefined,
-                        },
-                        error: errorResult.error.message,
-                    });
-                }
-                else {
-                    analysisResults.push(result);
-                }
+            const batchSize = 10; // Match ClaudeClient MAX_CONCURRENT_REQUESTS
+            for (let i = 0; i < chunks.length; i += batchSize) {
+                const batch = chunks.slice(i, Math.min(i + batchSize, chunks.length));
+                // Process batch in parallel
+                const batchPromises = batch.map(async (chunk) => {
+                    try {
+                        const codeChange = codeChangeMap.get(chunk.filename);
+                        const result = await contextManager.analyzeChunkOnly(chunk, codeChange);
+                        return result;
+                    }
+                    catch (error) {
+                        const errorObj = error instanceof Error ? error : new Error(String(error));
+                        return {
+                            chunk,
+                            analysis: {
+                                themeName: `Changes in ${chunk.filename}`,
+                                description: 'Analysis failed - using fallback',
+                                businessImpact: 'Unknown impact',
+                                confidence: 0.3,
+                                codePattern: 'File modification',
+                                suggestedParent: undefined,
+                            },
+                            error: errorObj.message,
+                        };
+                    }
+                });
+                // Wait for all chunks in batch to complete
+                const batchResults = await Promise.all(batchPromises);
+                analysisResults.push(...batchResults);
             }
             // Sequential context updates to maintain thread safety
             contextManager.processBatchResults(analysisResults, codeChangeMap);
@@ -35281,10 +35038,9 @@ exports.ThemeSimilarityService = void 0;
 const similarity_cache_1 = __nccwpck_require__(667);
 const similarity_calculator_1 = __nccwpck_require__(241);
 const ai_similarity_1 = __nccwpck_require__(5776);
-const batch_processor_1 = __nccwpck_require__(1174);
 const business_domain_1 = __nccwpck_require__(6);
 const theme_naming_1 = __nccwpck_require__(3111);
-const concurrency_manager_1 = __nccwpck_require__(4482);
+const logger_1 = __nccwpck_require__(411);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.pendingCalculations = new Map();
@@ -35308,7 +35064,6 @@ class ThemeSimilarityService {
         this.similarityCache = new similarity_cache_1.SimilarityCache();
         this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
         this.aiSimilarityService = new ai_similarity_1.AISimilarityService(anthropicApiKey);
-        this.batchProcessor = new batch_processor_1.BatchProcessor();
         this.businessDomainService = new business_domain_1.BusinessDomainService(anthropicApiKey);
         this.themeNamingService = new theme_naming_1.ThemeNamingService();
     }
@@ -35393,8 +35148,6 @@ class ThemeSimilarityService {
                     this.effectiveness.pairsAnalyzed) *
                     100
                 : 0;
-        const reductionPercent = (((themes.length - hierarchical.length) / themes.length) *
-            100).toFixed(1);
         return hierarchical;
     }
     /**
@@ -35439,35 +35192,22 @@ class ThemeSimilarityService {
         // Split into batches for optimal processing
         const batchSize = this.calculateOptimalBatchSize(pairs.length);
         const batches = this.createPairBatches(pairs, batchSize);
-        // Process batches concurrently
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
-            return await this.processSimilarityBatch(batch);
-        }, {
-            concurrencyLimit: 3, // Fewer concurrent batches since each is larger
-            maxRetries: 2,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                // Only log major progress milestones to reduce noise
-                if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
-                    const pairsCompleted = completed * batchSize;
-                    const totalPairs = pairs.length;
-                }
-            },
-            onError: (error, batch, retryCount) => {
-            },
-        });
-        // Store successful results
-        let successCount = 0;
-        let failedCount = 0;
-        for (const result of results) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                failedCount++;
-                // For failed batches, we can't process individual pairs, so skip them
+        // Process batches using Promise.all
+        // ClaudeClient handles rate limiting and queuing
+        const results = await Promise.all(batches.map(async (batch, index) => {
+            try {
+                return await this.processSimilarityBatch(batch);
             }
-            else {
+            catch (error) {
+                logger_1.logger.warn('THEME-SIMILARITY', `Batch ${index + 1} failed: ${error}`);
+                return new Map(); // Return empty map for failed batch
+            }
+        }));
+        // Store results
+        let successCount = 0;
+        for (const batchResultMap of results) {
+            if (batchResultMap.size > 0) {
                 successCount++;
-                // result is a Map<string, SimilarityMetrics> from processSimilarityBatch
-                const batchResultMap = result;
                 for (const [pairId, similarity] of batchResultMap) {
                     similarities.set(pairId, similarity);
                 }
@@ -35501,22 +35241,22 @@ class ThemeSimilarityService {
         return mergeGroups;
     }
     async createConsolidatedThemes(mergeGroups, allThemes) {
-        const consolidated = [];
         const themeMap = new Map(allThemes.map((t) => [t.id, t]));
-        for (const [, groupIds] of mergeGroups) {
+        // Process merge groups in parallel
+        const groupEntries = Array.from(mergeGroups.entries());
+        const consolidated = await Promise.all(groupEntries.map(async ([, groupIds]) => {
             const themesInGroup = groupIds
                 .map((id) => themeMap.get(id))
                 .filter((t) => t !== undefined);
             if (themesInGroup.length === 1) {
                 // Single theme - convert to consolidated
-                consolidated.push(this.themeToConsolidated(themesInGroup[0]));
+                return this.themeToConsolidated(themesInGroup[0]);
             }
             else {
                 // Multiple themes - merge them
-                const merged = await this.mergeThemes(themesInGroup);
-                consolidated.push(merged);
+                return await this.mergeThemes(themesInGroup);
             }
-        }
+        }));
         return consolidated;
     }
     async buildHierarchies(themes) {
@@ -35640,14 +35380,18 @@ class ThemeSimilarityService {
      * PRD: "Dynamic batch sizing" - adapt to content complexity
      */
     calculateOptimalBatchSize(totalPairs) {
-        // Dynamic batch sizing based on total pairs and estimated complexity
+        // Dynamic batch sizing optimized for concurrency while respecting token limits
+        // Target: Create enough batches to utilize 8-10 concurrent request slots
+        // Apply token-based limits
         if (totalPairs <= 10)
-            return Math.max(1, totalPairs); // Small PRs - process all at once
-        if (totalPairs <= 50)
-            return 25; // Medium PRs - moderate batching
+            return Math.max(1, Math.ceil(totalPairs / 3)); // 3-4 small batches
+        if (totalPairs <= 30)
+            return Math.max(3, Math.ceil(totalPairs / 8)); // 8 batches max
+        if (totalPairs <= 100)
+            return Math.max(5, Math.ceil(totalPairs / 10)); // 10 batches max
         if (totalPairs <= 200)
-            return 50; // Large PRs - larger batches for efficiency
-        return 75; // Very large PRs - maximum batch size for token limits
+            return Math.max(10, Math.ceil(totalPairs / 10)); // 10 batches max
+        return Math.max(15, Math.ceil(totalPairs / 10)); // Still target 10 batches for large sets
     }
     /**
      * Split pairs into optimally-sized batches for AI processing
@@ -35756,36 +35500,34 @@ Be conservative - only merge when themes serve the same business purpose.`;
      * Fallback to individual processing if batch fails
      */
     async processBatchIndividually(pairs, results) {
-        for (const pair of pairs) {
+        // Process individual pairs in parallel instead of sequential
+        // ClaudeClient handles rate limiting and queuing
+        const individualPromises = pairs.map(async (pair) => {
             try {
                 const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
-                results.set(pair.id, similarity);
+                return { pairId: pair.id, similarity };
             }
             catch (error) {
                 // Set default non-match result
-                results.set(pair.id, {
-                    combinedScore: 0,
-                    nameScore: 0,
-                    descriptionScore: 0,
-                    businessScore: 0,
-                    fileOverlap: 0,
-                    patternScore: 0,
-                });
+                return {
+                    pairId: pair.id,
+                    similarity: {
+                        combinedScore: 0,
+                        nameScore: 0,
+                        descriptionScore: 0,
+                        businessScore: 0,
+                        fileOverlap: 0,
+                        patternScore: 0,
+                    }
+                };
             }
+        });
+        // Wait for all individual calculations to complete
+        const individualResults = await Promise.all(individualPromises);
+        // Store results in the map
+        for (const { pairId, similarity } of individualResults) {
+            results.set(pairId, similarity);
         }
-    }
-    /**
-     * Convert AI similarity result to SimilarityMetrics
-     */
-    convertAIResultToMetrics(aiResult) {
-        return {
-            combinedScore: Math.max(0, Math.min(1, aiResult.semanticScore || 0)),
-            nameScore: Math.max(0, Math.min(1, aiResult.nameScore || 0)),
-            descriptionScore: Math.max(0, Math.min(1, aiResult.descriptionScore || 0)),
-            businessScore: Math.max(0, Math.min(1, aiResult.businessScore || 0)),
-            fileOverlap: 0, // Not available in AI result, would need separate calculation
-            patternScore: Math.max(0, Math.min(1, aiResult.patternScore || 0)),
-        };
     }
 }
 exports.ThemeSimilarityService = ThemeSimilarityService;
@@ -36505,8 +36247,8 @@ class GitService {
                 ? 'deleted'
                 : file.status,
         }));
-        console.log(`[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
-        // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+        console.log(`[GIT-SERVICE] Starting AI analysis of ${filesToAnalyze.length} files`);
+        // Use AICodeAnalyzer for processing changed files
         const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
         console.log(`[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
         // Log cache statistics
@@ -36666,7 +36408,6 @@ const path = __importStar(__nccwpck_require__(6928));
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const code_analysis_cache_1 = __nccwpck_require__(5061);
-const concurrency_manager_1 = __nccwpck_require__(4482);
 const logger_1 = __nccwpck_require__(411);
 /**
  * AI-powered code analyzer that replaces regex-based analysis
@@ -36685,7 +36426,7 @@ class AICodeAnalyzer {
         logger_1.logger.debug('CODE-ANALYSIS', `Analyzing ${changes.length} code changes`);
         const fileMetrics = this.analyzeFileMetrics(changes);
         const changePatterns = this.extractChangePatterns(changes);
-        const contextSummary = this.buildContextSummary(changes, fileMetrics, changePatterns);
+        const contextSummary = this.buildContextSummary(fileMetrics, changePatterns);
         const significantChanges = this.extractSignificantChanges(changes);
         return {
             fileMetrics,
@@ -36727,30 +36468,40 @@ class AICodeAnalyzer {
         });
     }
     /**
-     * Process multiple files concurrently using ConcurrencyManager
+     * Process multiple files in parallel batches
+     * ClaudeClient handles rate limiting and concurrency
      */
     async processChangedFilesConcurrently(files) {
         logger_1.logger.debug('CODE-ANALYSIS', `Processing ${files.length} files`);
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(files, async (file) => {
-            return await this.processChangedFile(file.filename, file.diffPatch, file.changeType);
-        }, {
-            concurrencyLimit: 5,
-            maxRetries: 3,
-            enableLogging: false, // Disable ConcurrencyManager's own logging
-            onProgress: (completed, total) => {
-                // Only log major milestones
-                if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
-                    logger_1.logger.debug('CODE-ANALYSIS', `Progress: ${completed}/${total} files`);
-                }
-            },
-            onError: (error, item, retryCount) => logger_1.logger.warn('CODE-ANALYSIS', `Retry ${retryCount} for ${item.filename}: ${error.message}`),
+        // Process all files concurrently - let ClaudeClient handle rate limiting
+        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+        logger_1.logger.debug('CODE-ANALYSIS', `Processing all ${files.length} files concurrently`);
+        const filePromises = files.map(async (file) => {
+            try {
+                const result = await this.processChangedFile(file.filename, file.diffPatch, file.changeType);
+                return { success: true, result, file };
+            }
+            catch (error) {
+                const errorObj = error instanceof Error ? error : new Error(String(error));
+                logger_1.logger.warn('CODE-ANALYSIS', `Failed: ${file.filename} - ${errorObj.message}`);
+                return { success: false, error: errorObj, file };
+            }
         });
-        const { successful, failed } = concurrency_manager_1.ConcurrencyManager.separateResults(results);
+        // Wait for all files to complete - ClaudeClient manages the 10 concurrent limit
+        const allResults = await Promise.all(filePromises);
+        // Separate successful and failed results
+        const successful = [];
+        const failed = [];
+        for (const result of allResults) {
+            if (result.success) {
+                successful.push(result.result);
+            }
+            else {
+                failed.push({ filename: result.file.filename, error: result.error });
+            }
+        }
         if (failed.length > 0) {
             logger_1.logger.warn('CODE-ANALYSIS', `${failed.length} files failed analysis`);
-            for (const failure of failed) {
-                logger_1.logger.warn('CODE-ANALYSIS', `Failed: ${failure.item.filename} - ${failure.error.message}`);
-            }
         }
         logger_1.logger.info('CODE-ANALYSIS', `Analyzed ${successful.length}/${files.length} files`);
         return successful;
@@ -36760,7 +36511,7 @@ class AICodeAnalyzer {
      */
     async analyzeWithAI(filename, diffContent, changeType) {
         const prompt = this.buildCodeAnalysisPrompt(filename, diffContent, changeType);
-        const response = await this.claudeClient.callClaude(prompt);
+        const response = await this.claudeClient.callClaude(prompt, 'code-analysis', filename);
         const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['functionsChanged', 'classesChanged', 'importsChanged', 'fileType']);
         if (!extractionResult.success) {
             throw new Error(`Failed to parse AI response: ${extractionResult.error}`);
@@ -36976,7 +36727,7 @@ Respond with ONLY the JSON object, no explanations.`;
             businessDomains,
         };
     }
-    buildContextSummary(changes, metrics, patterns) {
+    buildContextSummary(metrics, patterns) {
         const summary = [];
         // File overview
         summary.push(`${metrics.totalFiles} files changed`);
@@ -37137,35 +36888,72 @@ class ClaudeClient {
         if (!ClaudeClient.isProcessing) {
             ClaudeClient.isProcessing = true;
             ClaudeClient.processingPromise = ClaudeClient.processQueue();
+            // Start periodic diagnostic logging
+            ClaudeClient.startPeriodicLogging();
         }
+    }
+    /**
+     * Start periodic diagnostic logging every 10 seconds
+     */
+    static startPeriodicLogging() {
+        const logInterval = setInterval(() => {
+            if (ClaudeClient.requestQueue.length > 0 || ClaudeClient.activeRequests > 0) {
+                const cbActive = Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil;
+                console.log(`[CLAUDE-DIAGNOSTIC] active: ${ClaudeClient.activeRequests}/${ClaudeClient.MAX_CONCURRENT_REQUESTS}, queue: ${ClaudeClient.requestQueue.length}, processed: ${ClaudeClient.queueMetrics.totalProcessed}/${ClaudeClient.queueMetrics.totalQueued}${cbActive ? ', CB-ACTIVE' : ''}`);
+            }
+            else if (ClaudeClient.queueMetrics.totalProcessed > 0) {
+                // Stop logging when queue is empty and some work was done
+                clearInterval(logInterval);
+                console.log('[CLAUDE-DIAGNOSTIC] Queue empty, stopping logs');
+            }
+        }, 10000); // Every 10 seconds
     }
     /**
      * Process the request queue with rate limiting
      */
     static async processQueue() {
+        let loopIterations = 0;
+        let lastDiagnosticLog = Date.now();
         while (ClaudeClient.requestQueue.length > 0 ||
             ClaudeClient.activeRequests > 0) {
+            loopIterations++;
+            // Early termination check - if truly idle, exit immediately
+            if (ClaudeClient.requestQueue.length === 0 && ClaudeClient.activeRequests === 0) {
+                break;
+            }
+            // Log diagnostics every 5 seconds while processing
+            if (Date.now() - lastDiagnosticLog > 5000) {
+                console.log(`[CLAUDE-QUEUE] Loop #${loopIterations} | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}`);
+                lastDiagnosticLog = Date.now();
+            }
             // Check circuit breaker
             if (Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil) {
+                console.log('[CLAUDE-QUEUE] Circuit breaker active, sleeping 1000ms');
                 await ClaudeClient.sleep(1000);
                 continue;
             }
             // Check if we can start new request
-            if (ClaudeClient.requestQueue.length > 0 &&
-                ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS &&
-                Date.now() - ClaudeClient.lastRequestTime >=
-                    ClaudeClient.MIN_REQUEST_INTERVAL) {
+            const hasItemsInQueue = ClaudeClient.requestQueue.length > 0;
+            const hasCapacity = ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS;
+            const intervalPassed = Date.now() - ClaudeClient.lastRequestTime >= ClaudeClient.MIN_REQUEST_INTERVAL;
+            if (hasItemsInQueue && hasCapacity && intervalPassed) {
                 const queueItem = ClaudeClient.requestQueue.shift();
                 ClaudeClient.activeRequests++;
                 ClaudeClient.lastRequestTime = Date.now();
+                console.log(`[CLAUDE-QUEUE] Starting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
                 // Process request asynchronously
                 ClaudeClient.processRequest(queueItem);
             }
             else {
+                // Log why we can't start a new request (only if there are items in queue)
+                if (hasItemsInQueue && loopIterations % 100 === 0) { // Log every 100 iterations (5 seconds)
+                    console.log(`[CLAUDE-QUEUE] Waiting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, reason: ${!hasCapacity ? 'capacity' : !intervalPassed ? 'interval' : 'unknown'}`);
+                }
                 // Wait briefly before checking again
                 await ClaudeClient.sleep(50);
             }
         }
+        console.log(`[CLAUDE-QUEUE] Complete all | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, iterations: ${loopIterations}`);
         ClaudeClient.isProcessing = false;
         ClaudeClient.processingPromise = null;
     }
@@ -37202,6 +36990,7 @@ class ClaudeClient {
         }
         finally {
             ClaudeClient.activeRequests--;
+            console.log(`[CLAUDE-QUEUE] Complete | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
             // Remove from active context tracking
             const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
             if (currentActive <= 1) {
@@ -37486,7 +37275,7 @@ exports.ClaudeClient = ClaudeClient;
 ClaudeClient.requestQueue = [];
 ClaudeClient.activeRequests = 0;
 ClaudeClient.activeRequestsByContext = new Map();
-ClaudeClient.MAX_CONCURRENT_REQUESTS = 5;
+ClaudeClient.MAX_CONCURRENT_REQUESTS = 10;
 ClaudeClient.MIN_REQUEST_INTERVAL = 200; // ms between requests
 ClaudeClient.isProcessing = false;
 ClaudeClient.lastRequestTime = 0;
@@ -37501,459 +37290,6 @@ ClaudeClient.queueMetrics = {
     consecutiveRateLimitErrors: 0,
     circuitBreakerUntil: 0,
 };
-
-
-/***/ }),
-
-/***/ 4482:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-/**
- * Concurrency management utility for processing items with controlled parallelism,
- * retry logic, and progress tracking with dynamic resource-based optimization.
- */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ConcurrencyManager = void 0;
-const os = __importStar(__nccwpck_require__(857));
-const DEFAULT_OPTIONS = {
-    concurrencyLimit: 0, // Will be calculated dynamically
-    dynamicConcurrency: true,
-    maxRetries: 3,
-    retryDelay: 1000,
-    retryBackoffMultiplier: 2,
-    enableJitter: true,
-    context: 'general',
-    enableLogging: false,
-};
-class ConcurrencyManager {
-    /**
-     * Get current system metrics for dynamic concurrency calculation
-     */
-    static getSystemMetrics() {
-        const memUsage = process.memoryUsage();
-        const totalMemory = os.totalmem();
-        const freeMemory = os.freemem();
-        const heapUsedMB = memUsage.heapUsed / (1024 * 1024);
-        const memoryUsagePercent = (totalMemory - freeMemory) / totalMemory;
-        return {
-            cpuCount: os.cpus().length,
-            availableMemory: freeMemory,
-            currentHeapUsed: memUsage.heapUsed,
-            isUnderMemoryPressure: memoryUsagePercent > 0.85 || heapUsedMB > 512,
-        };
-    }
-    /**
-     * Calculate optimal concurrency limit based on system resources
-     */
-    static calculateOptimalConcurrency(metrics, context = 'general') {
-        // Base concurrency from CPU count
-        let baseConcurrency = Math.max(3, Math.ceil(metrics.cpuCount * 0.8));
-        // Adjust for memory pressure
-        if (metrics.isUnderMemoryPressure) {
-            baseConcurrency = Math.max(2, Math.floor(baseConcurrency * 0.6));
-        }
-        // Context-specific adjustments
-        switch (context) {
-            case 'theme_processing':
-                // Theme processing is memory intensive
-                baseConcurrency = Math.min(baseConcurrency, 8);
-                break;
-            case 'ai_batch':
-                // AI batch processing has API limits
-                baseConcurrency = Math.min(baseConcurrency, 10);
-                break;
-            default:
-                baseConcurrency = Math.min(baseConcurrency, 12);
-        }
-        return Math.max(2, baseConcurrency); // Minimum of 2
-    }
-    /**
-     * Get context-aware retry configuration
-     */
-    static getRetryConfig(context, error) {
-        const isRateLimit = error?.message?.includes('rate limit') || error?.message?.includes('429');
-        switch (context) {
-            case 'theme_processing':
-                return {
-                    maxRetries: isRateLimit ? 5 : 3,
-                    baseDelay: isRateLimit ? 2000 : 1000,
-                    multiplier: 1.8,
-                };
-            case 'ai_batch':
-                return {
-                    maxRetries: isRateLimit ? 6 : 2,
-                    baseDelay: isRateLimit ? 3000 : 800,
-                    multiplier: 2.2,
-                };
-            default:
-                return {
-                    maxRetries: isRateLimit ? 4 : 3,
-                    baseDelay: 1000,
-                    multiplier: 2.0,
-                };
-        }
-    }
-    /**
-     * Process items concurrently with controlled parallelism and retry logic.
-     *
-     * When an item finishes processing, the next item immediately starts - no waiting for batches.
-     * Failed items are retried with exponential backoff up to maxRetries times.
-     *
-     * @param items Array of items to process
-     * @param processor Function that processes each item
-     * @param options Configuration options
-     * @returns Array of results in the same order as input items
-     */
-    static async processConcurrentlyWithLimit(items, processor, options) {
-        const config = { ...DEFAULT_OPTIONS, ...options };
-        // Calculate dynamic concurrency if enabled and not explicitly set
-        if (config.dynamicConcurrency && config.concurrencyLimit === 0) {
-            const metrics = ConcurrencyManager.getSystemMetrics();
-            config.concurrencyLimit = ConcurrencyManager.calculateOptimalConcurrency(metrics, config.context || 'general');
-            if (config.enableLogging) {
-                console.log(`[CONCURRENCY-MANAGER] Dynamic concurrency: ${config.concurrencyLimit} (CPUs: ${metrics.cpuCount}, Memory pressure: ${metrics.isUnderMemoryPressure})`);
-            }
-        }
-        else if (config.concurrencyLimit <= 0) {
-            // Fallback to safe default
-            config.concurrencyLimit = 5;
-        }
-        const results = new Array(items.length);
-        const active = new Set();
-        let completed = 0;
-        let index = 0;
-        const log = (message) => {
-            if (config.enableLogging) {
-                console.log(`[CONCURRENCY-MANAGER] ${message}`);
-            }
-        };
-        const processItem = async (item, itemIndex) => {
-            log(`Processing item ${itemIndex + 1}/${items.length}: starting`);
-            try {
-                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.onError, config.enableJitter, config.context);
-                log(`Processing item ${itemIndex + 1}/${items.length}: success`);
-                results[itemIndex] = result;
-            }
-            catch (error) {
-                log(`Processing item ${itemIndex + 1}/${items.length}: error - ${error}`);
-                results[itemIndex] = { error: error, item };
-            }
-            finally {
-                completed++;
-                log(`Processing item ${itemIndex + 1}/${items.length}: completed (${completed}/${items.length})`);
-                if (config.onProgress) {
-                    config.onProgress(completed, items.length);
-                }
-            }
-        };
-        return new Promise((resolve) => {
-            // Handle empty array case
-            if (items.length === 0) {
-                log('Empty items array, resolving immediately');
-                resolve(results);
-                return;
-            }
-            log(`Starting processing of ${items.length} items with limit ${config.concurrencyLimit}`);
-            const startNext = () => {
-                // Start new items while under concurrency limit and items remain
-                while (active.size < config.concurrencyLimit && index < items.length) {
-                    const currentIndex = index++;
-                    log(`Starting item ${currentIndex + 1}/${items.length}, active: ${active.size}`);
-                    const promise = processItem(items[currentIndex], currentIndex);
-                    active.add(promise);
-                    promise.finally(() => {
-                        active.delete(promise);
-                        log(`Completed item, total completed: ${completed}/${items.length}, active: ${active.size}`);
-                        if (completed === items.length) {
-                            log('All items completed, resolving');
-                            resolve(results);
-                        }
-                        else {
-                            startNext(); // Try to start next item immediately
-                        }
-                    });
-                }
-                // Log waiting status if all items started but some still processing
-                if (index >= items.length && active.size > 0) {
-                    log(`No more items to start, waiting for ${active.size} active promises`);
-                }
-            };
-            startNext();
-        });
-    }
-    /**
-     * Process a single item with retry logic and exponential backoff.
-     *
-     * @param item Item to process
-     * @param processor Processing function
-     * @param maxRetries Maximum number of retry attempts
-     * @param baseDelay Base delay between retries in milliseconds
-     * @param onError Optional error callback
-     * @returns Processed result
-     * @throws Error if all retry attempts fail
-     */
-    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, onError, enableJitter = true, context = 'general') {
-        let lastError;
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            try {
-                return await processor(item);
-            }
-            catch (error) {
-                lastError = error;
-                if (attempt < maxRetries) {
-                    // Get context-aware retry config
-                    const retryConfig = ConcurrencyManager.getRetryConfig(context, lastError);
-                    // Use context-specific settings or fall back to provided values
-                    const effectiveMaxRetries = Math.max(maxRetries, retryConfig.maxRetries);
-                    const effectiveBaseDelay = Math.max(baseDelay, retryConfig.baseDelay);
-                    const effectiveMultiplier = retryConfig.multiplier;
-                    if (attempt < effectiveMaxRetries) {
-                        const delay = ConcurrencyManager.calculateBackoffDelay(attempt, effectiveBaseDelay, effectiveMultiplier, enableJitter);
-                        if (onError) {
-                            onError(lastError, item, attempt + 1);
-                        }
-                        console.log(`[CONCURRENCY-MANAGER] Retry ${attempt + 1}/${effectiveMaxRetries} after ${delay}ms delay (context: ${context})`);
-                        await ConcurrencyManager.sleep(delay);
-                    }
-                    else {
-                        break; // Exceeded max retries for this context
-                    }
-                }
-            }
-        }
-        throw lastError;
-    }
-    /**
-     * Calculate exponential backoff delay with jitter and maximum cap.
-     *
-     * @param attempt Current attempt number (0-based)
-     * @param baseDelay Base delay in milliseconds
-     * @param multiplier Backoff multiplier
-     * @returns Delay in milliseconds
-     */
-    static calculateBackoffDelay(attempt, baseDelay, multiplier = 2, enableJitter = true) {
-        const exponentialDelay = baseDelay * Math.pow(multiplier, attempt);
-        let finalDelay = exponentialDelay;
-        if (enableJitter) {
-            // Add jitter: 10% random variation
-            const jitterRange = exponentialDelay * 0.1;
-            const jitter = (Math.random() - 0.5) * 2 * jitterRange;
-            finalDelay = exponentialDelay + jitter;
-        }
-        // Cap at 30 seconds maximum, minimum 100ms
-        return Math.max(100, Math.min(finalDelay, 30000));
-    }
-    /**
-     * Sleep utility function.
-     *
-     * @param ms Milliseconds to sleep
-     * @returns Promise that resolves after the specified time
-     */
-    static sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-    /**
-     * Helper to separate successful results from errors.
-     *
-     * @param results Mixed array of results and errors
-     * @returns Object with separate successful and failed arrays
-     */
-    static separateResults(results) {
-        const successful = [];
-        const failed = [];
-        for (const result of results) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                failed.push(result);
-            }
-            else {
-                successful.push(result);
-            }
-        }
-        return { successful, failed };
-    }
-    /**
-     * Enhanced processing with dynamic concurrency adjustment based on API performance
-     * PRD: "Adaptive concurrency: Start with 5 concurrent operations, adjust based on API response times"
-     */
-    static async processConcurrentlyWithAdaptiveLimit(items, processor, options) {
-        const config = {
-            ...DEFAULT_OPTIONS,
-            initialConcurrency: 5, // PRD requirement
-            targetResponseTime: 2000, // 2 seconds target
-            adjustmentInterval: 10,
-            ...options,
-        };
-        let currentConcurrency = config.initialConcurrency;
-        const results = [];
-        const responseTimes = [];
-        const errorCounts = [];
-        console.log(`[ADAPTIVE-CONCURRENCY] Starting with ${currentConcurrency} concurrent operations`);
-        // Process items in chunks to allow for concurrency adjustment
-        const chunkSize = config.adjustmentInterval;
-        for (let i = 0; i < items.length; i += chunkSize) {
-            const chunk = items.slice(i, i + chunkSize);
-            // Process chunk with current concurrency limit
-            const chunkResults = await ConcurrencyManager.processConcurrentlyWithLimit(chunk, async (item) => {
-                const itemStartTime = Date.now();
-                try {
-                    const result = await processor(item);
-                    responseTimes.push(Date.now() - itemStartTime);
-                    return result;
-                }
-                catch (error) {
-                    responseTimes.push(Date.now() - itemStartTime);
-                    throw error;
-                }
-            }, {
-                ...config,
-                concurrencyLimit: currentConcurrency,
-                dynamicConcurrency: false, // We're handling adjustment manually
-            });
-            results.push(...chunkResults);
-            // Calculate metrics for this chunk
-            const chunkErrors = chunkResults.filter((r) => r && typeof r === 'object' && 'error' in r).length;
-            const errorRate = chunkErrors / chunk.length;
-            errorCounts.push(chunkErrors);
-            // Adjust concurrency based on performance
-            const newConcurrency = this.calculateAdjustedConcurrency(currentConcurrency, responseTimes.slice(-chunkSize), // Recent response times
-            errorRate, config.targetResponseTime);
-            if (newConcurrency !== currentConcurrency) {
-                console.log(`[ADAPTIVE-CONCURRENCY] Adjusting concurrency: ${currentConcurrency} → ${newConcurrency} ` +
-                    `(avg response time: ${this.calculateAverageResponseTime(responseTimes.slice(-chunkSize))}ms, ` +
-                    `error rate: ${(errorRate * 100).toFixed(1)}%)`);
-                currentConcurrency = newConcurrency;
-            }
-            // Progress reporting
-            if (config.onProgress) {
-                config.onProgress(Math.min(i + chunkSize, items.length), items.length);
-            }
-        }
-        console.log(`[ADAPTIVE-CONCURRENCY] Completed with final concurrency: ${currentConcurrency}, ` +
-            `avg response time: ${this.calculateAverageResponseTime(responseTimes)}ms`);
-        return results;
-    }
-    /**
-     * Calculate adjusted concurrency based on performance metrics
-     * PRD: "Increase by 1 if avg response < 500ms, Decrease by 2 if error rate > 5%"
-     */
-    static calculateAdjustedConcurrency(currentConcurrency, recentResponseTimes, errorRate, targetResponseTime) {
-        if (recentResponseTimes.length === 0) {
-            return currentConcurrency;
-        }
-        const avgResponseTime = this.calculateAverageResponseTime(recentResponseTimes);
-        // PRD: Decrease by 2 if error rate > 5%
-        if (errorRate > 0.05) {
-            return Math.max(2, currentConcurrency - 2);
-        }
-        // PRD: Increase by 1 if avg response < 500ms (fast responses)
-        if (avgResponseTime < 500) {
-            return Math.min(10, currentConcurrency + 1); // Max limit of 10 as per PRD
-        }
-        // Decrease if responses are much slower than target
-        if (avgResponseTime > targetResponseTime * 1.5) {
-            return Math.max(2, currentConcurrency - 1);
-        }
-        // Stay the same if performance is acceptable
-        return currentConcurrency;
-    }
-    /**
-     * Calculate average response time from array of times
-     */
-    static calculateAverageResponseTime(responseTimes) {
-        if (responseTimes.length === 0)
-            return 0;
-        return (responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length);
-    }
-    /**
-     * Enhanced processing with circuit breaker pattern
-     * PRD: "Never fail completely: Always provide meaningful output"
-     */
-    static async processConcurrentlyWithCircuitBreaker(items, processor, options) {
-        const config = {
-            failureThreshold: 0.5,
-            circuitBreakerTimeout: 30000,
-            ...options,
-        };
-        let circuitOpen = false;
-        let circuitOpenTime = 0;
-        let totalRequests = 0;
-        let failedRequests = 0;
-        const wrappedProcessor = async (item) => {
-            totalRequests++;
-            // Check if circuit should be closed again
-            if (circuitOpen &&
-                Date.now() - circuitOpenTime > config.circuitBreakerTimeout) {
-                console.log('[CIRCUIT-BREAKER] Attempting to close circuit');
-                circuitOpen = false;
-                failedRequests = 0;
-                totalRequests = 0;
-            }
-            // If circuit is open, use fallback or throw
-            if (circuitOpen) {
-                if (config.fallbackProcessor) {
-                    console.log('[CIRCUIT-BREAKER] Using fallback processor');
-                    return await config.fallbackProcessor(item);
-                }
-                else {
-                    throw new Error('Circuit breaker is open - too many failures');
-                }
-            }
-            try {
-                const result = await processor(item);
-                return result;
-            }
-            catch (error) {
-                failedRequests++;
-                // Check if we should open the circuit
-                const failureRate = failedRequests / totalRequests;
-                if (totalRequests >= 10 && failureRate >= config.failureThreshold) {
-                    console.warn(`[CIRCUIT-BREAKER] Opening circuit due to high failure rate: ${(failureRate * 100).toFixed(1)}%`);
-                    circuitOpen = true;
-                    circuitOpenTime = Date.now();
-                }
-                throw error;
-            }
-        };
-        // Use adaptive concurrency with circuit breaker
-        return await ConcurrencyManager.processConcurrentlyWithAdaptiveLimit(items, wrappedProcessor, config);
-    }
-}
-exports.ConcurrencyManager = ConcurrencyManager;
 
 
 /***/ }),

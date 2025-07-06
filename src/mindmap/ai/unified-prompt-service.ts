@@ -400,7 +400,7 @@ Respond with JSON containing:
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await this.claudeClient.callClaude(prompt);
+        const response = await this.claudeClient.callClaude(prompt, 'unified-prompt');
         return response;
       } catch (error) {
         lastError = error;

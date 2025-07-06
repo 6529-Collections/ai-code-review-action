@@ -2,13 +2,7 @@ import { ConsolidatedTheme } from '../types/similarity-types';
 import { ExpansionDecision } from './ai/ai-expansion-decision-service';
 export interface ExpansionConfig {
     maxDepth: number;
-    concurrencyLimit: number;
-    maxRetries: number;
-    retryDelay: number;
-    retryBackoffMultiplier: number;
     enableProgressLogging: boolean;
-    dynamicConcurrency: boolean;
-    enableJitter: boolean;
 }
 export declare const DEFAULT_EXPANSION_CONFIG: ExpansionConfig;
 export interface ExpansionCandidate {
@@ -68,9 +62,9 @@ export declare class ThemeExpansionService {
     private expansionStopReasons;
     constructor(anthropicApiKey: string, config?: Partial<ExpansionConfig>);
     /**
-     * Process items concurrently with limit and retry logic
+     * Process items sequentially with retry logic
+     * ClaudeClient handles rate limiting and queuing
      */
-    private processConcurrentlyWithLimit;
     /**
      * Main entry point for expanding themes hierarchically
      */

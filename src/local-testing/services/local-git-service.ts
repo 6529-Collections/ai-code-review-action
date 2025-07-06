@@ -43,7 +43,7 @@ export class LocalGitService implements IGitService {
     }));
 
 
-    // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+    // Use AICodeAnalyzer for processing changed files
     const codeChanges =
       await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
 

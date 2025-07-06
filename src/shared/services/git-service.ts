@@ -92,10 +92,10 @@ export class GitService implements IGitService {
     }));
 
     console.log(
-      `[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`
+      `[GIT-SERVICE] Starting AI analysis of ${filesToAnalyze.length} files`
     );
 
-    // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
+    // Use AICodeAnalyzer for processing changed files
     const codeChanges =
       await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
 

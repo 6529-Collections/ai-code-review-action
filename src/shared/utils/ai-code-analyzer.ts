@@ -2,7 +2,6 @@ import * as path from 'path';
 import { ClaudeClient } from './claude-client';
 import { JsonExtractor } from './json-extractor';
 import { CodeAnalysisCache } from '../cache/code-analysis-cache';
-import { ConcurrencyManager } from './concurrency-manager';
 import { logger } from './logger';
 
 // Re-export interfaces for compatibility
@@ -89,7 +88,6 @@ export class AICodeAnalyzer {
     const fileMetrics = this.analyzeFileMetrics(changes);
     const changePatterns = this.extractChangePatterns(changes);
     const contextSummary = this.buildContextSummary(
-      changes,
       fileMetrics,
       changePatterns
     );
@@ -153,7 +151,8 @@ export class AICodeAnalyzer {
   }
 
   /**
-   * Process multiple files concurrently using ConcurrencyManager
+   * Process multiple files in parallel batches
+   * ClaudeClient handles rate limiting and concurrency
    */
   async processChangedFilesConcurrently(
     files: Array<{
@@ -164,46 +163,45 @@ export class AICodeAnalyzer {
   ): Promise<CodeChange[]> {
     logger.debug('CODE-ANALYSIS', `Processing ${files.length} files`);
 
-    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      files,
-      async (file) => {
-        return await this.processChangedFile(
+    // Process all files concurrently - let ClaudeClient handle rate limiting
+    // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+    logger.debug('CODE-ANALYSIS', `Processing all ${files.length} files concurrently`);
+    
+    const filePromises = files.map(async (file) => {
+      try {
+        const result = await this.processChangedFile(
           file.filename,
           file.diffPatch,
           file.changeType
         );
-      },
-      {
-        concurrencyLimit: 5,
-        maxRetries: 3,
-        enableLogging: false, // Disable ConcurrencyManager's own logging
-        onProgress: (completed, total) => {
-          // Only log major milestones
-          if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
-            logger.debug(
-              'CODE-ANALYSIS',
-              `Progress: ${completed}/${total} files`
-            );
-          }
-        },
-        onError: (error, item, retryCount) =>
-          logger.warn(
-            'CODE-ANALYSIS',
-            `Retry ${retryCount} for ${item.filename}: ${error.message}`
-          ),
+        return { success: true, result, file };
+      } catch (error) {
+        const errorObj = error instanceof Error ? error : new Error(String(error));
+        logger.warn(
+          'CODE-ANALYSIS',
+          `Failed: ${file.filename} - ${errorObj.message}`
+        );
+        return { success: false, error: errorObj, file };
       }
-    );
-
-    const { successful, failed } = ConcurrencyManager.separateResults(results);
+    });
+    
+    // Wait for all files to complete - ClaudeClient manages the 10 concurrent limit
+    const allResults = await Promise.all(filePromises);
+    
+    // Separate successful and failed results
+    const successful: CodeChange[] = [];
+    const failed: Array<{ filename: string; error: Error }> = [];
+    
+    for (const result of allResults) {
+      if (result.success) {
+        successful.push(result.result as CodeChange);
+      } else {
+        failed.push({ filename: result.file.filename, error: result.error as Error });
+      }
+    }
 
     if (failed.length > 0) {
       logger.warn('CODE-ANALYSIS', `${failed.length} files failed analysis`);
-      for (const failure of failed) {
-        logger.warn(
-          'CODE-ANALYSIS',
-          `Failed: ${failure.item.filename} - ${failure.error.message}`
-        );
-      }
     }
 
     logger.info(
@@ -227,7 +225,7 @@ export class AICodeAnalyzer {
       changeType
     );
 
-    const response = await this.claudeClient.callClaude(prompt);
+    const response = await this.claudeClient.callClaude(prompt, 'code-analysis', filename);
 
     const extractionResult = JsonExtractor.extractAndValidateJson(
       response,
@@ -505,7 +503,6 @@ Respond with ONLY the JSON object, no explanations.`;
   }
 
   private buildContextSummary(
-    changes: CodeChange[],
     metrics: {
       totalFiles: number;
       fileTypes: string[];

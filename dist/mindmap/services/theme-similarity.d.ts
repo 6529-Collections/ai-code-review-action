@@ -15,7 +15,6 @@ export declare class ThemeSimilarityService {
     private similarityCache;
     private similarityCalculator;
     private aiSimilarityService;
-    private batchProcessor;
     private businessDomainService;
     private themeNamingService;
     private pendingCalculations;
@@ -66,8 +65,4 @@ export declare class ThemeSimilarityService {
      * Fallback to individual processing if batch fails
      */
     private processBatchIndividually;
-    /**
-     * Convert AI similarity result to SimilarityMetrics
-     */
-    private convertAIResultToMetrics;
 }

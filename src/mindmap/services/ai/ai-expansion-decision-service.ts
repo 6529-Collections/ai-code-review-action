@@ -78,7 +78,7 @@ export class AIExpansionDecisionService {
    */
   private async getAIDecision(prompt: string): Promise<ExpansionDecision> {
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'expansion-decision');
 
       const extractionResult = JsonExtractor.extractAndValidateJson(
         response,

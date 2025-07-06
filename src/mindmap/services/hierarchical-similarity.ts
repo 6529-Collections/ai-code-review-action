@@ -7,7 +7,6 @@ import { GenericCache } from '@/shared/cache/generic-cache';
 import { ClaudeClient } from '@/shared/utils/claude-client';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { logInfo } from '../../utils';
-import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { logger } from '@/shared/utils/logger';
 
 /**
@@ -109,40 +108,34 @@ export class HierarchicalSimilarityService {
       `[HIERARCHICAL] Starting ${comparisons.length} Claude API calls with concurrency limit of 10`
     );
 
-    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      comparisons,
-      async (comparison) => {
-        return await this.analyzeCrossLevelSimilarityPair(comparison);
-      },
-      {
-        concurrencyLimit: 5,
-        maxRetries: 3,
-        enableLogging: false,
-        onProgress: (completed, total) => {
-          console.log(
-            `[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`
-          );
-        },
-        onError: (error, comparison, retryCount) => {
-          console.warn(
-            `[HIERARCHICAL] Retry ${retryCount} for comparison ${comparison.id}: ${error.message}`
-          );
-        },
+    // Process all comparisons concurrently - let ClaudeClient handle rate limiting
+    // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+    console.log(`[HIERARCHICAL] Processing all ${comparisons.length} comparisons concurrently`);
+    
+    const comparisonPromises = comparisons.map(async (comparison) => {
+      try {
+        const result = await this.analyzeCrossLevelSimilarityPair(comparison);
+        return { success: true, result };
+      } catch (error) {
+        console.warn(
+          `[HIERARCHICAL] Failed comparison: ${comparison.id} - ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+        return { success: false };
       }
-    );
-
-    // Extract successful results
+    });
+    
+    // Wait for all comparisons to complete - ClaudeClient manages the 10 concurrent limit
+    const allResults = await Promise.all(comparisonPromises);
+    
+    // Separate successful and failed results
     const successfulResults: CrossLevelSimilarity[] = [];
     let failedCount = 0;
-
-    for (const result of results) {
-      if (result && typeof result === 'object' && 'error' in result) {
-        failedCount++;
-        console.warn(
-          `[HIERARCHICAL] Failed comparison after all retries: ${result.item.id}`
-        );
+    
+    for (const result of allResults) {
+      if (result.success) {
+        successfulResults.push(result.result as CrossLevelSimilarity);
       } else {
-        successfulResults.push(result as CrossLevelSimilarity);
+        failedCount++;
       }
     }
 
@@ -640,7 +633,7 @@ Focus on business value and avoid merging themes with distinct business purposes
       console.log(
         `[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`
       );
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'hierarchical-analysis');
       console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
 
       const extractionResult = JsonExtractor.extractAndValidateJson(

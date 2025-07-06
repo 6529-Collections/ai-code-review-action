@@ -5,7 +5,6 @@ import {
 } from '../../types/mindmap-types';
 import { ClaudeClient } from '@/shared/utils/claude-client';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
-import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { logInfo } from '../../../utils';
 
 /**
@@ -31,7 +30,7 @@ export class AIDomainAnalyzer {
     const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'domain-classification');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'domain',
         'userValue',
@@ -235,7 +234,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
     const prompt = this.buildMultiDomainAnalysisPrompt(contexts);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'multi-domain-analysis');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'primaryDomains',
       ]);
@@ -261,44 +260,33 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
       `[AI-DOMAIN] Fallback to individual analysis for ${contexts.length} contexts`
     );
 
-    const domains = await ConcurrencyManager.processConcurrentlyWithLimit(
-      contexts,
-      async (ctx) => await this.classifyBusinessDomain(ctx),
-      {
-        concurrencyLimit: 5,
-        maxRetries: 2,
-        enableLogging: false,
-        onProgress: (completed, total) => {
-          console.log(
-            `[AI-DOMAIN] Individual analysis progress: ${completed}/${total}`
-          );
-        },
-        onError: (error, ctx, retryCount) => {
-          console.warn(
-            `[AI-DOMAIN] Retry ${retryCount} for context: ${error.message}`
-          );
-        },
-      }
-    );
-
-    // Filter successful results and handle errors
-    const successfulDomains: AIDomainClassification[] = [];
-
-    for (const result of domains) {
-      if (result && typeof result === 'object' && 'error' in result) {
-        console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback`);
-        // Add fallback domain for failed analysis
-        successfulDomains.push({
+    // Process all contexts concurrently - let ClaudeClient handle rate limiting
+    // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+    console.log(`[AI-DOMAIN] Processing all ${contexts.length} contexts concurrently`);
+    
+    const contextPromises = contexts.map(async (ctx) => {
+      try {
+        const result = await this.classifyBusinessDomain(ctx);
+        return result;
+      } catch (error) {
+        console.warn(
+          `[AI-DOMAIN] Individual analysis failed, using fallback: ${error instanceof Error ? error.message : 'Unknown error'}`
+        );
+        // Return fallback domain for failed analysis
+        return {
           domain: 'System Enhancement',
           userValue: 'Improve system functionality',
           businessCapability: 'Enhance system capabilities',
           confidence: 0.3,
           reasoning: 'AI analysis failed - using fallback',
-        });
-      } else {
-        successfulDomains.push(result as AIDomainClassification);
+        };
       }
-    }
+    });
+    
+    // Wait for all contexts to complete - ClaudeClient manages the 10 concurrent limit
+    const successfulDomains = await Promise.all(contextPromises);
+    
+    console.log(`[AI-DOMAIN] All ${successfulDomains.length} contexts processed`);
 
     return {
       primaryDomains: successfulDomains,

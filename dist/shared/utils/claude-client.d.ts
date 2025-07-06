@@ -53,6 +53,10 @@ export declare class ClaudeClient {
      */
     private static startQueueProcessor;
     /**
+     * Start periodic diagnostic logging every 10 seconds
+     */
+    private static startPeriodicLogging;
+    /**
      * Process the request queue with rate limiting
      */
     private static processQueue;

@@ -4,15 +4,12 @@ import {
   ConsolidatedTheme,
   ConsolidationConfig,
   ThemePair,
-  AISimilarityResult,
 } from '../types/similarity-types';
 import { SimilarityCache } from './similarity-cache';
 import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
 import { AISimilarityService } from './ai/ai-similarity';
-import { BatchProcessor } from './batch-processor';
 import { BusinessDomainService } from './business-domain';
 import { ThemeNamingService } from './theme-naming';
-import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { logger } from '@/shared/utils/logger';
 
 /**
@@ -31,7 +28,6 @@ export class ThemeSimilarityService {
   private similarityCache: SimilarityCache;
   private similarityCalculator: SimilarityCalculator;
   private aiSimilarityService: AISimilarityService;
-  private batchProcessor: BatchProcessor;
   private businessDomainService: BusinessDomainService;
   private themeNamingService: ThemeNamingService;
   private pendingCalculations: Map<string, Promise<SimilarityMetrics>> =
@@ -59,7 +55,6 @@ export class ThemeSimilarityService {
     this.similarityCache = new SimilarityCache();
     this.similarityCalculator = new SimilarityCalculator();
     this.aiSimilarityService = new AISimilarityService(anthropicApiKey);
-    this.batchProcessor = new BatchProcessor();
     this.businessDomainService = new BusinessDomainService(anthropicApiKey);
     this.themeNamingService = new ThemeNamingService();
 
@@ -183,10 +178,6 @@ export class ThemeSimilarityService {
           100
         : 0;
 
-    const reductionPercent = (
-      ((themes.length - hierarchical.length) / themes.length) *
-      100
-    ).toFixed(1);
 
     return hierarchical;
   }
@@ -248,40 +239,24 @@ export class ThemeSimilarityService {
     const batches = this.createPairBatches(pairs, batchSize);
 
 
-    // Process batches concurrently
-    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      batches,
-      async (batch) => {
-        return await this.processSimilarityBatch(batch);
-      },
-      {
-        concurrencyLimit: 3, // Fewer concurrent batches since each is larger
-        maxRetries: 2,
-        enableLogging: false,
-        onProgress: (completed, total) => {
-          // Only log major progress milestones to reduce noise
-          if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
-            const pairsCompleted = completed * batchSize;
-            const totalPairs = pairs.length;
-          }
-        },
-        onError: (error, batch, retryCount) => {
-        },
-      }
+    // Process batches using Promise.all
+    // ClaudeClient handles rate limiting and queuing
+    const results = await Promise.all(
+      batches.map(async (batch, index) => {
+        try {
+          return await this.processSimilarityBatch(batch);
+        } catch (error) {
+          logger.warn('THEME-SIMILARITY', `Batch ${index + 1} failed: ${error}`);
+          return new Map<string, SimilarityMetrics>(); // Return empty map for failed batch
+        }
+      })
     );
 
-    // Store successful results
+    // Store results
     let successCount = 0;
-    let failedCount = 0;
-
-    for (const result of results) {
-      if (result && typeof result === 'object' && 'error' in result) {
-        failedCount++;
-        // For failed batches, we can't process individual pairs, so skip them
-      } else {
+    for (const batchResultMap of results) {
+      if (batchResultMap.size > 0) {
         successCount++;
-        // result is a Map<string, SimilarityMetrics> from processSimilarityBatch
-        const batchResultMap = result as Map<string, SimilarityMetrics>;
         for (const [pairId, similarity] of batchResultMap) {
           similarities.set(pairId, similarity);
         }
@@ -332,23 +307,25 @@ export class ThemeSimilarityService {
     mergeGroups: Map<string, string[]>,
     allThemes: Theme[]
   ): Promise<ConsolidatedTheme[]> {
-    const consolidated: ConsolidatedTheme[] = [];
     const themeMap = new Map(allThemes.map((t) => [t.id, t]));
+    
+    // Process merge groups in parallel
+    const groupEntries = Array.from(mergeGroups.entries());
+    const consolidated = await Promise.all(
+      groupEntries.map(async ([, groupIds]) => {
+        const themesInGroup = groupIds
+          .map((id) => themeMap.get(id))
+          .filter((t): t is Theme => t !== undefined);
 
-    for (const [, groupIds] of mergeGroups) {
-      const themesInGroup = groupIds
-        .map((id) => themeMap.get(id))
-        .filter((t): t is Theme => t !== undefined);
-
-      if (themesInGroup.length === 1) {
-        // Single theme - convert to consolidated
-        consolidated.push(this.themeToConsolidated(themesInGroup[0]));
-      } else {
-        // Multiple themes - merge them
-        const merged = await this.mergeThemes(themesInGroup);
-        consolidated.push(merged);
-      }
-    }
+        if (themesInGroup.length === 1) {
+          // Single theme - convert to consolidated
+          return this.themeToConsolidated(themesInGroup[0]);
+        } else {
+          // Multiple themes - merge them
+          return await this.mergeThemes(themesInGroup);
+        }
+      })
+    );
 
     return consolidated;
   }
@@ -501,11 +478,15 @@ export class ThemeSimilarityService {
    * PRD: "Dynamic batch sizing" - adapt to content complexity
    */
   private calculateOptimalBatchSize(totalPairs: number): number {
-    // Dynamic batch sizing based on total pairs and estimated complexity
-    if (totalPairs <= 10) return Math.max(1, totalPairs); // Small PRs - process all at once
-    if (totalPairs <= 50) return 25; // Medium PRs - moderate batching
-    if (totalPairs <= 200) return 50; // Large PRs - larger batches for efficiency
-    return 75; // Very large PRs - maximum batch size for token limits
+    // Dynamic batch sizing optimized for concurrency while respecting token limits
+    // Target: Create enough batches to utilize 8-10 concurrent request slots
+    
+    // Apply token-based limits
+    if (totalPairs <= 10) return Math.max(1, Math.ceil(totalPairs / 3)); // 3-4 small batches
+    if (totalPairs <= 30) return Math.max(3, Math.ceil(totalPairs / 8)); // 8 batches max
+    if (totalPairs <= 100) return Math.max(5, Math.ceil(totalPairs / 10)); // 10 batches max
+    if (totalPairs <= 200) return Math.max(10, Math.ceil(totalPairs / 10)); // 10 batches max
+    return Math.max(15, Math.ceil(totalPairs / 10)); // Still target 10 batches for large sets
   }
 
   /**
@@ -647,44 +628,38 @@ Be conservative - only merge when themes serve the same business purpose.`;
     pairs: ThemePair[],
     results: Map<string, SimilarityMetrics>
   ): Promise<void> {
-
-    for (const pair of pairs) {
+    // Process individual pairs in parallel instead of sequential
+    // ClaudeClient handles rate limiting and queuing
+    const individualPromises = pairs.map(async (pair) => {
       try {
         const similarity = await this.calculateSimilarity(
           pair.theme1,
           pair.theme2
         );
-        results.set(pair.id, similarity);
+        return { pairId: pair.id, similarity };
       } catch (error) {
         // Set default non-match result
-        results.set(pair.id, {
-          combinedScore: 0,
-          nameScore: 0,
-          descriptionScore: 0,
-          businessScore: 0,
-          fileOverlap: 0,
-          patternScore: 0,
-        });
+        return {
+          pairId: pair.id,
+          similarity: {
+            combinedScore: 0,
+            nameScore: 0,
+            descriptionScore: 0,
+            businessScore: 0,
+            fileOverlap: 0,
+            patternScore: 0,
+          }
+        };
       }
+    });
+
+    // Wait for all individual calculations to complete
+    const individualResults = await Promise.all(individualPromises);
+    
+    // Store results in the map
+    for (const { pairId, similarity } of individualResults) {
+      results.set(pairId, similarity);
     }
   }
 
-  /**
-   * Convert AI similarity result to SimilarityMetrics
-   */
-  private convertAIResultToMetrics(
-    aiResult: AISimilarityResult
-  ): SimilarityMetrics {
-    return {
-      combinedScore: Math.max(0, Math.min(1, aiResult.semanticScore || 0)),
-      nameScore: Math.max(0, Math.min(1, aiResult.nameScore || 0)),
-      descriptionScore: Math.max(
-        0,
-        Math.min(1, aiResult.descriptionScore || 0)
-      ),
-      businessScore: Math.max(0, Math.min(1, aiResult.businessScore || 0)),
-      fileOverlap: 0, // Not available in AI result, would need separate calculation
-      patternScore: Math.max(0, Math.min(1, aiResult.patternScore || 0)),
-    };
-  }
 }

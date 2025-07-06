@@ -33,7 +33,7 @@ export class AIMindmapService {
     const prompt = this.buildDirectAssignmentPrompt(node, currentDepth);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'shouldExpand',
       ]);
@@ -304,7 +304,7 @@ RESPOND WITH JSON:
     const prompt = this.buildRootThemePrompt(semanticDiff);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'themes',
       ]);
@@ -495,7 +495,7 @@ Provide a brief, contextual explanation (max 20 words) of what this code does FO
 Focus on the relationship to the theme's purpose, not generic code description.`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
       return this.trimToLimit(response.trim(), 20);
     } catch (error) {
       return `Changes for ${viewingNode.name}`;

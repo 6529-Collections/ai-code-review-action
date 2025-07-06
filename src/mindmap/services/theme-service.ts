@@ -14,7 +14,6 @@ import {
   SmartContext,
 } from '@/shared/utils/ai-code-analyzer';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
-import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { performanceTracker } from '@/shared/utils/performance-tracker';
 import { 
   Theme,
@@ -26,11 +25,9 @@ import {
   ThemeAnalysisResult
 } from '@/shared/types/theme-types';
 
-// Concurrency configuration
-const PARALLEL_CONFIG = {
-  CONCURRENCY_LIMIT: 5,
+// Processing configuration
+const PROCESSING_CONFIG = {
   CHUNK_TIMEOUT: 120000, // 2 minutes
-  MAX_RETRIES: 3,
 } as const;
 
 
@@ -522,49 +519,41 @@ export class ThemeService {
 
       const chunks = chunkProcessor.splitChangedFiles(changedFiles);
 
-      // Parallel processing: analyze all chunks concurrently, then update context sequentially
+      // Process chunks in parallel batches
+      // ClaudeClient handles rate limiting and queuing
 
-      const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-        chunks,
-        (chunk) => {
-          const codeChange = codeChangeMap.get(chunk.filename);
-          return contextManager.analyzeChunkOnly(chunk, codeChange);
-        },
-        {
-          concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
-          maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-          enableLogging: false,
-          onProgress: (completed, total) => {
-            // Progress tracking without logging
-          },
-          onError: (error, chunk, retryCount) => {
-            // Error handling without logging
-          },
-        }
-      );
-
-      // Transform results to handle ConcurrencyManager's mixed return types
       const analysisResults: ChunkAnalysisResult[] = [];
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        if (result && typeof result === 'object' && 'error' in result) {
-          // Convert ConcurrencyManager error format to ChunkAnalysisResult format
-          const errorResult = result as { error: Error; item: CodeChunk };
-          analysisResults.push({
-            chunk: errorResult.item,
-            analysis: {
-              themeName: `Changes in ${errorResult.item.filename}`,
-              description: 'Analysis failed - using fallback',
-              businessImpact: 'Unknown impact',
-              confidence: 0.3,
-              codePattern: 'File modification',
-              suggestedParent: undefined,
-            },
-            error: errorResult.error.message,
-          });
-        } else {
-          analysisResults.push(result as ChunkAnalysisResult);
-        }
+      const batchSize = 10; // Match ClaudeClient MAX_CONCURRENT_REQUESTS
+      
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        const batch = chunks.slice(i, Math.min(i + batchSize, chunks.length));
+        
+        // Process batch in parallel
+        const batchPromises = batch.map(async (chunk) => {
+          try {
+            const codeChange = codeChangeMap.get(chunk.filename);
+            const result = await contextManager.analyzeChunkOnly(chunk, codeChange);
+            return result;
+          } catch (error) {
+            const errorObj = error instanceof Error ? error : new Error(String(error));
+            return {
+              chunk,
+              analysis: {
+                themeName: `Changes in ${chunk.filename}`,
+                description: 'Analysis failed - using fallback',
+                businessImpact: 'Unknown impact',
+                confidence: 0.3,
+                codePattern: 'File modification',
+                suggestedParent: undefined,
+              },
+              error: errorObj.message,
+            };
+          }
+        });
+        
+        // Wait for all chunks in batch to complete
+        const batchResults = await Promise.all(batchPromises);
+        analysisResults.push(...batchResults);
       }
 
 

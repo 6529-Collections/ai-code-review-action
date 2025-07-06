@@ -1,7 +1,6 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
 import { CodeChange } from '@/shared/utils/ai-code-analyzer';
 import * as exec from '@actions/exec';
-import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { SecureFileNamer } from '../utils/secure-file-namer';
 import { AIDomainAnalyzer } from './ai/ai-domain-analyzer';
 import { AIAnalysisContext } from '../types/mindmap-types';
@@ -23,37 +22,23 @@ export class BusinessDomainService {
     const batches = this.createDomainBatches(themes, batchSize);
 
 
-    // Process batches concurrently
-    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      batches,
-      async (batch) => {
-        return await this.processDomainBatch(batch);
-      },
-      {
-        concurrencyLimit: 3, // Fewer concurrent batches since each is larger
-        maxRetries: 2,
-        enableLogging: false,
-        onProgress: (completed, total) => {
-          const themesCompleted = completed * batchSize;
-          const totalThemes = themes.length;
-        },
-        onError: (error, batch, retryCount) => {
-        },
-      }
+    // Process batches using Promise.all
+    // ClaudeClient handles rate limiting and queuing
+    const results = await Promise.all(
+      batches.map(async (batch) => {
+        try {
+          return await this.processDomainBatch(batch);
+        } catch (error) {
+          console.warn(`[BUSINESS-DOMAIN] Batch failed: ${error}`);
+          return []; // Return empty array for failed batch
+        }
+      })
     );
 
     // Flatten batch results and group by domain
     const flatResults: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
-
     for (const batchResult of results) {
-      if (
-        batchResult &&
-        typeof batchResult === 'object' &&
-        'error' in batchResult
-      ) {
-        // Handle failed batch - use fallback for all themes in the failed batch
-        continue;
-      } else if (Array.isArray(batchResult)) {
+      if (Array.isArray(batchResult)) {
         flatResults.push(...batchResult);
       }
     }
@@ -461,11 +446,12 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
    * PRD: "Dynamic batch sizing" - adapt to content complexity
    */
   private calculateOptimalDomainBatchSize(totalThemes: number): number {
-    // Smaller batches for domain classification due to context complexity
-    if (totalThemes <= 5) return Math.max(1, totalThemes); // Very small PRs
-    if (totalThemes <= 20) return 10; // Small PRs - moderate batching
-    if (totalThemes <= 50) return 15; // Medium PRs - larger batches
-    return 20; // Large PRs - maximum batch size for domain analysis
+    // Optimize for concurrency while respecting domain analysis complexity
+    // Target: Create enough batches to utilize 6-10 concurrent request slots
+    if (totalThemes <= 5) return Math.max(1, Math.ceil(totalThemes / 3)); // 2-3 small batches
+    if (totalThemes <= 20) return Math.max(2, Math.ceil(totalThemes / 8)); // 6-8 batches
+    if (totalThemes <= 50) return Math.max(5, Math.ceil(totalThemes / 10)); // 8-10 batches
+    return Math.max(8, Math.ceil(totalThemes / 10)); // Target 10 batches for large sets
   }
 
   /**
