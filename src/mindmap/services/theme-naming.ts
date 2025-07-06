@@ -32,15 +32,11 @@ export class ThemeNamingService {
         });
 
         const result = this.parseMergedThemeNamingResponse(output);
-        console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
 
         // Validate the generated name
         if (this.isValidThemeName(result.name)) {
           return result;
         } else {
-          console.warn(
-            `[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`
-          );
           return {
             name: 'Merged Changes',
             description: 'Consolidated related changes',
@@ -50,7 +46,6 @@ export class ThemeNamingService {
         cleanup(); // Ensure file is cleaned up even if execution fails
       }
     } catch (error) {
-      console.warn('AI theme naming failed:', error);
       return {
         name: 'Merged Changes',
         description: 'Consolidated related changes',
@@ -233,16 +228,6 @@ Respond in this exact JSON format (no other text):
       };
     }
 
-    console.warn(
-      '[THEME-NAMING] JSON extraction failed:',
-      extractionResult.error
-    );
-    if (extractionResult.originalResponse) {
-      console.debug(
-        '[THEME-NAMING] Original response:',
-        extractionResult.originalResponse?.substring(0, 200) + '...'
-      );
-    }
 
     return {
       name: 'Merged Changes',

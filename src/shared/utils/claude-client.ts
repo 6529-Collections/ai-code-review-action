@@ -55,6 +55,7 @@ export class ClaudeClient {
   // Static shared rate limiting components
   private static requestQueue: QueueItem[] = [];
   private static activeRequests = 0;
+  private static activeRequestsByContext: Map<string, number> = new Map();
   private static readonly MAX_CONCURRENT_REQUESTS = 5;
   private static readonly MIN_REQUEST_INTERVAL = 200; // ms between requests
   private static isProcessing = false;
@@ -137,11 +138,9 @@ export class ClaudeClient {
       // Start processing if not already running
       ClaudeClient.startQueueProcessor();
 
-      // Log queue status every 10 requests
+      // Log enhanced queue status every 10 requests
       if (ClaudeClient.queueMetrics.totalQueued % 10 === 0) {
-        console.log(
-          `[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting, ${ClaudeClient.activeRequests} active, ${ClaudeClient.queueMetrics.totalProcessed} completed`
-        );
+        ClaudeClient.logEnhancedQueueStatus();
       }
     });
   }
@@ -198,6 +197,11 @@ export class ClaudeClient {
    */
   private static async processRequest(queueItem: QueueItem): Promise<void> {
     const startTime = Date.now();
+    const contextKey = ClaudeClient.getCategoryKey(queueItem.context);
+    
+    // Track active request by context
+    const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+    ClaudeClient.activeRequestsByContext.set(contextKey, currentActive + 1);
 
     try {
       // Create a temporary client instance for execution
@@ -236,6 +240,14 @@ export class ClaudeClient {
       await ClaudeClient.handleRequestError(queueItem, error);
     } finally {
       ClaudeClient.activeRequests--;
+      
+      // Remove from active context tracking
+      const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+      if (currentActive <= 1) {
+        ClaudeClient.activeRequestsByContext.delete(contextKey);
+      } else {
+        ClaudeClient.activeRequestsByContext.set(contextKey, currentActive - 1);
+      }
     }
   }
 
@@ -441,6 +453,7 @@ export class ClaudeClient {
 
     ClaudeClient.requestQueue = [];
     ClaudeClient.activeRequests = 0;
+    ClaudeClient.activeRequestsByContext.clear();
     ClaudeClient.isProcessing = false;
     ClaudeClient.processingPromise = null;
 
@@ -498,5 +511,78 @@ export class ClaudeClient {
         hasPromise: ClaudeClient.processingPromise !== null,
       },
     };
+  }
+
+  /**
+   * Log enhanced queue status with categorization
+   */
+  private static logEnhancedQueueStatus(): void {
+    const queueStats = ClaudeClient.getQueueCategoryStats();
+    const activeStats = ClaudeClient.getActiveCategoryStats();
+    
+    // Build waiting queue breakdown
+    const waitingBreakdown = Object.entries(queueStats)
+      .filter(([, count]) => count > 0)
+      .map(([context, count]) => `${count}×${context}`)
+      .join(', ');
+    
+    // Build active breakdown
+    const activeBreakdown = Object.entries(activeStats)
+      .filter(([, count]) => count > 0)
+      .map(([context, count]) => `${count}×${context}`)
+      .join(', ');
+    
+    const waitingDesc = waitingBreakdown || '0';
+    const activeDesc = activeBreakdown || '0';
+    
+    console.log(
+      `[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`
+    );
+  }
+
+  /**
+   * Get category statistics for waiting queue items
+   */
+  private static getQueueCategoryStats(): Record<string, number> {
+    const stats: Record<string, number> = {};
+    
+    for (const item of ClaudeClient.requestQueue) {
+      const key = ClaudeClient.getCategoryKey(item.context);
+      stats[key] = (stats[key] || 0) + 1;
+    }
+    
+    return stats;
+  }
+
+  /**
+   * Get category statistics for active requests
+   */
+  private static getActiveCategoryStats(): Record<string, number> {
+    const stats: Record<string, number> = {};
+    
+    for (const [context, count] of ClaudeClient.activeRequestsByContext) {
+      stats[context] = count;
+    }
+    
+    return stats;
+  }
+
+  /**
+   * Simplify context names for display
+   */
+  private static getCategoryKey(context: string): string {
+    // Simplify common context names for readability
+    const contextMap: Record<string, string> = {
+      'similarity-analysis': 'similarity',
+      'batch-similarity': 'batch-sim',
+      'domain-classification': 'domain', 
+      'multi-domain-analysis': 'multi-domain',
+      'theme-expansion': 'expansion',
+      'theme-analysis': 'theme',
+      'code-analysis': 'code',
+      'hierarchical-analysis': 'hierarchy'
+    };
+    
+    return contextMap[context] || context;
   }
 }

@@ -30729,8 +30729,6 @@ class OutputSaver {
         // Save to file
         const jsonContent = JSON.stringify(savedAnalysis, null, 2);
         fs.writeFileSync(filepath, jsonContent, 'utf8');
-        console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);
-        console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);
         return filepath;
     }
     /**
@@ -30758,7 +30756,6 @@ class OutputSaver {
             return JSON.parse(content);
         }
         catch (error) {
-            console.error(`[OUTPUT-SAVER] Failed to load analysis ${filename}:`, error);
             return null;
         }
     }
@@ -30779,11 +30776,7 @@ class OutputSaver {
                 deletedCount++;
             }
             catch (error) {
-                console.warn(`[OUTPUT-SAVER] Failed to delete ${filename}:`, error);
             }
-        }
-        if (deletedCount > 0) {
-            console.log(`[OUTPUT-SAVER] Cleaned up ${deletedCount} old analysis files`);
         }
     }
     /**
@@ -31276,7 +31269,6 @@ exports.AISimilarityService = void 0;
 const similarity_calculator_1 = __nccwpck_require__(241);
 const json_extractor_1 = __nccwpck_require__(8168);
 const claude_client_1 = __nccwpck_require__(3861);
-const logger_1 = __nccwpck_require__(411);
 class AISimilarityService {
     constructor(anthropicApiKey) {
         this.anthropicApiKey = anthropicApiKey;
@@ -31288,12 +31280,9 @@ class AISimilarityService {
         try {
             const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
             const result = this.parseAISimilarityResponse(output);
-            logger_1.logger.debug('AI-SIMILARITY', `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
-            logger_1.logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
             return result;
         }
         catch (error) {
-            logger_1.logger.warn('AI-SIMILARITY', `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`);
             // Fallback to basic string matching
             return this.createFallbackSimilarity(theme1, theme2);
         }
@@ -31394,10 +31383,7 @@ CRITICAL: Respond with ONLY valid JSON.
                 businessScore: 0,
             };
         }
-        // Log the extraction failure for debugging
-        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
         if (extractionResult.originalResponse) {
-            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
         return {
             nameScore: 0,
@@ -31434,7 +31420,6 @@ CRITICAL: Respond with ONLY valid JSON.
     async calculateBatchSimilarity(batchPrompt, expectedResults) {
         try {
             const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
-            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
             // Extract and validate JSON response
             const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
             if (!jsonResult.success) {
@@ -31446,13 +31431,10 @@ CRITICAL: Respond with ONLY valid JSON.
                 throw new Error('Invalid batch response: missing results array');
             }
             if (batchData.results.length !== expectedResults) {
-                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
             }
-            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
             return batchData;
         }
         catch (error) {
-            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
             throw error;
         }
     }
@@ -31713,11 +31695,9 @@ class BusinessDomainService {
     }
     async groupByBusinessDomain(themes) {
         const domains = new Map();
-        console.log(`[DOMAIN] Extracting business domains for ${themes.length} themes using batch processing`);
         // Use batch processing for significant performance improvement
         const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
         const batches = this.createDomainBatches(themes, batchSize);
-        console.log(`[DOMAIN-BATCH] Split into ${batches.length} batches of ~${batchSize} themes each`);
         // Process batches concurrently
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
             return await this.processDomainBatch(batch);
@@ -31728,10 +31708,8 @@ class BusinessDomainService {
             onProgress: (completed, total) => {
                 const themesCompleted = completed * batchSize;
                 const totalThemes = themes.length;
-                console.log(`[DOMAIN-BATCH] Progress: ${themesCompleted}/${totalThemes} themes processed (${completed}/${total} batches)`);
             },
             onError: (error, batch, retryCount) => {
-                console.warn(`[DOMAIN-BATCH] Retry ${retryCount} for batch of ${batch.length} themes: ${error.message}`);
             },
         });
         // Flatten batch results and group by domain
@@ -31740,7 +31718,6 @@ class BusinessDomainService {
             if (batchResult &&
                 typeof batchResult === 'object' &&
                 'error' in batchResult) {
-                console.warn(`[DOMAIN-BATCH] Batch processing failed, using fallback`);
                 // Handle failed batch - use fallback for all themes in the failed batch
                 continue;
             }
@@ -31751,7 +31728,6 @@ class BusinessDomainService {
         // Group results by domain
         for (const result of flatResults) {
             const { theme, domain } = result;
-            console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
             if (!domains.has(domain)) {
                 domains.set(domain, []);
             }
@@ -31780,12 +31756,10 @@ class BusinessDomainService {
             }
             else {
                 // Medium confidence - use with warning
-                console.log(`[DOMAIN] Medium confidence (${domainClassification.confidence}) for theme "${theme.name}": ${domainClassification.domain}`);
                 return domainClassification.domain;
             }
         }
         catch (error) {
-            console.warn(`[DOMAIN] AI classification failed for theme "${theme.name}": ${error}`);
             // Graceful degradation: use simplified heuristic fallback
             return this.extractBusinessDomainFallback(theme.name, theme.description);
         }
@@ -31868,13 +31842,11 @@ class BusinessDomainService {
             return stage1Result;
         }
         // Stage 2: Try structured prompt with context
-        console.log(`[AI-DOMAIN] Stage 1 failed for "${name}", trying Stage 2`);
         const stage2Result = await this.tryDomainExtraction(name, prompt, 'Stage 2 (Detailed)');
         if (stage2Result && this.isValidDomainName(stage2Result)) {
             return stage2Result;
         }
         // Stage 3: Enhanced fallback using AI response keywords
-        console.warn(`[AI-DOMAIN] Both stages failed for "${name}", using enhanced fallback`);
         return this.extractBusinessDomainFallback(name, description || '');
     }
     async tryDomainExtraction(name, prompt, stage) {
@@ -31891,7 +31863,6 @@ class BusinessDomainService {
                     },
                 });
                 const domain = this.parseDomainExtractionResponse(output);
-                console.log(`[AI-DOMAIN] ${stage} result for "${name}": "${domain}"`);
                 return domain;
             }
             finally {
@@ -31899,7 +31870,6 @@ class BusinessDomainService {
             }
         }
         catch (error) {
-            console.warn(`[AI-DOMAIN] ${stage} extraction failed:`, error);
             return null;
         }
     }
@@ -31980,7 +31950,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
         // Second try: extract domain from longer response
         const extractedDomain = this.extractDomainFromResponse(output);
         if (extractedDomain && this.isValidDomainName(extractedDomain)) {
-            console.log(`[AI-DOMAIN] Extracted domain from response: "${extractedDomain}"`);
             return extractedDomain;
         }
         return domain || 'General Changes';
@@ -32108,12 +32077,10 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
                     domain = batchResults.primaryDomains[i].domain;
                 }
                 results.push({ theme, domain });
-                console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
             }
             return results;
         }
         catch (error) {
-            console.warn(`[DOMAIN-BATCH] Batch processing failed for ${themes.length} themes, falling back to individual processing: ${error}`);
             // Fallback to individual processing
             return await this.processDomainBatchIndividually(themes);
         }
@@ -32129,7 +32096,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
                 results.push({ theme, domain });
             }
             catch (error) {
-                console.warn(`[DOMAIN-BATCH-FALLBACK] Failed individual processing for "${theme.name}": ${error}`);
                 // Use fallback domain for failed individual processing
                 const fallbackDomain = this.extractBusinessDomainFallback(theme.name, theme.description);
                 results.push({ theme, domain: fallbackDomain });
@@ -34408,13 +34374,11 @@ class ThemeNamingService {
                     },
                 });
                 const result = this.parseMergedThemeNamingResponse(output);
-                console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
                 // Validate the generated name
                 if (this.isValidThemeName(result.name)) {
                     return result;
                 }
                 else {
-                    console.warn(`[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`);
                     return {
                         name: 'Merged Changes',
                         description: 'Consolidated related changes',
@@ -34426,7 +34390,6 @@ class ThemeNamingService {
             }
         }
         catch (error) {
-            console.warn('AI theme naming failed:', error);
             return {
                 name: 'Merged Changes',
                 description: 'Consolidated related changes',
@@ -34564,10 +34527,6 @@ Respond in this exact JSON format (no other text):
                 description: parsed.description || 'Consolidated related changes',
             };
         }
-        console.warn('[THEME-NAMING] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[THEME-NAMING] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
-        }
         return {
             name: 'Merged Changes',
             description: 'Consolidated related changes',
@@ -34678,7 +34637,6 @@ class ClaudeService {
         }
         catch (err) {
             const error = err instanceof Error ? err.message : String(err);
-            console.warn('Claude analysis failed, using fallback:', error);
             return this.createFallbackAnalysis(chunk);
         }
     }
@@ -34760,10 +34718,6 @@ CRITICAL: Respond with ONLY valid JSON:
                 mainClassesChanged: codeChange?.classesChanged || data.mainClassesChanged || [],
             };
         }
-        console.warn('[THEME-SERVICE] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[THEME-SERVICE] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
-        }
         // Use the better fallback that includes filename
         return this.createFallbackAnalysis(chunk);
     }
@@ -34821,7 +34775,6 @@ class ThemeContextManager {
     processBatchResults(results, codeChangeMap) {
         for (const result of results) {
             if (result.error) {
-                console.warn(`Chunk analysis failed for ${result.chunk.filename}: ${result.error}`);
             }
             const placement = this.determineThemePlacement(result.analysis);
             const codeChange = codeChangeMap.get(result.chunk.filename);
@@ -35147,7 +35100,6 @@ class ThemeService {
             }
         }
         catch (error) {
-            console.error('Theme analysis failed:', error);
             analysisResult.summary = 'Theme analysis failed - using fallback';
             const fallbackThemes = this.createFallbackThemes(changedFiles);
             analysisResult.themes = fallbackThemes.map((theme) => ({
@@ -35333,7 +35285,6 @@ const batch_processor_1 = __nccwpck_require__(1174);
 const business_domain_1 = __nccwpck_require__(6);
 const theme_naming_1 = __nccwpck_require__(3111);
 const concurrency_manager_1 = __nccwpck_require__(4482);
-const logger_1 = __nccwpck_require__(411);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.pendingCalculations = new Map();
@@ -35360,20 +35311,17 @@ class ThemeSimilarityService {
         this.batchProcessor = new batch_processor_1.BatchProcessor();
         this.businessDomainService = new business_domain_1.BusinessDomainService(anthropicApiKey);
         this.themeNamingService = new theme_naming_1.ThemeNamingService();
-        logger_1.logger.info('SIMILARITY', `Config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
     }
     async calculateSimilarity(theme1, theme2) {
         const cacheKey = this.similarityCache.getCacheKey(theme1, theme2);
         // Check if already calculating
         const pending = this.pendingCalculations.get(cacheKey);
         if (pending) {
-            logger_1.logger.trace('SIMILARITY', `Pending: ${theme1.name} vs ${theme2.name}`);
             return pending;
         }
         // Check cache
         const cached = this.similarityCache.getCachedSimilarity(cacheKey);
         if (cached) {
-            logger_1.logger.trace('SIMILARITY', `Cache hit: ${theme1.name} vs ${theme2.name}`);
             return cached.similarity;
         }
         // Start new calculation
@@ -35393,7 +35341,6 @@ class ThemeSimilarityService {
         const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
         // Skip only if NO file overlap AND completely different names
         if (fileOverlap === 0 && nameSimilarity < 0.1) {
-            logger_1.logger.trace('SIMILARITY', `Skip: no overlap - ${theme1.name} vs ${theme2.name}`);
             const result = {
                 combinedScore: 0,
                 nameScore: 0,
@@ -35423,7 +35370,6 @@ class ThemeSimilarityService {
         return result;
     }
     async consolidateThemes(themes) {
-        console.log(`[CONSOLIDATION] Starting with ${themes.length} themes`);
         if (themes.length === 0)
             return [];
         const startTime = Date.now();
@@ -35431,15 +35377,10 @@ class ThemeSimilarityService {
             .getClaudeClient()
             .getMetrics().totalCalls;
         // Step 1: Find merge candidates
-        logger_1.logger.info('SIMILARITY', 'Step 1: Finding merge candidates');
         const mergeGroups = await this.findMergeGroups(themes);
-        logger_1.logger.info('SIMILARITY', `Found ${mergeGroups.size} merge groups`);
         // Step 2: Create consolidated themes
-        logger_1.logger.info('SIMILARITY', 'Step 2: Creating consolidated themes');
         const consolidated = await this.createConsolidatedThemes(mergeGroups, themes);
-        logger_1.logger.info('SIMILARITY', `Created ${consolidated.length} consolidated themes`);
         // Step 3: Build hierarchies
-        logger_1.logger.info('SIMILARITY', 'Step 3: Building hierarchies');
         const hierarchical = await this.buildHierarchies(consolidated);
         // Update effectiveness metrics
         this.effectiveness.processingTime = Date.now() - startTime;
@@ -35454,7 +35395,6 @@ class ThemeSimilarityService {
                 : 0;
         const reductionPercent = (((themes.length - hierarchical.length) / themes.length) *
             100).toFixed(1);
-        logger_1.logger.info('SIMILARITY', `Final result: ${hierarchical.length} themes (${reductionPercent}% reduction, ${this.effectiveness.mergeRate.toFixed(1)}% merge rate)`);
         return hierarchical;
     }
     /**
@@ -35476,7 +35416,6 @@ class ThemeSimilarityService {
         };
     }
     async findMergeGroups(themes) {
-        logger_1.logger.debug('SIMILARITY', `Using batch processing for ${themes.length} themes`);
         // Step 1: Collect all theme pairs that need comparison
         const allPairs = [];
         for (let i = 0; i < themes.length; i++) {
@@ -35489,7 +35428,6 @@ class ThemeSimilarityService {
             }
         }
         this.effectiveness.pairsAnalyzed = allPairs.length;
-        logger_1.logger.info('SIMILARITY', `Total pairs to analyze: ${allPairs.length}`);
         // Step 2: Calculate similarities using batch processing and early termination
         const similarities = await this.calculateBatchSimilarities(allPairs);
         // Step 3: Build merge groups based on calculated similarities
@@ -35498,11 +35436,9 @@ class ThemeSimilarityService {
     async calculateBatchSimilarities(pairs) {
         const similarities = new Map();
         // Use batch AI processing for significant performance improvement
-        logger_1.logger.debug('SIMILARITY', `Processing ${pairs.length} pairs in batches`);
         // Split into batches for optimal processing
         const batchSize = this.calculateOptimalBatchSize(pairs.length);
         const batches = this.createPairBatches(pairs, batchSize);
-        logger_1.logger.debug('SIMILARITY', `${batches.length} batches of ~${batchSize} pairs each`);
         // Process batches concurrently
         const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
             return await this.processSimilarityBatch(batch);
@@ -35515,11 +35451,9 @@ class ThemeSimilarityService {
                 if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
                     const pairsCompleted = completed * batchSize;
                     const totalPairs = pairs.length;
-                    logger_1.logger.debug('SIMILARITY', `Progress: ${pairsCompleted}/${totalPairs} pairs (${Math.round((completed / total) * 100)}%)`);
                 }
             },
             onError: (error, batch, retryCount) => {
-                logger_1.logger.warn('SIMILARITY', `Retry ${retryCount} for batch: ${error.message}`);
             },
         });
         // Store successful results
@@ -35529,7 +35463,6 @@ class ThemeSimilarityService {
             if (result && typeof result === 'object' && 'error' in result) {
                 failedCount++;
                 // For failed batches, we can't process individual pairs, so skip them
-                console.warn(`[SIMILARITY-BATCH] Batch failed: ${result.error}`);
             }
             else {
                 successCount++;
@@ -35540,7 +35473,6 @@ class ThemeSimilarityService {
                 }
             }
         }
-        logger_1.logger.info('SIMILARITY', `Batch processing: ${successCount} successful, ${failedCount} failed`);
         return similarities;
     }
     buildMergeGroupsFromSimilarities(themes, similarities) {
@@ -35562,7 +35494,6 @@ class ThemeSimilarityService {
                     similarity.combinedScore >= this.config.similarityThreshold) {
                     group.push(otherTheme.id);
                     processed.add(otherTheme.id);
-                    logger_1.logger.trace('SIMILARITY', `Merge: ${theme.name} + ${otherTheme.name} (${similarity.combinedScore.toFixed(2)})`);
                 }
             }
             mergeGroups.set(theme.id, group);
@@ -35592,12 +35523,9 @@ class ThemeSimilarityService {
         // Group themes by business domain
         const domainGroups = await this.businessDomainService.groupByBusinessDomain(themes);
         const result = [];
-        console.log(`[HIERARCHY] Found ${domainGroups.size} business domains:`);
         for (const [domain, domainThemes] of domainGroups) {
-            console.log(`[HIERARCHY] Domain "${domain}": ${domainThemes.length} themes (min required: ${this.config.minThemesForParent})`);
             if (domainThemes.length >= this.config.minThemesForParent) {
                 // Create parent theme
-                console.log(`[HIERARCHY] ✅ Creating parent theme for "${domain}"`);
                 const parentTheme = this.themeNamingService.createParentTheme(domain, domainThemes);
                 // Set children
                 domainThemes.forEach((child) => {
@@ -35609,7 +35537,6 @@ class ThemeSimilarityService {
             }
             else {
                 // Keep as root themes
-                console.log(`[HIERARCHY] ⚠️ Keeping "${domain}" themes as individual (below threshold)`);
                 domainThemes.forEach((theme) => {
                     theme.level = 0;
                     result.push(theme);
@@ -35745,10 +35672,8 @@ class ThemeSimilarityService {
             const response = await this.aiSimilarityService.calculateBatchSimilarity(batchPrompt, pairs.length);
             // Parse batch response into individual similarity metrics
             this.parseBatchSimilarityResponse(response, pairs, batchResults);
-            console.log(`[SIMILARITY-BATCH] Successfully processed batch of ${pairs.length} pairs`);
         }
         catch (error) {
-            console.warn(`[SIMILARITY-BATCH] Batch processing failed for ${pairs.length} pairs, falling back to individual processing: ${error}`);
             // Fallback to individual processing if batch fails
             await this.processBatchIndividually(pairs, batchResults);
         }
@@ -35822,10 +35747,8 @@ Be conservative - only merge when themes serve the same business purpose.`;
                     results.set(pair.id, similarity);
                 }
             }
-            console.log(`[SIMILARITY-BATCH] Parsed ${results.size}/${pairs.length} similarity results from batch`);
         }
         catch (error) {
-            console.warn(`[SIMILARITY-BATCH] Failed to parse batch response: ${error}`);
             throw error;
         }
     }
@@ -35833,14 +35756,12 @@ Be conservative - only merge when themes serve the same business purpose.`;
      * Fallback to individual processing if batch fails
      */
     async processBatchIndividually(pairs, results) {
-        console.log(`[SIMILARITY-FALLBACK] Processing ${pairs.length} pairs individually`);
         for (const pair of pairs) {
             try {
                 const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
                 results.set(pair.id, similarity);
             }
             catch (error) {
-                console.warn(`[SIMILARITY-FALLBACK] Failed individual processing for ${pair.id}: ${error}`);
                 // Set default non-match result
                 results.set(pair.id, {
                     combinedScore: 0,
@@ -37203,9 +37124,9 @@ class ClaudeClient {
             ClaudeClient.queueMetrics.maxQueueLength = Math.max(ClaudeClient.queueMetrics.maxQueueLength, ClaudeClient.requestQueue.length);
             // Start processing if not already running
             ClaudeClient.startQueueProcessor();
-            // Log queue status every 10 requests
+            // Log enhanced queue status every 10 requests
             if (ClaudeClient.queueMetrics.totalQueued % 10 === 0) {
-                console.log(`[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting, ${ClaudeClient.activeRequests} active, ${ClaudeClient.queueMetrics.totalProcessed} completed`);
+                ClaudeClient.logEnhancedQueueStatus();
             }
         });
     }
@@ -37253,6 +37174,10 @@ class ClaudeClient {
      */
     static async processRequest(queueItem) {
         const startTime = Date.now();
+        const contextKey = ClaudeClient.getCategoryKey(queueItem.context);
+        // Track active request by context
+        const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+        ClaudeClient.activeRequestsByContext.set(contextKey, currentActive + 1);
         try {
             // Create a temporary client instance for execution
             const tempClient = new ClaudeClient(process.env.ANTHROPIC_API_KEY || '');
@@ -37277,6 +37202,14 @@ class ClaudeClient {
         }
         finally {
             ClaudeClient.activeRequests--;
+            // Remove from active context tracking
+            const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+            if (currentActive <= 1) {
+                ClaudeClient.activeRequestsByContext.delete(contextKey);
+            }
+            else {
+                ClaudeClient.activeRequestsByContext.set(contextKey, currentActive - 1);
+            }
         }
     }
     /**
@@ -37437,6 +37370,7 @@ class ClaudeClient {
         });
         ClaudeClient.requestQueue = [];
         ClaudeClient.activeRequests = 0;
+        ClaudeClient.activeRequestsByContext.clear();
         ClaudeClient.isProcessing = false;
         ClaudeClient.processingPromise = null;
         // Reset metrics
@@ -37488,11 +37422,70 @@ class ClaudeClient {
             },
         };
     }
+    /**
+     * Log enhanced queue status with categorization
+     */
+    static logEnhancedQueueStatus() {
+        const queueStats = ClaudeClient.getQueueCategoryStats();
+        const activeStats = ClaudeClient.getActiveCategoryStats();
+        // Build waiting queue breakdown
+        const waitingBreakdown = Object.entries(queueStats)
+            .filter(([, count]) => count > 0)
+            .map(([context, count]) => `${count}×${context}`)
+            .join(', ');
+        // Build active breakdown
+        const activeBreakdown = Object.entries(activeStats)
+            .filter(([, count]) => count > 0)
+            .map(([context, count]) => `${count}×${context}`)
+            .join(', ');
+        const waitingDesc = waitingBreakdown || '0';
+        const activeDesc = activeBreakdown || '0';
+        console.log(`[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`);
+    }
+    /**
+     * Get category statistics for waiting queue items
+     */
+    static getQueueCategoryStats() {
+        const stats = {};
+        for (const item of ClaudeClient.requestQueue) {
+            const key = ClaudeClient.getCategoryKey(item.context);
+            stats[key] = (stats[key] || 0) + 1;
+        }
+        return stats;
+    }
+    /**
+     * Get category statistics for active requests
+     */
+    static getActiveCategoryStats() {
+        const stats = {};
+        for (const [context, count] of ClaudeClient.activeRequestsByContext) {
+            stats[context] = count;
+        }
+        return stats;
+    }
+    /**
+     * Simplify context names for display
+     */
+    static getCategoryKey(context) {
+        // Simplify common context names for readability
+        const contextMap = {
+            'similarity-analysis': 'similarity',
+            'batch-similarity': 'batch-sim',
+            'domain-classification': 'domain',
+            'multi-domain-analysis': 'multi-domain',
+            'theme-expansion': 'expansion',
+            'theme-analysis': 'theme',
+            'code-analysis': 'code',
+            'hierarchical-analysis': 'hierarchy'
+        };
+        return contextMap[context] || context;
+    }
 }
 exports.ClaudeClient = ClaudeClient;
 // Static shared rate limiting components
 ClaudeClient.requestQueue = [];
 ClaudeClient.activeRequests = 0;
+ClaudeClient.activeRequestsByContext = new Map();
 ClaudeClient.MAX_CONCURRENT_REQUESTS = 5;
 ClaudeClient.MIN_REQUEST_INTERVAL = 200; // ms between requests
 ClaudeClient.isProcessing = false;

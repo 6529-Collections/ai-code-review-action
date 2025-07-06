@@ -71,7 +71,6 @@ class ClaudeService {
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      console.warn('Claude analysis failed, using fallback:', error);
       return this.createFallbackAnalysis(chunk);
     }
   }
@@ -192,16 +191,6 @@ CRITICAL: Respond with ONLY valid JSON:
       };
     }
 
-    console.warn(
-      '[THEME-SERVICE] JSON extraction failed:',
-      extractionResult.error
-    );
-    if (extractionResult.originalResponse) {
-      console.debug(
-        '[THEME-SERVICE] Original response:',
-        extractionResult.originalResponse?.substring(0, 200) + '...'
-      );
-    }
 
     // Use the better fallback that includes filename
     return this.createFallbackAnalysis(chunk);
@@ -281,9 +270,6 @@ class ThemeContextManager {
   ): void {
     for (const result of results) {
       if (result.error) {
-        console.warn(
-          `Chunk analysis failed for ${result.chunk.filename}: ${result.error}`
-        );
       }
       const placement = this.determineThemePlacement(result.analysis);
       const codeChange = codeChangeMap.get(result.chunk.filename);
@@ -726,7 +712,6 @@ export class ThemeService {
         analysisResult.expandable.hasChildThemes = hasHierarchy;
       }
     } catch (error) {
-      console.error('Theme analysis failed:', error);
       analysisResult.summary = 'Theme analysis failed - using fallback';
       const fallbackThemes = this.createFallbackThemes(changedFiles);
       analysisResult.themes = fallbackThemes.map((theme) => ({

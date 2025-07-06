@@ -34,6 +34,7 @@ export declare class ClaudeClient {
     private readonly anthropicApiKey;
     private static requestQueue;
     private static activeRequests;
+    private static activeRequestsByContext;
     private static readonly MAX_CONCURRENT_REQUESTS;
     private static readonly MIN_REQUEST_INTERVAL;
     private static isProcessing;
@@ -111,4 +112,20 @@ export declare class ClaudeClient {
             hasPromise: boolean;
         };
     };
+    /**
+     * Log enhanced queue status with categorization
+     */
+    private static logEnhancedQueueStatus;
+    /**
+     * Get category statistics for waiting queue items
+     */
+    private static getQueueCategoryStats;
+    /**
+     * Get category statistics for active requests
+     */
+    private static getActiveCategoryStats;
+    /**
+     * Simplify context names for display
+     */
+    private static getCategoryKey;
 }

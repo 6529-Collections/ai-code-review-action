@@ -17,17 +17,11 @@ export class BusinessDomainService {
   ): Promise<Map<string, ConsolidatedTheme[]>> {
     const domains = new Map<string, ConsolidatedTheme[]>();
 
-    console.log(
-      `[DOMAIN] Extracting business domains for ${themes.length} themes using batch processing`
-    );
 
     // Use batch processing for significant performance improvement
     const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
     const batches = this.createDomainBatches(themes, batchSize);
 
-    console.log(
-      `[DOMAIN-BATCH] Split into ${batches.length} batches of ~${batchSize} themes each`
-    );
 
     // Process batches concurrently
     const results = await ConcurrencyManager.processConcurrentlyWithLimit(
@@ -42,14 +36,8 @@ export class BusinessDomainService {
         onProgress: (completed, total) => {
           const themesCompleted = completed * batchSize;
           const totalThemes = themes.length;
-          console.log(
-            `[DOMAIN-BATCH] Progress: ${themesCompleted}/${totalThemes} themes processed (${completed}/${total} batches)`
-          );
         },
         onError: (error, batch, retryCount) => {
-          console.warn(
-            `[DOMAIN-BATCH] Retry ${retryCount} for batch of ${batch.length} themes: ${error.message}`
-          );
         },
       }
     );
@@ -63,7 +51,6 @@ export class BusinessDomainService {
         typeof batchResult === 'object' &&
         'error' in batchResult
       ) {
-        console.warn(`[DOMAIN-BATCH] Batch processing failed, using fallback`);
         // Handle failed batch - use fallback for all themes in the failed batch
         continue;
       } else if (Array.isArray(batchResult)) {
@@ -74,7 +61,6 @@ export class BusinessDomainService {
     // Group results by domain
     for (const result of flatResults) {
       const { theme, domain } = result;
-      console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
 
       if (!domains.has(domain)) {
         domains.set(domain, []);
@@ -110,15 +96,9 @@ export class BusinessDomainService {
         return domainClassification.domain;
       } else {
         // Medium confidence - use with warning
-        console.log(
-          `[DOMAIN] Medium confidence (${domainClassification.confidence}) for theme "${theme.name}": ${domainClassification.domain}`
-        );
         return domainClassification.domain;
       }
     } catch (error) {
-      console.warn(
-        `[DOMAIN] AI classification failed for theme "${theme.name}": ${error}`
-      );
 
       // Graceful degradation: use simplified heuristic fallback
       return this.extractBusinessDomainFallback(theme.name, theme.description);
@@ -245,7 +225,6 @@ export class BusinessDomainService {
     }
 
     // Stage 2: Try structured prompt with context
-    console.log(`[AI-DOMAIN] Stage 1 failed for "${name}", trying Stage 2`);
     const stage2Result = await this.tryDomainExtraction(
       name,
       prompt,
@@ -257,9 +236,6 @@ export class BusinessDomainService {
     }
 
     // Stage 3: Enhanced fallback using AI response keywords
-    console.warn(
-      `[AI-DOMAIN] Both stages failed for "${name}", using enhanced fallback`
-    );
     return this.extractBusinessDomainFallback(name, description || '');
   }
 
@@ -284,14 +260,12 @@ export class BusinessDomainService {
         });
 
         const domain = this.parseDomainExtractionResponse(output);
-        console.log(`[AI-DOMAIN] ${stage} result for "${name}": "${domain}"`);
 
         return domain;
       } finally {
         cleanup();
       }
     } catch (error) {
-      console.warn(`[AI-DOMAIN] ${stage} extraction failed:`, error);
       return null;
     }
   }
@@ -385,9 +359,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
     // Second try: extract domain from longer response
     const extractedDomain = this.extractDomainFromResponse(output);
     if (extractedDomain && this.isValidDomainName(extractedDomain)) {
-      console.log(
-        `[AI-DOMAIN] Extracted domain from response: "${extractedDomain}"`
-      );
       return extractedDomain;
     }
 
@@ -545,16 +516,10 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
         }
 
         results.push({ theme, domain });
-        console.log(
-          `[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`
-        );
       }
 
       return results;
     } catch (error) {
-      console.warn(
-        `[DOMAIN-BATCH] Batch processing failed for ${themes.length} themes, falling back to individual processing: ${error}`
-      );
 
       // Fallback to individual processing
       return await this.processDomainBatchIndividually(themes);
@@ -574,9 +539,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
         const domain = await this.extractBusinessDomainWithAI(theme);
         results.push({ theme, domain });
       } catch (error) {
-        console.warn(
-          `[DOMAIN-BATCH-FALLBACK] Failed individual processing for "${theme.name}": ${error}`
-        );
         // Use fallback domain for failed individual processing
         const fallbackDomain = this.extractBusinessDomainFallback(
           theme.name,

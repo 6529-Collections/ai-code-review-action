@@ -63,8 +63,6 @@ export class OutputSaver {
     const jsonContent = JSON.stringify(savedAnalysis, null, 2);
     fs.writeFileSync(filepath, jsonContent, 'utf8');
 
-    console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);
-    console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);
     
 
     return filepath;
@@ -98,7 +96,6 @@ export class OutputSaver {
       const content = fs.readFileSync(filepath, 'utf8');
       return JSON.parse(content) as SavedAnalysis;
     } catch (error) {
-      console.error(`[OUTPUT-SAVER] Failed to load analysis ${filename}:`, error);
       return null;
     }
   }
@@ -122,13 +119,9 @@ export class OutputSaver {
         fs.unlinkSync(filepath);
         deletedCount++;
       } catch (error) {
-        console.warn(`[OUTPUT-SAVER] Failed to delete ${filename}:`, error);
       }
     }
 
-    if (deletedCount > 0) {
-      console.log(`[OUTPUT-SAVER] Cleaned up ${deletedCount} old analysis files`);
-    }
   }
 
   /**
