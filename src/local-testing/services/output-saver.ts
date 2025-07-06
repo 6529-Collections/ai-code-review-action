@@ -24,10 +24,10 @@ export interface SavedAnalysis {
  */
 export class OutputSaver {
   private static readonly OUTPUT_DIR = process.env.ACT === 'true' 
-    ? '/github/workspace/test-output'
+    ? './'
     : '.ai-code-review';
   private static readonly LOCAL_DIR = process.env.ACT === 'true'
-    ? '/github/workspace/test-output'
+    ? './test-output'
     : path.join(OutputSaver.OUTPUT_DIR, 'local-results');
 
   /**
@@ -66,25 +66,6 @@ export class OutputSaver {
     console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);
     console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);
     
-    // Also save a copy to multiple locations for ACT debugging
-    if (process.env.ACT === 'true') {
-      // Try multiple potential mount points
-      const debugPaths = [
-        `/github/workspace/${filename}`,
-        `/tmp/${filename}`,
-        `/github/workspace/test-output/${filename}`,
-        `/var/tmp/${filename}`
-      ];
-      
-      for (const debugPath of debugPaths) {
-        try {
-          fs.writeFileSync(debugPath, jsonContent, 'utf8');
-          console.log(`[OUTPUT-SAVER] Debug copy saved to: ${debugPath}`);
-        } catch (error) {
-          // Try next path
-        }
-      }
-    }
 
     return filepath;
   }

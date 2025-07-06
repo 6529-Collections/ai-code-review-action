@@ -1,0 +1,282 @@
+{
+  "metadata": {
+    "timestamp": "2025-07-06T09:17:51.744Z",
+    "mode": "uncommitted",
+    "totalFiles": 2,
+    "totalThemes": 2,
+    "processingTimeMs": 52750,
+    "gitBranch": "0407-1-1",
+    "gitCommit": "c60ba1ba"
+  },
+  "themes": "Found 2 themes:\\n\\n1. **Simplify ACT environment output paths** (90%)\\n   src/local-testing/services/output-saver.ts\\n   Changed ACT output paths from /github/workspace/test-output to ./ and ./test-output Removed debug path copying logic for ACT environments\\n2. **Cleaned up yarn.lock dependency ranges** (90%)\\n   yarn.lock\\n   Removed redundant version ranges from multiple package entries in yarn.lock Simplified version specifiers by removing duplicate or broader ranges",
+  "summary": "Analyzed code changes and identified 2 themes across 1 hierarchy levels. Root themes: 2, Average confidence: 90%. ",
+  "rawAnalysis": {
+    "themes": [
+      {
+        "id": "theme-2d11348c-cb2a-47d1-bac3-72a6c2490c4a",
+        "name": "Simplify ACT environment output paths",
+        "description": "Changed ACT output paths from /github/workspace/test-output to ./ and ./test-output",
+        "level": 0,
+        "childThemes": [],
+        "affectedFiles": [
+          "src/local-testing/services/output-saver.ts"
+        ],
+        "confidence": 0.9,
+        "businessImpact": "Changed ACT output paths from /github/workspace/test-output to ./ and ./test-output",
+        "codeSnippets": [
+          "diff --git a/src/local-testing/services/output-saver.ts b/src/local-testing/services/output-saver.ts\nindex 60b7d0d..75f0985 100644\n--- a/src/local-testing/services/output-saver.ts\n+++ b/src/local-testing/services/output-saver.ts\n@@ -24,10 +24,10 @@ export interface SavedAnalysis {\n  */\n export class OutputSaver {\n   private static readonly OUTPUT_DIR = process.env.ACT === 'true' \n-    ? '/github/workspace/test-output'\n+    ? './'\n     : '.ai-code-review';\n   private static readonly LOCAL_DIR = process.env.ACT === 'true'\n-    ? '/github/workspace/test-output'\n+    ? './test-output'\n     : path.join(OutputSaver.OUTPUT_DIR, 'local-results');\n \n   /**\n@@ -66,25 +66,6 @@ export class OutputSaver {\n     console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);\n     console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);\n     \n-    // Also save a copy to multiple locations for ACT debugging\n-    if (process.env.ACT === 'true') {\n-      // Try multiple potential mount points\n-      const debugPaths = [\n-        `/github/workspace/${filename}`,\n-        `/tmp/${filename}`,\n-        `/github/workspace/test-output/${filename}`,\n-        `/var/tmp/${filename}`\n-      ];\n-      \n-      for (const debugPath of debugPaths) {\n-        try {\n-          fs.writeFileSync(debugPath, jsonContent, 'utf8');\n-          console.log(`[OUTPUT-SAVER] Debug copy saved to: ${debugPath}`);\n-        } catch (error) {\n-          // Try next path\n-        }\n-      }\n-    }\n \n     return filepath;\n   }\n"
+        ],
+        "context": "Changed ACT output paths from /github/workspace/test-output to ./ and ./test-output",
+        "lastAnalysis": "2025-07-06T09:17:18.325Z",
+        "sourceThemes": [
+          "theme-2d11348c-cb2a-47d1-bac3-72a6c2490c4a"
+        ],
+        "consolidationMethod": "single",
+        "detailedDescription": "Removed debug path copying logic for ACT environments",
+        "technicalSummary": "Updated OUTPUT_DIR and LOCAL_DIR path constants for ACT",
+        "keyChanges": [
+          "OUTPUT_DIR: '/github/workspace/test-output' → './'",
+          "LOCAL_DIR: '/github/workspace/test-output' → './test-output'",
+          "Removed debug path copying loop"
+        ],
+        "userScenario": null,
+        "mainFunctionsChanged": [
+          "saveAnalysis"
+        ],
+        "mainClassesChanged": [
+          "OutputSaver"
+        ],
+        "codeMetrics": {
+          "filesChanged": 1
+        },
+        "isAtomic": false
+      },
+      {
+        "id": "theme-b22efaa9-130e-4193-86e5-37b19b6db80a",
+        "name": "Cleaned up yarn.lock dependency ranges",
+        "description": "Removed redundant version ranges from multiple package entries in yarn.lock",
+        "level": 0,
+        "childThemes": [],
+        "affectedFiles": [
+          "yarn.lock"
+        ],
+        "confidence": 0.9,
+        "businessImpact": "Removed redundant version ranges from multiple package entries in yarn.lock",
+        "codeSnippets": [
+          "diff --git a/yarn.lock b/yarn.lock\nindex c19175d..65be0c5 100644\n--- a/yarn.lock\n+++ b/yarn.lock\n@@ -65,7 +65,7 @@\n   resolved \"https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.27.5.tgz\"\n   integrity sha512-KiRAp/VoJaWkkte84TvUd9qjdbZAdiqyvMxrGl1N6vzFogKmaLgoM3L1kgtLicp2HP5fBJS8JrZKLVIZGVJAVg==\n \n-\"@babel/core@^7.0.0\", \"@babel/core@^7.0.0-0\", \"@babel/core@^7.11.6\", \"@babel/core@^7.12.3\", \"@babel/core@^7.23.9\", \"@babel/core@^7.8.0\", \"@babel/core@>=7.0.0-beta.0 <8\":\n+\"@babel/core@^7.11.6\", \"@babel/core@^7.12.3\", \"@babel/core@^7.23.9\":\n   version \"7.27.4\"\n   resolved \"https://registry.npmjs.org/@babel/core/-/core-7.27.4.tgz\"\n   integrity sha512-bXYxrXFubeYdvB0NhD/NBB3Qi6aZeV20GOWVI47t2dkecCEoneR4NPVcb7abpXDEvejgrUfFtG6vG/zxAKmg+g==\n@@ -545,7 +545,7 @@\n     jest-haste-map \"^29.7.0\"\n     slash \"^3.0.0\"\n \n-\"@jest/transform@^29.0.0 || ^30.0.0\", \"@jest/transform@^29.7.0\":\n+\"@jest/transform@^29.7.0\":\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/@jest/transform/-/transform-29.7.0.tgz\"\n   integrity sha512-ok/BTPFzFKVMwO5eOHRrvnBVHdRy9IrsrW1GpMaQ9MCnilNLXQKmAX8s1YXDFaai9xJpac2ySzV0YeRRECr2Vw==\n@@ -566,7 +566,7 @@\n     slash \"^3.0.0\"\n     write-file-atomic \"^4.0.2\"\n \n-\"@jest/types@^29.0.0 || ^30.0.0\", \"@jest/types@^29.6.3\":\n+\"@jest/types@^29.6.3\":\n   version \"29.6.3\"\n   resolved \"https://registry.npmjs.org/@jest/types/-/types-29.6.3.tgz\"\n   integrity sha512-u3UPsIilWKOM3F9CXtrG8LEJmNxwoCQC/XVj4IKYXvvpx7QIi/Kg1LI5uDmDpKlac62NUtX7eLjRh+jVZcLOzw==\n@@ -618,7 +618,7 @@\n     \"@nodelib/fs.stat\" \"2.0.5\"\n     run-parallel \"^1.1.9\"\n \n-\"@nodelib/fs.stat@^2.0.2\", \"@nodelib/fs.stat@2.0.5\":\n+\"@nodelib/fs.stat@2.0.5\", \"@nodelib/fs.stat@^2.0.2\":\n   version \"2.0.5\"\n   resolved \"https://registry.npmjs.org/@nodelib/fs.stat/-/fs.stat-2.0.5.tgz\"\n   integrity sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A==\n@@ -636,7 +636,7 @@\n   resolved \"https://registry.npmjs.org/@octokit/auth-token/-/auth-token-4.0.0.tgz\"\n   integrity sha512-tY/msAuJo6ARbK6SPIxZrPBms3xPbfwBrulZe0Wtr/DIY9lje2HeV1uoebShn6mx7SjCHif6EjMvoREj+gZ+SA==\n \n-\"@octokit/core@^5.0.1\", \"@octokit/core@5\":\n+\"@octokit/core@^5.0.1\":\n   version \"5.2.1\"\n   resolved \"https://registry.npmjs.org/@octokit/core/-/core-5.2.1.tgz\"\n   integrity sha512-dKYCMuPO1bmrpuogcjQ8z7ICCH3FP6WmxpwC03yjzGfZhj9fTJg6+bS1+UAplekbN2C+M61UNllGOOoAfGCrdQ==\n@@ -872,7 +872,7 @@\n     semver \"^7.5.4\"\n     ts-api-utils \"^1.0.1\"\n \n-\"@typescript-eslint/parser@^6.0.0\", \"@typescript-eslint/parser@^6.0.0 || ^6.0.0-alpha\":\n+\"@typescript-eslint/parser@^6.0.0\":\n   version \"6.21.0\"\n   resolved \"https://registry.npmjs.org/@typescript-eslint/parser/-/parser-6.21.0.tgz\"\n   integrity sha512-tbsV1jPne5CkFQCgPBcDOt30ItF7aJoZL997JSF7MhGQqOeT3svWRYxiqlfA5RUdlHN6Fi+EI9bxqbdyAUZjYQ==\n@@ -956,7 +956,7 @@ acorn-jsx@^5.3.2:\n   resolved \"https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz\"\n   integrity sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==\n \n-\"acorn@^6.0.0 || ^7.0.0 || ^8.0.0\", acorn@^8.9.0:\n+acorn@^8.9.0:\n   version \"8.15.0\"\n   resolved \"https://registry.npmjs.org/acorn/-/acorn-8.15.0.tgz\"\n   integrity sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==\n@@ -1025,7 +1025,7 @@ async@^3.2.3:\n   resolved \"https://registry.npmjs.org/async/-/async-3.2.6.tgz\"\n   integrity sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==\n \n-\"babel-jest@^29.0.0 || ^30.0.0\", babel-jest@^29.7.0:\n+babel-jest@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/babel-jest/-/babel-jest-29.7.0.tgz\"\n   integrity sha512-BrvGY3xZSwEcCzKvKsCi2GgHqDqsYkOP4/by5xCgIwGXQxIEh+8ew3gmrE1y7XRR6LHZIj6yLYnUi/mm2KXKBg==\n@@ -1120,7 +1120,7 @@ braces@^3.0.3:\n   dependencies:\n     fill-range \"^7.1.1\"\n \n-browserslist@^4.24.0, \"browserslist@>= 4.21.0\":\n+browserslist@^4.24.0:\n   version \"4.25.0\"\n   resolved \"https://registry.npmjs.org/browserslist/-/browserslist-4.25.0.tgz\"\n   integrity sha512-PJ8gYKeS5e/whHBh8xrwYK+dAvEj7JXtz6uTucnMRB8OiGTsKccFekoRrjajPBHV8oOY+2tI4uxeceSimKwMFA==\n@@ -1355,7 +1355,7 @@ escape-string-regexp@^4.0.0:\n   resolved \"https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz\"\n   integrity sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==\n \n-eslint-config-prettier@^9.0.0, \"eslint-config-prettier@>= 7.0.0 <10.0.0 || >=10.1.0\":\n+eslint-config-prettier@^9.0.0:\n   version \"9.1.0\"\n   resolved \"https://registry.npmjs.org/eslint-config-prettier/-/eslint-config-prettier-9.1.0.tgz\"\n   integrity sha512-NSWl5BFQWEPi1j4TjVNItzYV7dZXZ+wP6I6ZhrBGpChQhZRUaElihE9uRRkcbRnNb76UMKDF3r+WTmNcGPKsqw==\n@@ -1381,7 +1381,7 @@ eslint-visitor-keys@^3.4.1, eslint-visitor-keys@^3.4.3:\n   resolved \"https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz\"\n   integrity sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag==\n \n-\"eslint@^6.0.0 || ^7.0.0 || >=8.0.0\", \"eslint@^7.0.0 || ^8.0.0\", eslint@^8.0.0, eslint@>=7.0.0, eslint@>=8.0.0:\n+eslint@^8.0.0:\n   version \"8.57.1\"\n   resolved \"https://registry.npmjs.org/eslint/-/eslint-8.57.1.tgz\"\n   integrity sha512-ypowyDxpVSYpkXr9WPv2PAZCtNip1Mv5KTW0SCurXv/9iOpcrH9PaqUElksqEB6pChqHGDRCFTyrZlGhnLNGiA==\n@@ -1515,7 +1515,7 @@ fast-glob@^3.2.9:\n     merge2 \"^1.3.0\"\n     micromatch \"^4.0.8\"\n \n-fast-json-stable-stringify@^2.0.0, fast-json-stable-stringify@^2.1.0, fast-json-stable-stringify@2.x:\n+fast-json-stable-stringify@2.x, fast-json-stable-stringify@^2.0.0, fast-json-stable-stringify@^2.1.0:\n   version \"2.1.0\"\n   resolved \"https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz\"\n   integrity sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==\n@@ -2067,7 +2067,7 @@ jest-resolve-dependencies@^29.7.0:\n     jest-regex-util \"^29.6.3\"\n     jest-snapshot \"^29.7.0\"\n \n-jest-resolve@*, jest-resolve@^29.7.0:\n+jest-resolve@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest-resolve/-/jest-resolve-29.7.0.tgz\"\n   integrity sha512-IOVhZSrg+UvVAshDSDtHyFCCBUl/Q3AAJv8iZ6ZjnZ74xzvwuzLXid9IIIPgTnY62SJjfuupMKZsZQRsCvxEgA==\n@@ -2163,7 +2163,7 @@ jest-snapshot@^29.7.0:\n     pretty-format \"^29.7.0\"\n     semver \"^7.5.3\"\n \n-\"jest-util@^29.0.0 || ^30.0.0\", jest-util@^29.7.0:\n+jest-util@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest-util/-/jest-util-29.7.0.tgz\"\n   integrity sha512-z6EbKajIpqGKU56y5KBUgy1dt1ihhQJgWzUlZHArA/+X2ad7Cb5iF+AK1EWVL/Bo7Rz9uurpqw6SiBCefUbCGA==\n@@ -2211,7 +2211,7 @@ jest-worker@^29.7.0:\n     merge-stream \"^2.0.0\"\n     supports-color \"^8.0.0\"\n \n-jest@^29.0.0, \"jest@^29.0.0 || ^30.0.0\":\n+jest@^29.0.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest/-/jest-29.7.0.tgz\"\n   integrity sha512-NIy3oAFp9shda19hy4HK0HRTWKtPJmGdnvywu01nOqNC2vZg+Z+fvJDxpMQA88eb2I9EcafcdjYgsDthnYTvGw==\n@@ -2374,6 +2374,13 @@ mimic-fn@^2.1.0:\n   resolved \"https://registry.npmjs.org/mimic-fn/-/mimic-fn-2.1.0.tgz\"\n   integrity sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==\n \n+minimatch@9.0.3:\n+  version \"9.0.3\"\n+  resolved \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.3.tgz\"\n+  integrity sha512-RHiac9mvaRw0x3AYRgDC1CxAP7HTcNrrECeA8YYJeWnpo+2Q5CegtZjaotWTWxDG3UeGA1coE05iH1mPjT/2mg==\n+  dependencies:\n+    brace-expansion \"^2.0.1\"\n+\n minimatch@^3.0.4, minimatch@^3.0.5, minimatch@^3.1.1, minimatch@^3.1.2:\n   version \"3.1.2\"\n   resolved \"https://registry.npmjs.org/minimatch/-/minimatch-3.1.2.tgz\"\n@@ -2388,13 +2395,6 @@ minimatch@^5.0.1:\n   dependencies:\n     brace-expansion \"^2.0.1\"\n \n-minimatch@9.0.3:\n-  version \"9.0.3\"\n-  resolved \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.3.tgz\"\n-  integrity sha512-RHiac9mvaRw0x3AYRgDC1CxAP7HTcNrrECeA8YYJeWnpo+2Q5CegtZjaotWTWxDG3UeGA1coE05iH1mPjT/2mg==\n-  dependencies:\n-    brace-expansion \"^2.0.1\"\n-\n ms@^2.1.3:\n   version \"2.1.3\"\n   resolved \"https://registry.npmjs.org/ms/-/ms-2.1.3.tgz\"\n@@ -2562,7 +2562,7 @@ prettier-linter-helpers@^1.0.0:\n   dependencies:\n     fast-diff \"^1.1.2\"\n \n-prettier@^3.0.0, prettier@>=3.0.0:\n+prettier@^3.0.0:\n   version \"3.5.3\"\n   resolved \"https://registry.npmjs.org/prettier/-/prettier-3.5.3.tgz\"\n   integrity sha512-QQtaxnoDJeAkDvDKWCLiwIXkTgRhwYDEQCghU9Z6q03iyek/rxRh/2lC3HB7P8sWT2xC/y5JDctPLBIGzHKbhw==\n@@ -2659,12 +2659,7 @@ run-parallel@^1.1.9:\n   dependencies:\n     queue-microtask \"^1.2.2\"\n \n-semver@^6.3.0:\n-  version \"6.3.1\"\n-  resolved \"https://registry.npmjs.org/semver/-/semver-6.3.1.tgz\"\n-  integrity sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==\n-\n-semver@^6.3.1:\n+semver@^6.3.0, semver@^6.3.1:\n   version \"6.3.1\"\n   resolved \"https://registry.npmjs.org/semver/-/semver-6.3.1.tgz\"\n   integrity sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==\n@@ -2869,7 +2864,7 @@ type-fest@^4.41.0:\n   resolved \"https://registry.npmjs.org/type-fest/-/type-fest-4.41.0.tgz\"\n   integrity sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==\n \n-typescript@^5.0.0, typescript@>=4.2.0, \"typescript@>=4.3 <6\":\n+typescript@^5.0.0:\n   version \"5.8.3\"\n   resolved \"https://registry.npmjs.org/typescript/-/typescript-5.8.3.tgz\"\n   integrity sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ==\n@@ -2879,11 +2874,6 @@ undici-types@~6.21.0:\n   resolved \"https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz\"\n   integrity sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==\n \n-undici-types@~7.8.0:\n-  version \"7.8.0\"\n-  resolved \"https://registry.npmjs.org/undici-types/-/undici-types-7.8.0.tgz\"\n-  integrity sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw==\n-\n undici@^5.25.4, undici@^5.28.5:\n   version \"5.29.0\"\n   resolved \"https://registry.npmjs.org/undici/-/undici-5.29.0.tgz\"\n"
+        ],
+        "context": "Removed redundant version ranges from multiple package entries in yarn.lock",
+        "lastAnalysis": "2025-07-06T09:17:18.325Z",
+        "sourceThemes": [
+          "theme-b22efaa9-130e-4193-86e5-37b19b6db80a"
+        ],
+        "consolidationMethod": "single",
+        "detailedDescription": "Simplified version specifiers by removing duplicate or broader ranges",
+        "technicalSummary": "Removed redundant version ranges from yarn.lock entries",
+        "keyChanges": [
+          "Removed ^7.0.0 || ^8.0.0 ranges from babel/core",
+          "Removed ^29.0.0 || ^30.0.0 ranges from jest packages",
+          "Removed >= 4.21.0 range from browserslist"
+        ],
+        "userScenario": null,
+        "mainFunctionsChanged": [],
+        "mainClassesChanged": [],
+        "codeMetrics": {
+          "filesChanged": 1
+        },
+        "isAtomic": false
+      }
+    ],
+    "originalThemes": [
+      {
+        "id": "theme-2d11348c-cb2a-47d1-bac3-72a6c2490c4a",
+        "name": "Simplify ACT environment output paths",
+        "description": "Changed ACT output paths from /github/workspace/test-output to ./ and ./test-output",
+        "level": 0,
+        "childIds": [],
+        "affectedFiles": [
+          "src/local-testing/services/output-saver.ts"
+        ],
+        "codeSnippets": [
+          "diff --git a/src/local-testing/services/output-saver.ts b/src/local-testing/services/output-saver.ts\nindex 60b7d0d..75f0985 100644\n--- a/src/local-testing/services/output-saver.ts\n+++ b/src/local-testing/services/output-saver.ts\n@@ -24,10 +24,10 @@ export interface SavedAnalysis {\n  */\n export class OutputSaver {\n   private static readonly OUTPUT_DIR = process.env.ACT === 'true' \n-    ? '/github/workspace/test-output'\n+    ? './'\n     : '.ai-code-review';\n   private static readonly LOCAL_DIR = process.env.ACT === 'true'\n-    ? '/github/workspace/test-output'\n+    ? './test-output'\n     : path.join(OutputSaver.OUTPUT_DIR, 'local-results');\n \n   /**\n@@ -66,25 +66,6 @@ export class OutputSaver {\n     console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);\n     console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);\n     \n-    // Also save a copy to multiple locations for ACT debugging\n-    if (process.env.ACT === 'true') {\n-      // Try multiple potential mount points\n-      const debugPaths = [\n-        `/github/workspace/${filename}`,\n-        `/tmp/${filename}`,\n-        `/github/workspace/test-output/${filename}`,\n-        `/var/tmp/${filename}`\n-      ];\n-      \n-      for (const debugPath of debugPaths) {\n-        try {\n-          fs.writeFileSync(debugPath, jsonContent, 'utf8');\n-          console.log(`[OUTPUT-SAVER] Debug copy saved to: ${debugPath}`);\n-        } catch (error) {\n-          // Try next path\n-        }\n-      }\n-    }\n \n     return filepath;\n   }\n"
+        ],
+        "confidence": 0.9,
+        "context": "Changed ACT output paths from /github/workspace/test-output to ./ and ./test-output",
+        "enhancedContext": {
+          "fileMetrics": {
+            "totalFiles": 1,
+            "fileTypes": [
+              "ts"
+            ],
+            "hasTests": false,
+            "hasConfig": false,
+            "codeComplexity": "low"
+          },
+          "changePatterns": {
+            "newFunctions": [
+              "saveAnalysis"
+            ],
+            "modifiedFunctions": [
+              "saveAnalysis"
+            ],
+            "newImports": [],
+            "removedImports": [],
+            "newClasses": [
+              "OutputSaver"
+            ],
+            "modifiedClasses": [
+              "OutputSaver"
+            ],
+            "architecturalPatterns": [
+              "Singleton"
+            ],
+            "businessDomains": [
+              "testing"
+            ]
+          },
+          "contextSummary": "Simplified output directory paths and removed debug file copying for ACT environment",
+          "significantChanges": [
+            "Simplified output directory paths and removed debug file copying for ACT environment"
+          ]
+        },
+        "codeChanges": [
+          {
+            "file": "src/local-testing/services/output-saver.ts",
+            "diffHunk": "diff --git a/src/local-testing/services/output-saver.ts b/src/local-testing/services/output-saver.ts\nindex 60b7d0d..75f0985 100644\n--- a/src/local-testing/services/output-saver.ts\n+++ b/src/local-testing/services/output-saver.ts\n@@ -24,10 +24,10 @@ export interface SavedAnalysis {\n  */\n export class OutputSaver {\n   private static readonly OUTPUT_DIR = process.env.ACT === 'true' \n-    ? '/github/workspace/test-output'\n+    ? './'\n     : '.ai-code-review';\n   private static readonly LOCAL_DIR = process.env.ACT === 'true'\n-    ? '/github/workspace/test-output'\n+    ? './test-output'\n     : path.join(OutputSaver.OUTPUT_DIR, 'local-results');\n \n   /**\n@@ -66,25 +66,6 @@ export class OutputSaver {\n     console.log(`[OUTPUT-SAVER] Analysis saved to: ${filepath}`);\n     console.log(`[OUTPUT-SAVER] File size: ${(jsonContent.length / 1024).toFixed(1)}KB`);\n     \n-    // Also save a copy to multiple locations for ACT debugging\n-    if (process.env.ACT === 'true') {\n-      // Try multiple potential mount points\n-      const debugPaths = [\n-        `/github/workspace/${filename}`,\n-        `/tmp/${filename}`,\n-        `/github/workspace/test-output/${filename}`,\n-        `/var/tmp/${filename}`\n-      ];\n-      \n-      for (const debugPath of debugPaths) {\n-        try {\n-          fs.writeFileSync(debugPath, jsonContent, 'utf8');\n-          console.log(`[OUTPUT-SAVER] Debug copy saved to: ${debugPath}`);\n-        } catch (error) {\n-          // Try next path\n-        }\n-      }\n-    }\n \n     return filepath;\n   }\n",
+            "changeType": "modified",
+            "functionsChanged": [
+              "saveAnalysis"
+            ],
+            "classesChanged": [
+              "OutputSaver"
+            ],
+            "importsChanged": [],
+            "fileType": ".ts",
+            "isTestFile": false,
+            "isConfigFile": false,
+            "architecturalPatterns": [
+              "Singleton"
+            ],
+            "businessDomain": "testing",
+            "codeComplexity": "low",
+            "semanticDescription": "Simplified output directory paths and removed debug file copying for ACT environment"
+          }
+        ],
+        "lastAnalysis": "2025-07-06T09:17:18.325Z",
+        "detailedDescription": "Removed debug path copying logic for ACT environments",
+        "technicalSummary": "Updated OUTPUT_DIR and LOCAL_DIR path constants for ACT",
+        "keyChanges": [
+          "OUTPUT_DIR: '/github/workspace/test-output' → './'",
+          "LOCAL_DIR: '/github/workspace/test-output' → './test-output'",
+          "Removed debug path copying loop"
+        ],
+        "userScenario": null,
+        "mainFunctionsChanged": [
+          "saveAnalysis"
+        ],
+        "mainClassesChanged": [
+          "OutputSaver"
+        ],
+        "codeMetrics": {
+          "filesChanged": 1
+        }
+      },
+      {
+        "id": "theme-b22efaa9-130e-4193-86e5-37b19b6db80a",
+        "name": "Cleaned up yarn.lock dependency ranges",
+        "description": "Removed redundant version ranges from multiple package entries in yarn.lock",
+        "level": 0,
+        "childIds": [],
+        "affectedFiles": [
+          "yarn.lock"
+        ],
+        "codeSnippets": [
+          "diff --git a/yarn.lock b/yarn.lock\nindex c19175d..65be0c5 100644\n--- a/yarn.lock\n+++ b/yarn.lock\n@@ -65,7 +65,7 @@\n   resolved \"https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.27.5.tgz\"\n   integrity sha512-KiRAp/VoJaWkkte84TvUd9qjdbZAdiqyvMxrGl1N6vzFogKmaLgoM3L1kgtLicp2HP5fBJS8JrZKLVIZGVJAVg==\n \n-\"@babel/core@^7.0.0\", \"@babel/core@^7.0.0-0\", \"@babel/core@^7.11.6\", \"@babel/core@^7.12.3\", \"@babel/core@^7.23.9\", \"@babel/core@^7.8.0\", \"@babel/core@>=7.0.0-beta.0 <8\":\n+\"@babel/core@^7.11.6\", \"@babel/core@^7.12.3\", \"@babel/core@^7.23.9\":\n   version \"7.27.4\"\n   resolved \"https://registry.npmjs.org/@babel/core/-/core-7.27.4.tgz\"\n   integrity sha512-bXYxrXFubeYdvB0NhD/NBB3Qi6aZeV20GOWVI47t2dkecCEoneR4NPVcb7abpXDEvejgrUfFtG6vG/zxAKmg+g==\n@@ -545,7 +545,7 @@\n     jest-haste-map \"^29.7.0\"\n     slash \"^3.0.0\"\n \n-\"@jest/transform@^29.0.0 || ^30.0.0\", \"@jest/transform@^29.7.0\":\n+\"@jest/transform@^29.7.0\":\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/@jest/transform/-/transform-29.7.0.tgz\"\n   integrity sha512-ok/BTPFzFKVMwO5eOHRrvnBVHdRy9IrsrW1GpMaQ9MCnilNLXQKmAX8s1YXDFaai9xJpac2ySzV0YeRRECr2Vw==\n@@ -566,7 +566,7 @@\n     slash \"^3.0.0\"\n     write-file-atomic \"^4.0.2\"\n \n-\"@jest/types@^29.0.0 || ^30.0.0\", \"@jest/types@^29.6.3\":\n+\"@jest/types@^29.6.3\":\n   version \"29.6.3\"\n   resolved \"https://registry.npmjs.org/@jest/types/-/types-29.6.3.tgz\"\n   integrity sha512-u3UPsIilWKOM3F9CXtrG8LEJmNxwoCQC/XVj4IKYXvvpx7QIi/Kg1LI5uDmDpKlac62NUtX7eLjRh+jVZcLOzw==\n@@ -618,7 +618,7 @@\n     \"@nodelib/fs.stat\" \"2.0.5\"\n     run-parallel \"^1.1.9\"\n \n-\"@nodelib/fs.stat@^2.0.2\", \"@nodelib/fs.stat@2.0.5\":\n+\"@nodelib/fs.stat@2.0.5\", \"@nodelib/fs.stat@^2.0.2\":\n   version \"2.0.5\"\n   resolved \"https://registry.npmjs.org/@nodelib/fs.stat/-/fs.stat-2.0.5.tgz\"\n   integrity sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A==\n@@ -636,7 +636,7 @@\n   resolved \"https://registry.npmjs.org/@octokit/auth-token/-/auth-token-4.0.0.tgz\"\n   integrity sha512-tY/msAuJo6ARbK6SPIxZrPBms3xPbfwBrulZe0Wtr/DIY9lje2HeV1uoebShn6mx7SjCHif6EjMvoREj+gZ+SA==\n \n-\"@octokit/core@^5.0.1\", \"@octokit/core@5\":\n+\"@octokit/core@^5.0.1\":\n   version \"5.2.1\"\n   resolved \"https://registry.npmjs.org/@octokit/core/-/core-5.2.1.tgz\"\n   integrity sha512-dKYCMuPO1bmrpuogcjQ8z7ICCH3FP6WmxpwC03yjzGfZhj9fTJg6+bS1+UAplekbN2C+M61UNllGOOoAfGCrdQ==\n@@ -872,7 +872,7 @@\n     semver \"^7.5.4\"\n     ts-api-utils \"^1.0.1\"\n \n-\"@typescript-eslint/parser@^6.0.0\", \"@typescript-eslint/parser@^6.0.0 || ^6.0.0-alpha\":\n+\"@typescript-eslint/parser@^6.0.0\":\n   version \"6.21.0\"\n   resolved \"https://registry.npmjs.org/@typescript-eslint/parser/-/parser-6.21.0.tgz\"\n   integrity sha512-tbsV1jPne5CkFQCgPBcDOt30ItF7aJoZL997JSF7MhGQqOeT3svWRYxiqlfA5RUdlHN6Fi+EI9bxqbdyAUZjYQ==\n@@ -956,7 +956,7 @@ acorn-jsx@^5.3.2:\n   resolved \"https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz\"\n   integrity sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==\n \n-\"acorn@^6.0.0 || ^7.0.0 || ^8.0.0\", acorn@^8.9.0:\n+acorn@^8.9.0:\n   version \"8.15.0\"\n   resolved \"https://registry.npmjs.org/acorn/-/acorn-8.15.0.tgz\"\n   integrity sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==\n@@ -1025,7 +1025,7 @@ async@^3.2.3:\n   resolved \"https://registry.npmjs.org/async/-/async-3.2.6.tgz\"\n   integrity sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==\n \n-\"babel-jest@^29.0.0 || ^30.0.0\", babel-jest@^29.7.0:\n+babel-jest@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/babel-jest/-/babel-jest-29.7.0.tgz\"\n   integrity sha512-BrvGY3xZSwEcCzKvKsCi2GgHqDqsYkOP4/by5xCgIwGXQxIEh+8ew3gmrE1y7XRR6LHZIj6yLYnUi/mm2KXKBg==\n@@ -1120,7 +1120,7 @@ braces@^3.0.3:\n   dependencies:\n     fill-range \"^7.1.1\"\n \n-browserslist@^4.24.0, \"browserslist@>= 4.21.0\":\n+browserslist@^4.24.0:\n   version \"4.25.0\"\n   resolved \"https://registry.npmjs.org/browserslist/-/browserslist-4.25.0.tgz\"\n   integrity sha512-PJ8gYKeS5e/whHBh8xrwYK+dAvEj7JXtz6uTucnMRB8OiGTsKccFekoRrjajPBHV8oOY+2tI4uxeceSimKwMFA==\n@@ -1355,7 +1355,7 @@ escape-string-regexp@^4.0.0:\n   resolved \"https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz\"\n   integrity sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==\n \n-eslint-config-prettier@^9.0.0, \"eslint-config-prettier@>= 7.0.0 <10.0.0 || >=10.1.0\":\n+eslint-config-prettier@^9.0.0:\n   version \"9.1.0\"\n   resolved \"https://registry.npmjs.org/eslint-config-prettier/-/eslint-config-prettier-9.1.0.tgz\"\n   integrity sha512-NSWl5BFQWEPi1j4TjVNItzYV7dZXZ+wP6I6ZhrBGpChQhZRUaElihE9uRRkcbRnNb76UMKDF3r+WTmNcGPKsqw==\n@@ -1381,7 +1381,7 @@ eslint-visitor-keys@^3.4.1, eslint-visitor-keys@^3.4.3:\n   resolved \"https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz\"\n   integrity sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag==\n \n-\"eslint@^6.0.0 || ^7.0.0 || >=8.0.0\", \"eslint@^7.0.0 || ^8.0.0\", eslint@^8.0.0, eslint@>=7.0.0, eslint@>=8.0.0:\n+eslint@^8.0.0:\n   version \"8.57.1\"\n   resolved \"https://registry.npmjs.org/eslint/-/eslint-8.57.1.tgz\"\n   integrity sha512-ypowyDxpVSYpkXr9WPv2PAZCtNip1Mv5KTW0SCurXv/9iOpcrH9PaqUElksqEB6pChqHGDRCFTyrZlGhnLNGiA==\n@@ -1515,7 +1515,7 @@ fast-glob@^3.2.9:\n     merge2 \"^1.3.0\"\n     micromatch \"^4.0.8\"\n \n-fast-json-stable-stringify@^2.0.0, fast-json-stable-stringify@^2.1.0, fast-json-stable-stringify@2.x:\n+fast-json-stable-stringify@2.x, fast-json-stable-stringify@^2.0.0, fast-json-stable-stringify@^2.1.0:\n   version \"2.1.0\"\n   resolved \"https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz\"\n   integrity sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==\n@@ -2067,7 +2067,7 @@ jest-resolve-dependencies@^29.7.0:\n     jest-regex-util \"^29.6.3\"\n     jest-snapshot \"^29.7.0\"\n \n-jest-resolve@*, jest-resolve@^29.7.0:\n+jest-resolve@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest-resolve/-/jest-resolve-29.7.0.tgz\"\n   integrity sha512-IOVhZSrg+UvVAshDSDtHyFCCBUl/Q3AAJv8iZ6ZjnZ74xzvwuzLXid9IIIPgTnY62SJjfuupMKZsZQRsCvxEgA==\n@@ -2163,7 +2163,7 @@ jest-snapshot@^29.7.0:\n     pretty-format \"^29.7.0\"\n     semver \"^7.5.3\"\n \n-\"jest-util@^29.0.0 || ^30.0.0\", jest-util@^29.7.0:\n+jest-util@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest-util/-/jest-util-29.7.0.tgz\"\n   integrity sha512-z6EbKajIpqGKU56y5KBUgy1dt1ihhQJgWzUlZHArA/+X2ad7Cb5iF+AK1EWVL/Bo7Rz9uurpqw6SiBCefUbCGA==\n@@ -2211,7 +2211,7 @@ jest-worker@^29.7.0:\n     merge-stream \"^2.0.0\"\n     supports-color \"^8.0.0\"\n \n-jest@^29.0.0, \"jest@^29.0.0 || ^30.0.0\":\n+jest@^29.0.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest/-/jest-29.7.0.tgz\"\n   integrity sha512-NIy3oAFp9shda19hy4HK0HRTWKtPJmGdnvywu01nOqNC2vZg+Z+fvJDxpMQA88eb2I9EcafcdjYgsDthnYTvGw==\n@@ -2374,6 +2374,13 @@ mimic-fn@^2.1.0:\n   resolved \"https://registry.npmjs.org/mimic-fn/-/mimic-fn-2.1.0.tgz\"\n   integrity sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==\n \n+minimatch@9.0.3:\n+  version \"9.0.3\"\n+  resolved \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.3.tgz\"\n+  integrity sha512-RHiac9mvaRw0x3AYRgDC1CxAP7HTcNrrECeA8YYJeWnpo+2Q5CegtZjaotWTWxDG3UeGA1coE05iH1mPjT/2mg==\n+  dependencies:\n+    brace-expansion \"^2.0.1\"\n+\n minimatch@^3.0.4, minimatch@^3.0.5, minimatch@^3.1.1, minimatch@^3.1.2:\n   version \"3.1.2\"\n   resolved \"https://registry.npmjs.org/minimatch/-/minimatch-3.1.2.tgz\"\n@@ -2388,13 +2395,6 @@ minimatch@^5.0.1:\n   dependencies:\n     brace-expansion \"^2.0.1\"\n \n-minimatch@9.0.3:\n-  version \"9.0.3\"\n-  resolved \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.3.tgz\"\n-  integrity sha512-RHiac9mvaRw0x3AYRgDC1CxAP7HTcNrrECeA8YYJeWnpo+2Q5CegtZjaotWTWxDG3UeGA1coE05iH1mPjT/2mg==\n-  dependencies:\n-    brace-expansion \"^2.0.1\"\n-\n ms@^2.1.3:\n   version \"2.1.3\"\n   resolved \"https://registry.npmjs.org/ms/-/ms-2.1.3.tgz\"\n@@ -2562,7 +2562,7 @@ prettier-linter-helpers@^1.0.0:\n   dependencies:\n     fast-diff \"^1.1.2\"\n \n-prettier@^3.0.0, prettier@>=3.0.0:\n+prettier@^3.0.0:\n   version \"3.5.3\"\n   resolved \"https://registry.npmjs.org/prettier/-/prettier-3.5.3.tgz\"\n   integrity sha512-QQtaxnoDJeAkDvDKWCLiwIXkTgRhwYDEQCghU9Z6q03iyek/rxRh/2lC3HB7P8sWT2xC/y5JDctPLBIGzHKbhw==\n@@ -2659,12 +2659,7 @@ run-parallel@^1.1.9:\n   dependencies:\n     queue-microtask \"^1.2.2\"\n \n-semver@^6.3.0:\n-  version \"6.3.1\"\n-  resolved \"https://registry.npmjs.org/semver/-/semver-6.3.1.tgz\"\n-  integrity sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==\n-\n-semver@^6.3.1:\n+semver@^6.3.0, semver@^6.3.1:\n   version \"6.3.1\"\n   resolved \"https://registry.npmjs.org/semver/-/semver-6.3.1.tgz\"\n   integrity sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==\n@@ -2869,7 +2864,7 @@ type-fest@^4.41.0:\n   resolved \"https://registry.npmjs.org/type-fest/-/type-fest-4.41.0.tgz\"\n   integrity sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==\n \n-typescript@^5.0.0, typescript@>=4.2.0, \"typescript@>=4.3 <6\":\n+typescript@^5.0.0:\n   version \"5.8.3\"\n   resolved \"https://registry.npmjs.org/typescript/-/typescript-5.8.3.tgz\"\n   integrity sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ==\n@@ -2879,11 +2874,6 @@ undici-types@~6.21.0:\n   resolved \"https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz\"\n   integrity sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==\n \n-undici-types@~7.8.0:\n-  version \"7.8.0\"\n-  resolved \"https://registry.npmjs.org/undici-types/-/undici-types-7.8.0.tgz\"\n-  integrity sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw==\n-\n undici@^5.25.4, undici@^5.28.5:\n   version \"5.29.0\"\n   resolved \"https://registry.npmjs.org/undici/-/undici-5.29.0.tgz\"\n"
+        ],
+        "confidence": 0.9,
+        "context": "Removed redundant version ranges from multiple package entries in yarn.lock",
+        "enhancedContext": {
+          "fileMetrics": {
+            "totalFiles": 1,
+            "fileTypes": [
+              "lock"
+            ],
+            "hasTests": false,
+            "hasConfig": true,
+            "codeComplexity": "low"
+          },
+          "changePatterns": {
+            "newFunctions": [],
+            "modifiedFunctions": [],
+            "newImports": [],
+            "removedImports": [],
+            "newClasses": [],
+            "modifiedClasses": [],
+            "architecturalPatterns": [],
+            "businessDomains": [
+              "dependencies"
+            ]
+          },
+          "contextSummary": "Cleaned up duplicate dependency version ranges in yarn.lock",
+          "significantChanges": [
+            "Cleaned up duplicate dependency version ranges in yarn.lock"
+          ]
+        },
+        "codeChanges": [
+          {
+            "file": "yarn.lock",
+            "diffHunk": "diff --git a/yarn.lock b/yarn.lock\nindex c19175d..65be0c5 100644\n--- a/yarn.lock\n+++ b/yarn.lock\n@@ -65,7 +65,7 @@\n   resolved \"https://registry.npmjs.org/@babel/compat-data/-/compat-data-7.27.5.tgz\"\n   integrity sha512-KiRAp/VoJaWkkte84TvUd9qjdbZAdiqyvMxrGl1N6vzFogKmaLgoM3L1kgtLicp2HP5fBJS8JrZKLVIZGVJAVg==\n \n-\"@babel/core@^7.0.0\", \"@babel/core@^7.0.0-0\", \"@babel/core@^7.11.6\", \"@babel/core@^7.12.3\", \"@babel/core@^7.23.9\", \"@babel/core@^7.8.0\", \"@babel/core@>=7.0.0-beta.0 <8\":\n+\"@babel/core@^7.11.6\", \"@babel/core@^7.12.3\", \"@babel/core@^7.23.9\":\n   version \"7.27.4\"\n   resolved \"https://registry.npmjs.org/@babel/core/-/core-7.27.4.tgz\"\n   integrity sha512-bXYxrXFubeYdvB0NhD/NBB3Qi6aZeV20GOWVI47t2dkecCEoneR4NPVcb7abpXDEvejgrUfFtG6vG/zxAKmg+g==\n@@ -545,7 +545,7 @@\n     jest-haste-map \"^29.7.0\"\n     slash \"^3.0.0\"\n \n-\"@jest/transform@^29.0.0 || ^30.0.0\", \"@jest/transform@^29.7.0\":\n+\"@jest/transform@^29.7.0\":\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/@jest/transform/-/transform-29.7.0.tgz\"\n   integrity sha512-ok/BTPFzFKVMwO5eOHRrvnBVHdRy9IrsrW1GpMaQ9MCnilNLXQKmAX8s1YXDFaai9xJpac2ySzV0YeRRECr2Vw==\n@@ -566,7 +566,7 @@\n     slash \"^3.0.0\"\n     write-file-atomic \"^4.0.2\"\n \n-\"@jest/types@^29.0.0 || ^30.0.0\", \"@jest/types@^29.6.3\":\n+\"@jest/types@^29.6.3\":\n   version \"29.6.3\"\n   resolved \"https://registry.npmjs.org/@jest/types/-/types-29.6.3.tgz\"\n   integrity sha512-u3UPsIilWKOM3F9CXtrG8LEJmNxwoCQC/XVj4IKYXvvpx7QIi/Kg1LI5uDmDpKlac62NUtX7eLjRh+jVZcLOzw==\n@@ -618,7 +618,7 @@\n     \"@nodelib/fs.stat\" \"2.0.5\"\n     run-parallel \"^1.1.9\"\n \n-\"@nodelib/fs.stat@^2.0.2\", \"@nodelib/fs.stat@2.0.5\":\n+\"@nodelib/fs.stat@2.0.5\", \"@nodelib/fs.stat@^2.0.2\":\n   version \"2.0.5\"\n   resolved \"https://registry.npmjs.org/@nodelib/fs.stat/-/fs.stat-2.0.5.tgz\"\n   integrity sha512-RkhPPp2zrqDAQA/2jNhnztcPAlv64XdhIp7a7454A5ovI7Bukxgt7MX7udwAu3zg1DcpPU0rz3VV1SeaqvY4+A==\n@@ -636,7 +636,7 @@\n   resolved \"https://registry.npmjs.org/@octokit/auth-token/-/auth-token-4.0.0.tgz\"\n   integrity sha512-tY/msAuJo6ARbK6SPIxZrPBms3xPbfwBrulZe0Wtr/DIY9lje2HeV1uoebShn6mx7SjCHif6EjMvoREj+gZ+SA==\n \n-\"@octokit/core@^5.0.1\", \"@octokit/core@5\":\n+\"@octokit/core@^5.0.1\":\n   version \"5.2.1\"\n   resolved \"https://registry.npmjs.org/@octokit/core/-/core-5.2.1.tgz\"\n   integrity sha512-dKYCMuPO1bmrpuogcjQ8z7ICCH3FP6WmxpwC03yjzGfZhj9fTJg6+bS1+UAplekbN2C+M61UNllGOOoAfGCrdQ==\n@@ -872,7 +872,7 @@\n     semver \"^7.5.4\"\n     ts-api-utils \"^1.0.1\"\n \n-\"@typescript-eslint/parser@^6.0.0\", \"@typescript-eslint/parser@^6.0.0 || ^6.0.0-alpha\":\n+\"@typescript-eslint/parser@^6.0.0\":\n   version \"6.21.0\"\n   resolved \"https://registry.npmjs.org/@typescript-eslint/parser/-/parser-6.21.0.tgz\"\n   integrity sha512-tbsV1jPne5CkFQCgPBcDOt30ItF7aJoZL997JSF7MhGQqOeT3svWRYxiqlfA5RUdlHN6Fi+EI9bxqbdyAUZjYQ==\n@@ -956,7 +956,7 @@ acorn-jsx@^5.3.2:\n   resolved \"https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz\"\n   integrity sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==\n \n-\"acorn@^6.0.0 || ^7.0.0 || ^8.0.0\", acorn@^8.9.0:\n+acorn@^8.9.0:\n   version \"8.15.0\"\n   resolved \"https://registry.npmjs.org/acorn/-/acorn-8.15.0.tgz\"\n   integrity sha512-NZyJarBfL7nWwIq+FDL6Zp/yHEhePMNnnJ0y3qfieCrmNvYct8uvtiV41UvlSe6apAfk0fY1FbWx+NwfmpvtTg==\n@@ -1025,7 +1025,7 @@ async@^3.2.3:\n   resolved \"https://registry.npmjs.org/async/-/async-3.2.6.tgz\"\n   integrity sha512-htCUDlxyyCLMgaM3xXg0C0LW2xqfuQ6p05pCEIsXuyQ+a1koYKTuBMzRNwmybfLgvJDMd0r1LTn4+E0Ti6C2AA==\n \n-\"babel-jest@^29.0.0 || ^30.0.0\", babel-jest@^29.7.0:\n+babel-jest@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/babel-jest/-/babel-jest-29.7.0.tgz\"\n   integrity sha512-BrvGY3xZSwEcCzKvKsCi2GgHqDqsYkOP4/by5xCgIwGXQxIEh+8ew3gmrE1y7XRR6LHZIj6yLYnUi/mm2KXKBg==\n@@ -1120,7 +1120,7 @@ braces@^3.0.3:\n   dependencies:\n     fill-range \"^7.1.1\"\n \n-browserslist@^4.24.0, \"browserslist@>= 4.21.0\":\n+browserslist@^4.24.0:\n   version \"4.25.0\"\n   resolved \"https://registry.npmjs.org/browserslist/-/browserslist-4.25.0.tgz\"\n   integrity sha512-PJ8gYKeS5e/whHBh8xrwYK+dAvEj7JXtz6uTucnMRB8OiGTsKccFekoRrjajPBHV8oOY+2tI4uxeceSimKwMFA==\n@@ -1355,7 +1355,7 @@ escape-string-regexp@^4.0.0:\n   resolved \"https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz\"\n   integrity sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==\n \n-eslint-config-prettier@^9.0.0, \"eslint-config-prettier@>= 7.0.0 <10.0.0 || >=10.1.0\":\n+eslint-config-prettier@^9.0.0:\n   version \"9.1.0\"\n   resolved \"https://registry.npmjs.org/eslint-config-prettier/-/eslint-config-prettier-9.1.0.tgz\"\n   integrity sha512-NSWl5BFQWEPi1j4TjVNItzYV7dZXZ+wP6I6ZhrBGpChQhZRUaElihE9uRRkcbRnNb76UMKDF3r+WTmNcGPKsqw==\n@@ -1381,7 +1381,7 @@ eslint-visitor-keys@^3.4.1, eslint-visitor-keys@^3.4.3:\n   resolved \"https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz\"\n   integrity sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag==\n \n-\"eslint@^6.0.0 || ^7.0.0 || >=8.0.0\", \"eslint@^7.0.0 || ^8.0.0\", eslint@^8.0.0, eslint@>=7.0.0, eslint@>=8.0.0:\n+eslint@^8.0.0:\n   version \"8.57.1\"\n   resolved \"https://registry.npmjs.org/eslint/-/eslint-8.57.1.tgz\"\n   integrity sha512-ypowyDxpVSYpkXr9WPv2PAZCtNip1Mv5KTW0SCurXv/9iOpcrH9PaqUElksqEB6pChqHGDRCFTyrZlGhnLNGiA==\n@@ -1515,7 +1515,7 @@ fast-glob@^3.2.9:\n     merge2 \"^1.3.0\"\n     micromatch \"^4.0.8\"\n \n-fast-json-stable-stringify@^2.0.0, fast-json-stable-stringify@^2.1.0, fast-json-stable-stringify@2.x:\n+fast-json-stable-stringify@2.x, fast-json-stable-stringify@^2.0.0, fast-json-stable-stringify@^2.1.0:\n   version \"2.1.0\"\n   resolved \"https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz\"\n   integrity sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==\n@@ -2067,7 +2067,7 @@ jest-resolve-dependencies@^29.7.0:\n     jest-regex-util \"^29.6.3\"\n     jest-snapshot \"^29.7.0\"\n \n-jest-resolve@*, jest-resolve@^29.7.0:\n+jest-resolve@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest-resolve/-/jest-resolve-29.7.0.tgz\"\n   integrity sha512-IOVhZSrg+UvVAshDSDtHyFCCBUl/Q3AAJv8iZ6ZjnZ74xzvwuzLXid9IIIPgTnY62SJjfuupMKZsZQRsCvxEgA==\n@@ -2163,7 +2163,7 @@ jest-snapshot@^29.7.0:\n     pretty-format \"^29.7.0\"\n     semver \"^7.5.3\"\n \n-\"jest-util@^29.0.0 || ^30.0.0\", jest-util@^29.7.0:\n+jest-util@^29.7.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest-util/-/jest-util-29.7.0.tgz\"\n   integrity sha512-z6EbKajIpqGKU56y5KBUgy1dt1ihhQJgWzUlZHArA/+X2ad7Cb5iF+AK1EWVL/Bo7Rz9uurpqw6SiBCefUbCGA==\n@@ -2211,7 +2211,7 @@ jest-worker@^29.7.0:\n     merge-stream \"^2.0.0\"\n     supports-color \"^8.0.0\"\n \n-jest@^29.0.0, \"jest@^29.0.0 || ^30.0.0\":\n+jest@^29.0.0:\n   version \"29.7.0\"\n   resolved \"https://registry.npmjs.org/jest/-/jest-29.7.0.tgz\"\n   integrity sha512-NIy3oAFp9shda19hy4HK0HRTWKtPJmGdnvywu01nOqNC2vZg+Z+fvJDxpMQA88eb2I9EcafcdjYgsDthnYTvGw==\n@@ -2374,6 +2374,13 @@ mimic-fn@^2.1.0:\n   resolved \"https://registry.npmjs.org/mimic-fn/-/mimic-fn-2.1.0.tgz\"\n   integrity sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==\n \n+minimatch@9.0.3:\n+  version \"9.0.3\"\n+  resolved \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.3.tgz\"\n+  integrity sha512-RHiac9mvaRw0x3AYRgDC1CxAP7HTcNrrECeA8YYJeWnpo+2Q5CegtZjaotWTWxDG3UeGA1coE05iH1mPjT/2mg==\n+  dependencies:\n+    brace-expansion \"^2.0.1\"\n+\n minimatch@^3.0.4, minimatch@^3.0.5, minimatch@^3.1.1, minimatch@^3.1.2:\n   version \"3.1.2\"\n   resolved \"https://registry.npmjs.org/minimatch/-/minimatch-3.1.2.tgz\"\n@@ -2388,13 +2395,6 @@ minimatch@^5.0.1:\n   dependencies:\n     brace-expansion \"^2.0.1\"\n \n-minimatch@9.0.3:\n-  version \"9.0.3\"\n-  resolved \"https://registry.npmjs.org/minimatch/-/minimatch-9.0.3.tgz\"\n-  integrity sha512-RHiac9mvaRw0x3AYRgDC1CxAP7HTcNrrECeA8YYJeWnpo+2Q5CegtZjaotWTWxDG3UeGA1coE05iH1mPjT/2mg==\n-  dependencies:\n-    brace-expansion \"^2.0.1\"\n-\n ms@^2.1.3:\n   version \"2.1.3\"\n   resolved \"https://registry.npmjs.org/ms/-/ms-2.1.3.tgz\"\n@@ -2562,7 +2562,7 @@ prettier-linter-helpers@^1.0.0:\n   dependencies:\n     fast-diff \"^1.1.2\"\n \n-prettier@^3.0.0, prettier@>=3.0.0:\n+prettier@^3.0.0:\n   version \"3.5.3\"\n   resolved \"https://registry.npmjs.org/prettier/-/prettier-3.5.3.tgz\"\n   integrity sha512-QQtaxnoDJeAkDvDKWCLiwIXkTgRhwYDEQCghU9Z6q03iyek/rxRh/2lC3HB7P8sWT2xC/y5JDctPLBIGzHKbhw==\n@@ -2659,12 +2659,7 @@ run-parallel@^1.1.9:\n   dependencies:\n     queue-microtask \"^1.2.2\"\n \n-semver@^6.3.0:\n-  version \"6.3.1\"\n-  resolved \"https://registry.npmjs.org/semver/-/semver-6.3.1.tgz\"\n-  integrity sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==\n-\n-semver@^6.3.1:\n+semver@^6.3.0, semver@^6.3.1:\n   version \"6.3.1\"\n   resolved \"https://registry.npmjs.org/semver/-/semver-6.3.1.tgz\"\n   integrity sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==\n@@ -2869,7 +2864,7 @@ type-fest@^4.41.0:\n   resolved \"https://registry.npmjs.org/type-fest/-/type-fest-4.41.0.tgz\"\n   integrity sha512-TeTSQ6H5YHvpqVwBRcnLDCBnDOHWYu7IvGbHT6N8AOymcr9PJGjc1GTtiWZTYg0NCgYwvnYWEkVChQAr9bjfwA==\n \n-typescript@^5.0.0, typescript@>=4.2.0, \"typescript@>=4.3 <6\":\n+typescript@^5.0.0:\n   version \"5.8.3\"\n   resolved \"https://registry.npmjs.org/typescript/-/typescript-5.8.3.tgz\"\n   integrity sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ==\n@@ -2879,11 +2874,6 @@ undici-types@~6.21.0:\n   resolved \"https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz\"\n   integrity sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==\n \n-undici-types@~7.8.0:\n-  version \"7.8.0\"\n-  resolved \"https://registry.npmjs.org/undici-types/-/undici-types-7.8.0.tgz\"\n-  integrity sha512-9UJ2xGDvQ43tYyVMpuHlsgApydB8ZKfVYTsLDhXkFL/6gfkp+U8xTGdh8pMJv1SpZna0zxG1DwsKZsreLbXBxw==\n-\n undici@^5.25.4, undici@^5.28.5:\n   version \"5.29.0\"\n   resolved \"https://registry.npmjs.org/undici/-/undici-5.29.0.tgz\"\n",
+            "changeType": "modified",
+            "functionsChanged": [],
+            "classesChanged": [],
+            "importsChanged": [],
+            "fileType": ".lock",
+            "isTestFile": false,
+            "isConfigFile": true,
+            "architecturalPatterns": [],
+            "businessDomain": "dependencies",
+            "codeComplexity": "low",
+            "semanticDescription": "Cleaned up duplicate dependency version ranges in yarn.lock"
+          }
+        ],
+        "lastAnalysis": "2025-07-06T09:17:18.325Z",
+        "detailedDescription": "Simplified version specifiers by removing duplicate or broader ranges",
+        "technicalSummary": "Removed redundant version ranges from yarn.lock entries",
+        "keyChanges": [
+          "Removed ^7.0.0 || ^8.0.0 ranges from babel/core",
+          "Removed ^29.0.0 || ^30.0.0 ranges from jest packages",
+          "Removed >= 4.21.0 range from browserslist"
+        ],
+        "userScenario": null,
+        "mainFunctionsChanged": [],
+        "mainClassesChanged": [],
+        "codeMetrics": {
+          "filesChanged": 1
+        }
+      }
+    ],
+    "summary": "Discovered 2 consolidated themes: Simplify ACT environment output paths, Cleaned up yarn.lock dependency ranges",
+    "changedFilesCount": 2,
+    "analysisTimestamp": "2025-07-06T09:17:05.383Z",
+    "totalThemes": 2,
+    "originalThemeCount": 2,
+    "processingTime": 52750,
+    "consolidationTime": 14041,
+    "expandable": {
+      "hasChildThemes": false,
+      "canDrillDown": true
+    },
+    "consolidationStats": {
+      "mergedThemes": 0,
+      "hierarchicalThemes": 0,
+      "consolidationRatio": 0
+    },
+    "expansionTime": 19377,
+    "expansionStats": {
+      "expandedThemes": 0,
+      "maxDepth": 0,
+      "averageDepth": 0,
+      "totalSubThemes": 0
+    }
+  }
+}
