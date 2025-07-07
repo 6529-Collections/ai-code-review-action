@@ -4,6 +4,14 @@
     "module": "commonjs",
     "outDir": "./dist",
     "rootDir": "./src",
+    "baseUrl": "./src",
+    "paths": {
+      "@/mindmap/*": ["mindmap/*"],
+      "@/review/*": ["review/*"],
+      "@/shared/*": ["shared/*"],
+      "@/local-testing": ["local-testing/index.ts"],
+      "@/local-testing/*": ["local-testing/*"]
+    },
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

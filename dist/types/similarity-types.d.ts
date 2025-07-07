@@ -1,4 +1,4 @@
-import { Theme } from '../services/theme-service';
+import { Theme } from '@/shared/types/theme-types';
 export interface AISimilarityResult {
     nameScore: number;
     descriptionScore: number;

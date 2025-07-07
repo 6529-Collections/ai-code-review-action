@@ -1,4 +1,4 @@
-import { Theme } from './theme-service';
+import { Theme } from '@/shared/types/theme-types';
 import { SimilarityMetrics, ConsolidatedTheme, ConsolidationConfig } from '../types/similarity-types';
 /**
  * Effectiveness tracking for similarity analysis

@@ -2,14 +2,40 @@ import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import { validateInputs } from './validation';
 import { handleError, logInfo } from './utils';
-import { GitService } from './services/git-service';
-import { ThemeService } from './services/theme-service';
-import { ThemeFormatter } from './utils/theme-formatter';
-import { logger } from './utils/logger';
-import { performanceTracker } from './utils/performance-tracker';
+import { GitService } from '@/shared/services/git-service';
+import { LocalGitService } from '@/local-testing';
+import { IGitService } from '@/shared/interfaces/git-service-interface';
+import { OutputSaver } from '@/local-testing/services/output-saver';
+import { ThemeService } from '@/mindmap/services/theme-service';
+import { ThemeFormatter } from '@/mindmap/utils/theme-formatter';
+import { logger, Logger } from '@/shared/logger/logger';
+import { performanceTracker } from '@/shared/utils/performance-tracker';
+
+/**
+ * Detect if we're running in local testing mode
+ */
+function isLocalTesting(): boolean {
+  return process.env.ACT === 'true' || 
+         process.env.LOCAL_TESTING === 'true' ||
+         process.env.NODE_ENV === 'development';
+}
 
 export async function run(): Promise<void> {
+  const isLocal = isLocalTesting();
+  let logFilePath: string | null = null;
+
   try {
+    // Initialize live logging for local testing
+    if (isLocal) {
+      // Clean all previous analysis files for fresh start
+      OutputSaver.cleanAllAnalyses();
+      
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      logFilePath = await OutputSaver.initializeLogFile(timestamp);
+      Logger.initializeLiveLogging(logFilePath);
+      logger.info('MAIN', 'Live logging initialized for local testing');
+    }
+
     // Reset performance tracker for this run
     performanceTracker.reset();
     performanceTracker.startTiming('Total AI Code Review');
@@ -19,37 +45,43 @@ export async function run(): Promise<void> {
     // Set Anthropic API key for Claude CLI
     process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
 
+    // Log mode (isLocal already defined above)
+    logInfo(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
+
     performanceTracker.startTiming('Setup');
 
-    // Install Claude Code CLI
-    logInfo('Installing Claude Code CLI...');
-    await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
-    logInfo('Claude Code CLI installed successfully');
+    // Install Claude Code CLI (only in production or when explicitly needed)
+    if (!isLocal) {
+      logInfo('Installing Claude Code CLI...');
+      await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
+      logInfo('Claude Code CLI installed successfully');
 
-    // Initialize Claude CLI configuration to avoid JSON config errors
-    logInfo('Initializing Claude CLI configuration...');
-    const claudeConfig = {
-      allowedTools: [],
-      hasTrustDialogAccepted: true,
-      permissions: {
-        allow: ['*'],
-      },
-    };
-    await exec.exec('bash', [
-      '-c',
-      `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
-    ], { silent: true });
-    logInfo('Claude CLI configuration initialized');
+      // Initialize Claude CLI configuration to avoid JSON config errors
+      logInfo('Initializing Claude CLI configuration...');
+      const claudeConfig = {
+        allowedTools: [],
+        hasTrustDialogAccepted: true,
+        permissions: {
+          allow: ['*'],
+        },
+      };
+      await exec.exec('bash', [
+        '-c',
+        `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
+      ], { silent: true });
+      logInfo('Claude CLI configuration initialized');
+    } else {
+      logInfo('Skipping Claude CLI installation in local testing mode');
+    }
 
     performanceTracker.endTiming('Setup');
 
     logInfo('Starting AI code review analysis...');
 
-    // Initialize services with AI code analysis
-    const gitService = new GitService(
-      inputs.githubToken || '',
-      inputs.anthropicApiKey
-    );
+    // Initialize services based on environment
+    const gitService: IGitService = isLocal 
+      ? new LocalGitService(inputs.anthropicApiKey)
+      : new GitService(inputs.githubToken || '', inputs.anthropicApiKey);
 
     // Initialize theme service with AI-driven expansion
     const themeService = new ThemeService(inputs.anthropicApiKey);
@@ -64,8 +96,13 @@ export async function run(): Promise<void> {
 
     performanceTracker.endTiming('Git Operations');
 
-    // Log dev mode info
-    if (prContext && prContext.number === 0) {
+    // Log mode-specific info
+    if (isLocal) {
+      if (gitService instanceof LocalGitService) {
+        const modeInfo = gitService.getCurrentMode();
+        logInfo(`Local testing mode: ${modeInfo.name} - ${modeInfo.description}`);
+      }
+    } else if (prContext && prContext.number === 0) {
       logInfo(
         `Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`
       );
@@ -76,9 +113,12 @@ export async function run(): Promise<void> {
     logInfo(`Found ${changedFiles.length} changed files`);
 
     if (changedFiles.length === 0) {
-      logInfo('No files changed, skipping analysis');
+      const message = isLocal 
+        ? 'No uncommitted changes found, skipping analysis'
+        : 'No files changed in this PR, skipping analysis';
+      logInfo(message);
       core.setOutput('themes', JSON.stringify([]));
-      core.setOutput('summary', 'No files changed in this PR');
+      core.setOutput('summary', message);
       return;
     }
 
@@ -121,6 +161,22 @@ export async function run(): Promise<void> {
       core.setOutput('summary', safeSummary);
       logger.debug('MAIN', 'Outputs set successfully');
 
+      // Save analysis results for local testing
+      if (isLocal && gitService instanceof LocalGitService) {
+        try {
+          const modeInfo = gitService.getCurrentMode();
+          const savedPath = await OutputSaver.saveAnalysis(
+            detailedThemes,
+            safeSummary,
+            themeAnalysis,
+            modeInfo.name
+          );
+          logInfo(`Analysis saved to: ${savedPath}`);
+        } catch (saveError) {
+          logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
+        }
+      }
+
       logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
 
       // Log expansion statistics if available
@@ -161,6 +217,12 @@ export async function run(): Promise<void> {
 
   } catch (error) {
     handleError(error);
+  } finally {
+    // Close live logging if it was initialized
+    if (isLocal && logFilePath) {
+      Logger.closeLiveLogging();
+      logger.info('MAIN', 'Live logging closed');
+    }
   }
 }
 

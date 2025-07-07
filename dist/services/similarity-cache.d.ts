@@ -1,4 +1,4 @@
-import { Theme } from './theme-service';
+import { Theme } from '@/shared/types/theme-types';
 import { CachedSimilarity, SimilarityMetrics } from '../types/similarity-types';
 export declare class SimilarityCache {
     private cache;

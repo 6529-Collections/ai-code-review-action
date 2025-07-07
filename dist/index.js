@@ -29959,42 +29959,72 @@ const core = __importStar(__nccwpck_require__(7484));
 const exec = __importStar(__nccwpck_require__(5236));
 const validation_1 = __nccwpck_require__(4344);
 const utils_1 = __nccwpck_require__(1798);
-const git_service_1 = __nccwpck_require__(5902);
-const theme_service_1 = __nccwpck_require__(1599);
-const theme_formatter_1 = __nccwpck_require__(6583);
-const logger_1 = __nccwpck_require__(7893);
-const performance_tracker_1 = __nccwpck_require__(9766);
+const git_service_1 = __nccwpck_require__(8416);
+const local_testing_1 = __nccwpck_require__(7354);
+const output_saver_1 = __nccwpck_require__(2090);
+const theme_service_1 = __nccwpck_require__(884);
+const theme_formatter_1 = __nccwpck_require__(2542);
+const logger_1 = __nccwpck_require__(9000);
+const performance_tracker_1 = __nccwpck_require__(9600);
+/**
+ * Detect if we're running in local testing mode
+ */
+function isLocalTesting() {
+    return process.env.ACT === 'true' ||
+        process.env.LOCAL_TESTING === 'true' ||
+        process.env.NODE_ENV === 'development';
+}
 async function run() {
+    const isLocal = isLocalTesting();
+    let logFilePath = null;
     try {
+        // Initialize live logging for local testing
+        if (isLocal) {
+            // Clean all previous analysis files for fresh start
+            output_saver_1.OutputSaver.cleanAllAnalyses();
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            logFilePath = await output_saver_1.OutputSaver.initializeLogFile(timestamp);
+            logger_1.Logger.initializeLiveLogging(logFilePath);
+            logger_1.logger.info('MAIN', 'Live logging initialized for local testing');
+        }
         // Reset performance tracker for this run
         performance_tracker_1.performanceTracker.reset();
         performance_tracker_1.performanceTracker.startTiming('Total AI Code Review');
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+        // Log mode (isLocal already defined above)
+        (0, utils_1.logInfo)(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
         performance_tracker_1.performanceTracker.startTiming('Setup');
-        // Install Claude Code CLI
-        (0, utils_1.logInfo)('Installing Claude Code CLI...');
-        await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
-        (0, utils_1.logInfo)('Claude Code CLI installed successfully');
-        // Initialize Claude CLI configuration to avoid JSON config errors
-        (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
-        const claudeConfig = {
-            allowedTools: [],
-            hasTrustDialogAccepted: true,
-            permissions: {
-                allow: ['*'],
-            },
-        };
-        await exec.exec('bash', [
-            '-c',
-            `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
-        ], { silent: true });
-        (0, utils_1.logInfo)('Claude CLI configuration initialized');
+        // Install Claude Code CLI (only in production or when explicitly needed)
+        if (!isLocal) {
+            (0, utils_1.logInfo)('Installing Claude Code CLI...');
+            await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
+            (0, utils_1.logInfo)('Claude Code CLI installed successfully');
+            // Initialize Claude CLI configuration to avoid JSON config errors
+            (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
+            const claudeConfig = {
+                allowedTools: [],
+                hasTrustDialogAccepted: true,
+                permissions: {
+                    allow: ['*'],
+                },
+            };
+            await exec.exec('bash', [
+                '-c',
+                `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
+            ], { silent: true });
+            (0, utils_1.logInfo)('Claude CLI configuration initialized');
+        }
+        else {
+            (0, utils_1.logInfo)('Skipping Claude CLI installation in local testing mode');
+        }
         performance_tracker_1.performanceTracker.endTiming('Setup');
         (0, utils_1.logInfo)('Starting AI code review analysis...');
-        // Initialize services with AI code analysis
-        const gitService = new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
+        // Initialize services based on environment
+        const gitService = isLocal
+            ? new local_testing_1.LocalGitService(inputs.anthropicApiKey)
+            : new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
         // Initialize theme service with AI-driven expansion
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
         (0, utils_1.logInfo)('Using AI-driven theme expansion for natural hierarchy depth');
@@ -30003,17 +30033,26 @@ async function run() {
         const prContext = await gitService.getPullRequestContext();
         const changedFiles = await gitService.getChangedFiles();
         performance_tracker_1.performanceTracker.endTiming('Git Operations');
-        // Log dev mode info
-        if (prContext && prContext.number === 0) {
+        // Log mode-specific info
+        if (isLocal) {
+            if (gitService instanceof local_testing_1.LocalGitService) {
+                const modeInfo = gitService.getCurrentMode();
+                (0, utils_1.logInfo)(`Local testing mode: ${modeInfo.name} - ${modeInfo.description}`);
+            }
+        }
+        else if (prContext && prContext.number === 0) {
             (0, utils_1.logInfo)(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
             (0, utils_1.logInfo)(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
             (0, utils_1.logInfo)(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
         }
         (0, utils_1.logInfo)(`Found ${changedFiles.length} changed files`);
         if (changedFiles.length === 0) {
-            (0, utils_1.logInfo)('No files changed, skipping analysis');
+            const message = isLocal
+                ? 'No uncommitted changes found, skipping analysis'
+                : 'No files changed in this PR, skipping analysis';
+            (0, utils_1.logInfo)(message);
             core.setOutput('themes', JSON.stringify([]));
-            core.setOutput('summary', 'No files changed in this PR');
+            core.setOutput('summary', message);
             return;
         }
         // Analyze themes
@@ -30044,6 +30083,17 @@ async function run() {
             core.setOutput('themes', detailedThemes);
             core.setOutput('summary', safeSummary);
             logger_1.logger.debug('MAIN', 'Outputs set successfully');
+            // Save analysis results for local testing
+            if (isLocal && gitService instanceof local_testing_1.LocalGitService) {
+                try {
+                    const modeInfo = gitService.getCurrentMode();
+                    const savedPath = await output_saver_1.OutputSaver.saveAnalysis(detailedThemes, safeSummary, themeAnalysis, modeInfo.name);
+                    (0, utils_1.logInfo)(`Analysis saved to: ${savedPath}`);
+                }
+                catch (saveError) {
+                    logger_1.logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
+                }
+            }
             (0, utils_1.logInfo)(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
@@ -30077,6 +30127,13 @@ async function run() {
     catch (error) {
         (0, utils_1.handleError)(error);
     }
+    finally {
+        // Close live logging if it was initialized
+        if (isLocal && logFilePath) {
+            logger_1.Logger.closeLiveLogging();
+            logger_1.logger.info('MAIN', 'Live logging closed');
+        }
+    }
 }
 if (require.main === require.cache[eval('__filename')]) {
     run();
@@ -30085,17 +30142,757 @@ if (require.main === require.cache[eval('__filename')]) {
 
 /***/ }),
 
-/***/ 6244:
+/***/ 6219:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Configuration and types for local testing diff modes
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_DIFF_MODE_CONFIG = exports.DiffModeType = void 0;
+var DiffModeType;
+(function (DiffModeType) {
+    DiffModeType["UNCOMMITTED"] = "uncommitted";
+    // Future modes can be added here
+    // STAGED = 'staged',
+    // LAST_COMMIT = 'last-commit',
+    // BRANCH = 'branch',
+    // PR = 'pr'
+})(DiffModeType || (exports.DiffModeType = DiffModeType = {}));
+exports.DEFAULT_DIFF_MODE_CONFIG = {
+    mode: DiffModeType.UNCOMMITTED,
+};
+
+
+/***/ }),
+
+/***/ 7354:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+/**
+ * Local testing module entry point
+ * Exports all components needed for local testing functionality
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OutputSaver = exports.LocalGitService = exports.LocalDiffService = void 0;
+// Configuration
+__exportStar(__nccwpck_require__(6219), exports);
+// Services
+var local_diff_service_1 = __nccwpck_require__(3836);
+Object.defineProperty(exports, "LocalDiffService", ({ enumerable: true, get: function () { return local_diff_service_1.LocalDiffService; } }));
+var local_git_service_1 = __nccwpck_require__(4275);
+Object.defineProperty(exports, "LocalGitService", ({ enumerable: true, get: function () { return local_git_service_1.LocalGitService; } }));
+var output_saver_1 = __nccwpck_require__(2090);
+Object.defineProperty(exports, "OutputSaver", ({ enumerable: true, get: function () { return output_saver_1.OutputSaver; } }));
+// Modes
+__exportStar(__nccwpck_require__(7881), exports);
+
+
+/***/ }),
+
+/***/ 432:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BaseDiffMode = void 0;
+/**
+ * Abstract base class for different diff modes in local testing
+ * Provides extensible foundation for future diff modes
+ */
+class BaseDiffMode {
+    /**
+     * Optional: Get a description of what this mode analyzes
+     */
+    getDescription() {
+        return `Analyzes changes using ${this.getName()} mode`;
+    }
+}
+exports.BaseDiffMode = BaseDiffMode;
+
+
+/***/ }),
+
+/***/ 7881:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Export barrel for all diff modes
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UncommittedMode = exports.BaseDiffMode = void 0;
+var base_diff_mode_1 = __nccwpck_require__(432);
+Object.defineProperty(exports, "BaseDiffMode", ({ enumerable: true, get: function () { return base_diff_mode_1.BaseDiffMode; } }));
+var uncommitted_mode_1 = __nccwpck_require__(1852);
+Object.defineProperty(exports, "UncommittedMode", ({ enumerable: true, get: function () { return uncommitted_mode_1.UncommittedMode; } }));
+// Future modes can be exported here
+// export { StagedMode } from './staged-mode';
+// export { LastCommitMode } from './last-commit-mode';
+// export { BranchMode } from './branch-mode';
+
+
+/***/ }),
+
+/***/ 1852:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UncommittedMode = void 0;
+const exec = __importStar(__nccwpck_require__(5236));
+const base_diff_mode_1 = __nccwpck_require__(432);
+/**
+ * UncommittedMode analyzes all uncommitted changes (staged + unstaged)
+ * This is the default mode for local testing
+ */
+class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
+    getName() {
+        return 'uncommitted';
+    }
+    getDescription() {
+        return 'Analyzes all uncommitted changes (staged and unstaged)';
+    }
+    shouldIncludeFile(filename) {
+        const isExcluded = UncommittedMode.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
+        return !isExcluded;
+    }
+    async getChangedFiles() {
+        const files = [];
+        // Get staged files
+        const stagedFiles = await this.getStagedFiles();
+        files.push(...stagedFiles);
+        // Get unstaged files (modified/deleted)
+        const unstagedFiles = await this.getUnstagedFiles();
+        files.push(...unstagedFiles);
+        // Get untracked files
+        const untrackedFiles = await this.getUntrackedFiles();
+        files.push(...untrackedFiles);
+        // Remove duplicates and filter
+        const uniqueFiles = this.deduplicateFiles(files);
+        const filteredFiles = uniqueFiles.filter(file => this.shouldIncludeFile(file.filename));
+        return filteredFiles;
+    }
+    async getDiffContent() {
+        let diffOutput = '';
+        try {
+            // Get staged changes
+            await exec.exec('git', ['diff', '--cached'], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+            // Get unstaged changes
+            await exec.exec('git', ['diff'], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            console.error('[UNCOMMITTED-MODE] Failed to get diff content:', error);
+        }
+        return diffOutput;
+    }
+    async getStagedFiles() {
+        const files = [];
+        let fileList = '';
+        try {
+            await exec.exec('git', ['diff', '--cached', '--name-status'], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            return [];
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const line of fileLines) {
+            const [status, filename] = line.split('\t');
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, status, true);
+            if (file)
+                files.push(file);
+        }
+        return files;
+    }
+    async getUnstagedFiles() {
+        const files = [];
+        let fileList = '';
+        try {
+            await exec.exec('git', ['diff', '--name-status'], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            return [];
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const line of fileLines) {
+            const [status, filename] = line.split('\t');
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, status, false);
+            if (file)
+                files.push(file);
+        }
+        return files;
+    }
+    async getUntrackedFiles() {
+        const files = [];
+        let fileList = '';
+        try {
+            await exec.exec('git', ['ls-files', '--others', '--exclude-standard'], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            return [];
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const filename of fileLines) {
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, 'A', false);
+            if (file)
+                files.push(file);
+        }
+        return files;
+    }
+    async createChangedFile(filename, gitStatus, isStaged) {
+        try {
+            // Get patch for this file
+            const patch = await this.getFilePatch(filename, isStaged);
+            return {
+                filename,
+                status: this.mapGitStatusToChangedFileStatus(gitStatus),
+                patch,
+            };
+        }
+        catch (error) {
+            return null;
+        }
+    }
+    async getFilePatch(filename, isStaged) {
+        let patch = '';
+        try {
+            const diffArgs = isStaged
+                ? ['diff', '--cached', '--', filename]
+                : ['diff', '--', filename];
+            await exec.exec('git', diffArgs, {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        patch += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            // For untracked files, we need to show the entire file as added
+            if (!isStaged) {
+                try {
+                    await exec.exec('git', ['diff', '--no-index', '/dev/null', filename], {
+                        silent: true,
+                        listeners: {
+                            stdout: (data) => {
+                                patch += data.toString();
+                            },
+                        },
+                    });
+                }
+                catch (untrackedError) {
+                    // Ignore untracked file patch errors
+                }
+            }
+        }
+        return patch;
+    }
+    mapGitStatusToChangedFileStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'D':
+                return 'removed';
+            case 'M':
+                return 'modified';
+            case 'R':
+                return 'renamed';
+            default:
+                return 'modified';
+        }
+    }
+    deduplicateFiles(files) {
+        const fileMap = new Map();
+        for (const file of files) {
+            const existing = fileMap.get(file.filename);
+            if (!existing) {
+                fileMap.set(file.filename, file);
+            }
+            else {
+                // Merge staged and unstaged changes
+                fileMap.set(file.filename, {
+                    ...existing,
+                    patch: existing.patch + '\n' + file.patch,
+                });
+            }
+        }
+        return Array.from(fileMap.values());
+    }
+}
+exports.UncommittedMode = UncommittedMode;
+// Patterns for files to exclude from analysis
+UncommittedMode.EXCLUDED_PATTERNS = [
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /package-lock\.json$/, // Exclude lock files
+    /mindmap-prd\.txt$/, // Exclude PRD files
+    /review-prd\.md$/, // Exclude PRD files
+    /\.md$/, // Exclude all markdown files
+    /\.txt$/, // Exclude all text files
+    /\.json$/, // Exclude all json files
+];
+
+
+/***/ }),
+
+/***/ 3836:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LocalDiffService = void 0;
+const diff_modes_1 = __nccwpck_require__(6219);
+const modes_1 = __nccwpck_require__(7881);
+/**
+ * LocalDiffService orchestrates different diff modes for local testing
+ * Provides a unified interface for getting changed files based on mode
+ */
+class LocalDiffService {
+    constructor(modeConfig) {
+        const config = modeConfig || diff_modes_1.DEFAULT_DIFF_MODE_CONFIG;
+        this.mode = this.createMode(config);
+    }
+    /**
+     * Get changed files using the configured diff mode
+     */
+    async getChangedFiles() {
+        return await this.mode.getChangedFiles();
+    }
+    /**
+     * Get full diff content using the configured diff mode
+     */
+    async getDiffContent() {
+        return await this.mode.getDiffContent();
+    }
+    /**
+     * Get the current mode information
+     */
+    getCurrentMode() {
+        return {
+            name: this.mode.getName(),
+            description: this.mode.getDescription(),
+        };
+    }
+    /**
+     * Create a diff mode instance based on configuration
+     */
+    createMode(config) {
+        switch (config.mode) {
+            case diff_modes_1.DiffModeType.UNCOMMITTED:
+                return new modes_1.UncommittedMode();
+            // Future modes can be added here
+            // case DiffModeType.STAGED:
+            //   return new StagedMode();
+            // case DiffModeType.LAST_COMMIT:
+            //   return new LastCommitMode();
+            // case DiffModeType.BRANCH:
+            //   return new BranchMode(config.baseBranch || 'main');
+            default:
+                return new modes_1.UncommittedMode();
+        }
+    }
+}
+exports.LocalDiffService = LocalDiffService;
+
+
+/***/ }),
+
+/***/ 4275:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LocalGitService = void 0;
+const ai_code_analyzer_1 = __nccwpck_require__(3562);
+const local_diff_service_1 = __nccwpck_require__(3836);
+/**
+ * LocalGitService provides Git operations specifically for local testing
+ * Simplified version focused on uncommitted changes analysis
+ */
+class LocalGitService {
+    constructor(anthropicApiKey, diffModeConfig) {
+        if (!anthropicApiKey) {
+            throw new Error('ANTHROPIC_API_KEY is required for AI code analysis');
+        }
+        this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(anthropicApiKey);
+        this.localDiffService = new local_diff_service_1.LocalDiffService(diffModeConfig);
+    }
+    /**
+     * Get enhanced changed files with AI code analysis for local testing
+     */
+    async getEnhancedChangedFiles() {
+        // Get changed files using local diff service
+        const changedFiles = await this.localDiffService.getChangedFiles();
+        if (changedFiles.length === 0) {
+            return [];
+        }
+        // Prepare files for concurrent AI analysis
+        const filesToAnalyze = changedFiles.map((file) => ({
+            filename: file.filename,
+            diffPatch: file.patch || '',
+            changeType: file.status === 'removed'
+                ? 'deleted'
+                : file.status,
+        }));
+        // Use AICodeAnalyzer for processing changed files
+        const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
+        return codeChanges;
+    }
+    /**
+     * Get basic changed files (without AI analysis) for local testing
+     */
+    async getChangedFiles() {
+        return await this.localDiffService.getChangedFiles();
+    }
+    /**
+     * Get synthetic PR context for local testing
+     * Always returns a dev mode context since we're not dealing with real PRs
+     */
+    async getPullRequestContext() {
+        const modeInfo = this.localDiffService.getCurrentMode();
+        return {
+            number: 0, // Synthetic PR number
+            title: `Local ${modeInfo.name} changes`,
+            body: modeInfo.description,
+            baseBranch: 'local-base',
+            headBranch: 'local-head',
+            baseSha: 'local-base-sha',
+            headSha: 'local-head-sha',
+        };
+    }
+    /**
+     * Get full diff content for local testing
+     */
+    async getDiffContent() {
+        return await this.localDiffService.getDiffContent();
+    }
+    /**
+     * Get current mode information
+     */
+    getCurrentMode() {
+        return this.localDiffService.getCurrentMode();
+    }
+}
+exports.LocalGitService = LocalGitService;
+
+
+/***/ }),
+
+/***/ 2090:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.OutputSaver = void 0;
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+/**
+ * OutputSaver handles saving local testing results to disk
+ */
+class OutputSaver {
+    /**
+     * Save analysis results to disk with timestamp and metadata
+     */
+    static async saveAnalysis(themes, summary, rawAnalysis, mode) {
+        // Ensure output directory exists
+        await this.ensureDirectoryExists();
+        // Generate metadata
+        const metadata = await this.generateMetadata(rawAnalysis, mode);
+        // Create saved analysis object
+        const savedAnalysis = {
+            metadata,
+            themes,
+            summary,
+            rawAnalysis,
+        };
+        // Generate filename with timestamp
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `analysis-${timestamp}.json`;
+        const filepath = path.join(this.LOCAL_DIR, filename);
+        // Save to file
+        const jsonContent = JSON.stringify(savedAnalysis, null, 2);
+        fs.writeFileSync(filepath, jsonContent, 'utf8');
+        return filepath;
+    }
+    /**
+     * Generate log file path with timestamp
+     */
+    static generateLogFilePath(timestamp) {
+        const ts = timestamp || new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `analysis-${ts}.log`;
+        return path.join(this.LOCAL_DIR, filename);
+    }
+    /**
+     * Initialize log file for live streaming
+     */
+    static async initializeLogFile(timestamp) {
+        await this.ensureDirectoryExists();
+        const logPath = this.generateLogFilePath(timestamp);
+        // Create empty log file
+        try {
+            fs.writeFileSync(logPath, '');
+        }
+        catch (error) {
+            console.error(`Failed to create log file: ${error}`);
+        }
+        return logPath;
+    }
+    /**
+     * Get list of saved analysis files
+     */
+    static getSavedAnalyses() {
+        if (!fs.existsSync(this.LOCAL_DIR)) {
+            return [];
+        }
+        return fs.readdirSync(this.LOCAL_DIR)
+            .filter(file => (file.endsWith('.json') || file.endsWith('.log')) && file.startsWith('analysis-'))
+            .sort()
+            .reverse(); // Most recent first
+    }
+    /**
+     * Load a specific saved analysis
+     */
+    static loadAnalysis(filename) {
+        const filepath = path.join(this.LOCAL_DIR, filename);
+        if (!fs.existsSync(filepath)) {
+            return null;
+        }
+        try {
+            const content = fs.readFileSync(filepath, 'utf8');
+            return JSON.parse(content);
+        }
+        catch (error) {
+            return null;
+        }
+    }
+    /**
+     * Clean up all analysis files for fresh start
+     */
+    static cleanAllAnalyses() {
+        if (!fs.existsSync(this.LOCAL_DIR)) {
+            return;
+        }
+        // Get all analysis files (both JSON and log)
+        const allFiles = fs.readdirSync(this.LOCAL_DIR)
+            .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')));
+        // Delete all analysis files
+        for (const filename of allFiles) {
+            try {
+                const filepath = path.join(this.LOCAL_DIR, filename);
+                fs.unlinkSync(filepath);
+            }
+            catch (error) {
+                // Ignore errors, continue cleanup
+            }
+        }
+    }
+    /**
+     * Ensure output directories exist
+     */
+    static async ensureDirectoryExists() {
+        if (!fs.existsSync(this.OUTPUT_DIR)) {
+            fs.mkdirSync(this.OUTPUT_DIR, { recursive: true });
+        }
+        if (!fs.existsSync(this.LOCAL_DIR)) {
+            fs.mkdirSync(this.LOCAL_DIR, { recursive: true });
+        }
+    }
+    /**
+     * Generate metadata for the analysis
+     */
+    static async generateMetadata(analysis, mode) {
+        const metadata = {
+            timestamp: new Date().toISOString(),
+            mode,
+            totalFiles: analysis.themes?.length || 0, // Approximate from themes
+            totalThemes: analysis.totalThemes,
+            processingTimeMs: analysis.processingTime,
+        };
+        // Try to get git info
+        try {
+            const { execSync } = __nccwpck_require__(5317);
+            metadata.gitBranch = execSync('git branch --show-current', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+            metadata.gitCommit = execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim().substring(0, 8);
+        }
+        catch (error) {
+            // Git info is optional
+        }
+        return metadata;
+    }
+    /**
+     * Get summary of all saved analyses
+     */
+    static getSavedAnalysesSummary() {
+        const files = this.getSavedAnalyses();
+        const summaries = [];
+        for (const filename of files.slice(0, 20)) { // Show last 20
+            const analysis = this.loadAnalysis(filename);
+            if (analysis) {
+                summaries.push({
+                    filename,
+                    metadata: analysis.metadata,
+                });
+            }
+        }
+        return summaries;
+    }
+}
+exports.OutputSaver = OutputSaver;
+OutputSaver.OUTPUT_DIR = process.env.ACT === 'true'
+    ? './'
+    : '.ai-code-review';
+OutputSaver.LOCAL_DIR = process.env.ACT === 'true'
+    ? './test-output'
+    : path.join(OutputSaver.OUTPUT_DIR, 'local-results');
+
+
+/***/ }),
+
+/***/ 9918:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AIDomainAnalyzer = void 0;
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const concurrency_manager_1 = __nccwpck_require__(8692);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
+const business_prompt_templates_1 = __nccwpck_require__(2813);
 /**
  * AI-driven business domain analyzer
  * Replaces mechanical keyword matching with semantic understanding
@@ -30106,82 +30903,49 @@ class AIDomainAnalyzer {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
     }
     /**
-     * Classify business domain using AI semantic understanding
+     * Classify business capability using AI semantic understanding
      * PRD: Root level represents "distinct user flow, story, or business capability"
      */
     async classifyBusinessDomain(context, semanticDiff) {
         const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
-                'domain',
+                'primaryCapability',
                 'userValue',
-                'businessCapability',
+                'businessImpact',
                 'confidence',
                 'reasoning',
             ]);
             if (result.success) {
                 const data = result.data;
-                return this.validateDomainClassification(data);
+                return this.transformToAIDomainClassification(data);
             }
         }
         catch (error) {
-            (0, utils_1.logInfo)(`AI domain classification failed: ${error}`);
+            (0, utils_1.logInfo)(`AI business capability classification failed: ${error}`);
         }
         // Graceful degradation: return generic domain with low confidence
         return this.createFallbackDomain(context);
     }
     /**
-     * Build AI prompt for business domain classification
+     * Build AI prompt for business capability classification
      * PRD: "Structure emerges from code, not forced into preset levels"
      */
     buildDomainClassificationPrompt(context, semanticDiff) {
         const additionalContext = semanticDiff
             ? this.formatSemanticDiffContext(semanticDiff)
             : '';
-        return `You are a product manager analyzing code changes for business impact.
-
-CONTEXT:
-File: ${context.filePath}
-${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
-${context.prDescription ? `PR Description: ${context.prDescription}` : ''}
-
-COMPLETE CODE CHANGES:
-${context.completeDiff}
-
-SURROUNDING CODE CONTEXT:
+        // Use business-first prompt template
+        const functionalContext = `
 ${context.surroundingContext}
 
 ${additionalContext}
 
-TASK: Identify the PRIMARY business domain this change affects.
-
-PERSPECTIVE: Focus on end-user value and business capability, not technical implementation.
-
-CONSIDER:
-1. What user problem does this solve or improve?
-2. What business process does it enable or enhance?
-3. What user journey or workflow does it affect?
-4. Is this creating new capability or improving existing?
-
-EXAMPLES:
-✅ Good domains: "User Account Management", "Payment Processing", "Content Discovery"
-✅ Good user value: "Users can reset passwords securely"
-✅ Good capability: "Enable secure self-service account recovery"
-
-❌ Avoid technical terms: "Database Migration", "Refactor Utils"
-❌ Avoid generic: "Fix Issues", "Update Code"
-
-RESPOND WITH ONLY VALID JSON:
-{
-  "domain": "Clear business domain (max 5 words)",
-  "userValue": "End user benefit (max 12 words)", 
-  "businessCapability": "What this enables users to do (max 15 words)",
-  "confidence": 0.0-1.0,
-  "reasoning": "Why this domain classification (max 20 words)",
-  "subDomains": ["Optional specific user flows within capability"],
-  "crossCuttingConcerns": ["Optional other domains this also affects"]
-}`;
+COMMIT CONTEXT:
+${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
+${context.prDescription ? `PR Description: ${context.prDescription}` : ''}`;
+        return business_prompt_templates_1.BusinessPromptTemplates.createBusinessCapabilityPrompt(context.filePath, context.completeDiff, functionalContext);
     }
     /**
      * Format semantic diff context for additional insight
@@ -30205,7 +30969,23 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
 `;
     }
     /**
-     * Validate and normalize AI domain classification response
+     * Transform business capability response to AIDomainClassification format
+     */
+    transformToAIDomainClassification(data) {
+        return {
+            domain: this.trimToWordLimit(data.primaryCapability || 'Code Changes', 5),
+            userValue: this.trimToWordLimit(data.userValue || 'Improve system functionality', 15),
+            businessCapability: this.trimToWordLimit(data.businessImpact || 'Enable users to accomplish tasks', 15),
+            confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
+            reasoning: this.trimToWordLimit(data.reasoning || 'Standard code modification', 20),
+            subDomains: data.affectedUserTypes || [],
+            crossCuttingConcerns: data.businessMetrics || [],
+            userJourney: data.userJourney,
+            businessMetrics: data.businessMetrics,
+        };
+    }
+    /**
+     * Validate and normalize AI domain classification response (legacy support)
      */
     validateDomainClassification(data) {
         return {
@@ -30214,12 +30994,12 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
             businessCapability: this.trimToWordLimit(data.businessCapability || 'Enable users to accomplish tasks', 15),
             confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
             reasoning: this.trimToWordLimit(data.reasoning || 'Standard code modification', 20),
-            subDomains: data.subDomains || [], // Include all sub-domains
-            crossCuttingConcerns: data.crossCuttingConcerns || [], // Include all concerns
+            subDomains: data.subDomains || [],
+            crossCuttingConcerns: data.crossCuttingConcerns || [],
         };
     }
     /**
-     * Create fallback domain when AI analysis fails
+     * Create fallback business capability when AI analysis fails
      * PRD: "Graceful degradation - never fail completely"
      */
     createFallbackDomain(context) {
@@ -30227,43 +31007,72 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         const isTest = context.filePath.includes('test') || context.filePath.includes('spec');
         const isConfig = context.filePath.includes('config') || fileName.endsWith('.json');
         const isUI = context.filePath.includes('component') || context.filePath.includes('ui');
+        const isAuth = context.filePath.includes('auth') || context.filePath.includes('login');
+        const isLogger = context.filePath.includes('log') || context.filePath.includes('debug');
         if (isTest) {
             return {
-                domain: 'Test Coverage',
-                userValue: 'Ensure system reliability and quality',
-                businessCapability: 'Maintain high-quality user experience through testing',
+                domain: 'Development Workflow Optimization',
+                userValue: 'Developers catch issues before users experience them',
+                businessCapability: 'Maintain high-quality user experience through automated testing',
                 confidence: 0.4,
-                reasoning: 'Test file detected - quality assurance domain',
-                subDomains: ['Unit Testing'],
+                reasoning: 'Test file detected - quality assurance capability',
+                subDomains: ['Software developers'],
+                userJourney: 'Quality assurance and testing workflow',
+            };
+        }
+        if (isAuth) {
+            return {
+                domain: 'User Account Management',
+                userValue: 'Users access their accounts securely and efficiently',
+                businessCapability: 'Enable secure user authentication and access control',
+                confidence: 0.5,
+                reasoning: 'Authentication file detected - user security capability',
+                subDomains: ['End users', 'Account holders'],
+                userJourney: 'User login and authentication process',
+            };
+        }
+        if (isLogger) {
+            return {
+                domain: 'Development Workflow Optimization',
+                userValue: 'Developers diagnose and resolve issues faster',
+                businessCapability: 'Enable efficient troubleshooting and system monitoring',
+                confidence: 0.5,
+                reasoning: 'Logging file detected - debugging and monitoring capability',
+                subDomains: ['Software developers', 'DevOps engineers'],
+                userJourney: 'Error investigation and system monitoring workflow',
             };
         }
         if (isConfig) {
             return {
-                domain: 'System Configuration',
-                userValue: 'Maintain system operational stability',
-                businessCapability: 'Configure system behavior and settings',
+                domain: 'Development Workflow Optimization',
+                userValue: 'Developers deploy and maintain systems reliably',
+                businessCapability: 'Configure system behavior for optimal user experience',
                 confidence: 0.4,
-                reasoning: 'Configuration file detected - infrastructure domain',
-                subDomains: ['Infrastructure Management'],
+                reasoning: 'Configuration file detected - system management capability',
+                subDomains: ['DevOps engineers', 'System administrators'],
+                userJourney: 'System deployment and configuration workflow',
             };
         }
         if (isUI) {
             return {
-                domain: 'User Interface',
-                userValue: 'Improve user interaction experience',
-                businessCapability: 'Enable intuitive user interactions and workflows',
+                domain: 'User Experience Enhancement',
+                userValue: 'Users accomplish tasks intuitively and efficiently',
+                businessCapability: 'Enable smooth and intuitive user interactions',
                 confidence: 0.4,
-                reasoning: 'UI component detected - user experience domain',
-                subDomains: ['User Experience'],
+                reasoning: 'UI component detected - user interface capability',
+                subDomains: ['End users', 'All user types'],
+                userJourney: 'User interface interaction and navigation',
             };
         }
         // Generic fallback
         return {
-            domain: 'System Enhancement',
-            userValue: 'Improve overall system functionality',
-            businessCapability: 'Enhance system capabilities for users',
+            domain: 'User Experience Enhancement',
+            userValue: 'Users benefit from improved system functionality',
+            businessCapability: 'Enhance overall system capabilities for better user outcomes',
             confidence: 0.3,
-            reasoning: 'AI analysis unavailable - generic enhancement domain',
+            reasoning: 'AI analysis unavailable - generic user experience capability',
+            subDomains: ['All users'],
+            userJourney: 'General system usage and interaction',
         };
     }
     /**
@@ -30273,7 +31082,7 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
     async analyzeMultiDomainChanges(contexts) {
         const prompt = this.buildMultiDomainAnalysisPrompt(contexts);
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'multi-domain-analysis');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
                 'primaryDomains',
             ]);
@@ -30286,35 +31095,29 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         }
         // Fallback: analyze each individually with concurrency control
         console.log(`[AI-DOMAIN] Fallback to individual analysis for ${contexts.length} contexts`);
-        const domains = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(contexts, async (ctx) => await this.classifyBusinessDomain(ctx), {
-            concurrencyLimit: 5,
-            maxRetries: 2,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                console.log(`[AI-DOMAIN] Individual analysis progress: ${completed}/${total}`);
-            },
-            onError: (error, ctx, retryCount) => {
-                console.warn(`[AI-DOMAIN] Retry ${retryCount} for context: ${error.message}`);
-            },
-        });
-        // Filter successful results and handle errors
-        const successfulDomains = [];
-        for (const result of domains) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback`);
-                // Add fallback domain for failed analysis
-                successfulDomains.push({
+        // Process all contexts concurrently - let ClaudeClient handle rate limiting
+        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+        console.log(`[AI-DOMAIN] Processing all ${contexts.length} contexts concurrently`);
+        const contextPromises = contexts.map(async (ctx) => {
+            try {
+                const result = await this.classifyBusinessDomain(ctx);
+                return result;
+            }
+            catch (error) {
+                console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                // Return fallback domain for failed analysis
+                return {
                     domain: 'System Enhancement',
                     userValue: 'Improve system functionality',
                     businessCapability: 'Enhance system capabilities',
                     confidence: 0.3,
                     reasoning: 'AI analysis failed - using fallback',
-                });
+                };
             }
-            else {
-                successfulDomains.push(result);
-            }
-        }
+        });
+        // Wait for all contexts to complete - ClaudeClient manages the 10 concurrent limit
+        const successfulDomains = await Promise.all(contextPromises);
+        console.log(`[AI-DOMAIN] All ${successfulDomains.length} contexts processed`);
         return {
             primaryDomains: successfulDomains,
             crossCuttingDomains: [],
@@ -30393,137 +31196,544 @@ exports.AIDomainAnalyzer = AIDomainAnalyzer;
 
 /***/ }),
 
-/***/ 7257:
+/***/ 3555:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.AIExpansionDecisionService = void 0;
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
+exports.AIMindmapService = void 0;
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
-const code_structure_analyzer_1 = __nccwpck_require__(8318);
-const dynamic_prompt_builder_1 = __nccwpck_require__(1814);
 /**
- * Simplified AI-driven expansion decision service
- * Implements PRD vision: "AI decides when further decomposition is needed"
+ * AI service for mindmap generation with PRD-aligned prompts
+ * Creates self-contained nodes with natural depth detection
  */
-class AIExpansionDecisionService {
+class AIMindmapService {
     constructor(anthropicApiKey) {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
-        this.decisionCache = new Map();
-        this.codeAnalyzer = new code_structure_analyzer_1.CodeStructureAnalyzer();
-        this.promptBuilder = new dynamic_prompt_builder_1.DynamicPromptBuilder();
     }
     /**
-     * Main decision point: Should this theme be expanded?
-     * Uses intelligent code analysis and dynamic prompting for optimal decisions
+     * Determine if a node should be expanded with direct code assignment
+     * PRD: "AI decides when further decomposition is needed"
      */
-    async shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes) {
-        // Enhanced cache check with analysis hash
-        const analysisHash = await this.getAnalysisHash(theme);
-        const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
-        if (this.decisionCache.has(cacheKey)) {
-            const cachedDecision = this.decisionCache.get(cacheKey);
-            if (cachedDecision) {
-                return cachedDecision;
-            }
-        }
-        // PRD: Let AI make ALL expansion decisions - no programmatic filtering
-        // Analyze code structure for intelligent hints
-        const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
-        // Build dynamic, context-aware prompt
-        const prompt = this.promptBuilder.buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes);
-        (0, utils_1.logInfo)(`Enhanced AI analysis for "${theme.name}": ${codeAnalysis.functionCount} functions, ${codeAnalysis.changeTypes.length} change types, ${codeAnalysis.expansionHints.length} hints`);
-        const decision = await this.getAIDecision(prompt);
-        this.decisionCache.set(cacheKey, decision);
-        return decision;
+    async shouldExpandNode(node, currentDepth) {
+        return this.attemptExpansionWithRetry(node, currentDepth, 0);
     }
     /**
-     * Generate a simple hash for theme analysis caching
+     * Attempt expansion with AI-only retry strategy
      */
-    async getAnalysisHash(theme) {
-        const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
-        // Simple hash - in production you might want a proper hash function
-        return Buffer.from(content).toString('base64').slice(0, 16);
-    }
-    /**
-     * Calculate total lines from code snippets (which contain full file patches)
-     */
-    calculateTotalLines(theme) {
-        // Each code snippet contains a full file patch/diff
-        return theme.codeSnippets.reduce((count, snippet) => {
-            return count + snippet.split('\n').length;
-        }, 0);
-    }
-    /**
-     * Get AI decision from Claude
-     */
-    async getAIDecision(prompt) {
+    async attemptExpansionWithRetry(node, currentDepth, retryCount) {
+        const maxRetries = 2;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'reasoning']);
-            if (extractionResult.success) {
-                const data = extractionResult.data;
-                return {
-                    shouldExpand: data.shouldExpand ?? true, // PRD: Default to expand
-                    isAtomic: data.isAtomic ?? false,
-                    reasoning: data.reasoning ?? 'No reasoning provided',
-                    businessContext: data.businessContext ?? '',
-                    technicalContext: data.technicalContext ?? '',
-                    testabilityAssessment: data.testabilityAssessment ?? '',
-                    suggestedSubThemes: data.suggestedSubThemes || null,
-                };
+            const prompt = retryCount === 0
+                ? this.buildDirectAssignmentPrompt(node, currentDepth)
+                : this.buildEnhancedCodeAssignmentPrompt(node, currentDepth, retryCount);
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'shouldExpand', 'isAtomic', 'confidence'
+            ]);
+            if (!result.success) {
+                throw new Error(`Invalid JSON response: ${result.error}`);
             }
-            // Fallback on parsing error
-            (0, utils_1.logInfo)(`Failed to parse AI expansion decision: ${extractionResult.error}`);
+            const data = result.data;
+            // Strict validation - no fallbacks
+            if (data.shouldExpand && (!data.children || data.children.length === 0)) {
+                throw new Error('AI indicated expansion but provided no children');
+            }
+            // Validate code assignments if expanding
+            let children;
+            if (data.shouldExpand && data.children) {
+                children = this.validateDirectAssignments(data.children);
+                if (children.length === 0) {
+                    throw new Error('AI provided children but none had valid code assignments');
+                }
+            }
             return {
-                shouldExpand: true, // PRD: Default to expand on error
-                isAtomic: false,
-                reasoning: 'Failed to parse AI response',
-                businessContext: '',
-                technicalContext: '',
-                testabilityAssessment: '',
-                suggestedSubThemes: null,
+                shouldExpand: data.shouldExpand,
+                isAtomic: data.isAtomic || !data.shouldExpand,
+                atomicReason: data.atomicReason || (data.shouldExpand ? undefined : 'AI determined this is atomic'),
+                children,
+                confidence: data.confidence || 0.8,
             };
         }
         catch (error) {
-            (0, utils_1.logInfo)(`AI expansion decision failed: ${error}`);
-            return {
-                shouldExpand: true, // PRD: Default to expand on error
-                isAtomic: false,
-                reasoning: `AI analysis failed: ${error}`,
-                businessContext: '',
-                technicalContext: '',
-                testabilityAssessment: '',
-                suggestedSubThemes: null,
-            };
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            (0, utils_1.logInfo)(`AI expansion attempt ${retryCount + 1} failed for "${node.name}": ${errorMessage}`);
+            // Retry with enhanced prompt if we haven't exhausted retries
+            if (retryCount < maxRetries) {
+                (0, utils_1.logInfo)(`Retrying expansion for "${node.name}" with enhanced prompt (attempt ${retryCount + 2})`);
+                return this.attemptExpansionWithRetry(node, currentDepth, retryCount + 1);
+            }
+            // Final attempt: explicit code extraction
+            if (retryCount === maxRetries) {
+                (0, utils_1.logInfo)(`Final attempt: explicit code extraction for "${node.name}"`);
+                return this.attemptExplicitCodeExtraction(node, currentDepth);
+            }
+            // No fallbacks - fail loudly
+            throw new Error(`AI expansion failed after ${maxRetries + 1} attempts for "${node.name}": ${errorMessage}`);
         }
     }
     /**
-     * Clear the decision cache
+     * Build enhanced prompt for retry attempts
      */
-    clearCache() {
-        this.decisionCache.clear();
+    buildEnhancedCodeAssignmentPrompt(node, currentDepth, retryCount) {
+        const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
+        return `RETRY ${retryCount}: Previous response was invalid. You MUST provide proper code assignments.
+
+CRITICAL REQUIREMENTS:
+- If shouldExpand=true, you MUST provide children array with code assignments
+- Each child MUST have assignedCode with proper CodeDiff structure
+- Every line of parent code MUST be assigned to exactly one child
+- Use exact JSON format specified below
+
+CURRENT NODE: "${node.name}"
+Description: ${node.description}
+Depth: ${currentDepth}
+
+COMPLETE CODE TO ASSIGN:
+${completeCodeDiff}
+
+You must either:
+1. Set shouldExpand=false and explain why in atomicReason
+2. Set shouldExpand=true and provide complete code assignments
+
+RESPOND WITH EXACT JSON FORMAT:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean,
+  "atomicReason": "if atomic, specific reason (required if shouldExpand=false)",
+  "confidence": 0.0-1.0,
+  "children": [
+    {
+      "name": "Specific action name (max 8 words)",
+      "description": "What this child does (1-2 sentences)", 
+      "businessValue": "User impact (max 12 words)",
+      "technicalPurpose": "Technical function (max 10 words)",
+      "assignedCode": [
+        {
+          "file": "exact file path from parent",
+          "hunks": [
+            {
+              "oldStart": number,
+              "oldLines": number, 
+              "newStart": number,
+              "newLines": number,
+              "changes": [
+                {
+                  "type": "add|delete|context",
+                  "content": "exact line content from parent"
+                }
+              ]
+            }
+          ],
+          "ownership": "primary"
+        }
+      ],
+      "rationale": "Why separate (max 15 words)"
+    }
+  ]
+}`;
+    }
+    /**
+     * Final attempt: explicit code extraction for each potential child
+     */
+    async attemptExplicitCodeExtraction(node, currentDepth) {
+        const prompt = `FINAL ATTEMPT: Extract code for potential sub-themes.
+
+NODE: "${node.name}"
+COMPLETE CODE:
+${this.formatCompleteCodeDiff(node.codeDiff)}
+
+First decide: Should this be expanded at all?
+If YES, identify 2-4 clear responsibilities and assign specific code to each.
+If NO, explain why it's atomic.
+
+RESPOND WITH JSON:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean, 
+  "atomicReason": "specific reason if atomic",
+  "confidence": 0.0-1.0,
+  "children": [] // empty if not expanding
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand']);
+            if (result.success) {
+                const data = result.data;
+                return {
+                    shouldExpand: data.shouldExpand || false,
+                    isAtomic: data.isAtomic || !data.shouldExpand,
+                    atomicReason: data.atomicReason || 'Explicit extraction determined atomic',
+                    children: undefined, // No children on final fallback
+                    confidence: data.confidence || 0.3,
+                };
+            }
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Explicit code extraction failed for "${node.name}": ${error}`);
+        }
+        // Absolute final fallback - treat as atomic
+        return {
+            shouldExpand: false,
+            isAtomic: true,
+            atomicReason: 'All AI attempts failed - treating as atomic',
+            children: undefined,
+            confidence: 0.1,
+        };
+    }
+    /**
+     * Build prompt for direct code assignment (PRD aligned)
+     * AI sees complete code and assigns it directly to children
+     */
+    buildDirectAssignmentPrompt(node, currentDepth) {
+        const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
+        const fileCount = node.metrics.fileCount;
+        return `Analyze this code change node for expansion with DIRECT CODE ASSIGNMENT.
+
+CURRENT NODE: "${node.name}"
+Description: ${node.description}
+Business Context: ${node.businessContext}
+Technical Context: ${node.technicalContext}
+Depth: ${currentDepth}
+Metrics: ${fileCount} files, complexity: ${node.metrics.complexity}
+
+COMPLETE CODE CHANGES:
+${completeCodeDiff}
+
+ATOMIC CRITERIA (Stop expansion when ALL true):
+1. Single responsibility (does exactly ONE thing)
+2. Single cohesive functionality or responsibility
+3. Single method or cohesive code block
+4. No mixed concerns (e.g., validation AND persistence)
+5. Can be understood without looking elsewhere
+
+IF YOU EXPAND:
+- You MUST assign EVERY code change to exactly ONE child
+- Each child must have a single, clear responsibility
+- Return the complete CodeDiff structure for each child
+- Focus on logical code boundaries, not size
+
+RESPOND WITH JSON:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean,
+  "atomicReason": "if atomic, why? (max 20 words)",
+  "confidence": 0.0-1.0,
+  "children": [
+    {
+      "name": "Clear theme name (max 8 words)",
+      "description": "What this child does (1-2 sentences)",
+      "businessValue": "User impact (max 12 words)",
+      "technicalPurpose": "Technical function (max 10 words)",
+      "assignedCode": [
+        {
+          "file": "exact file path",
+          "hunks": [
+            {
+              "oldStart": number,
+              "oldLines": number,
+              "newStart": number,
+              "newLines": number,
+              "changes": [
+                {
+                  "type": "add|delete|context", 
+                  "content": "exact line content"
+                }
+              ]
+            }
+          ],
+          "ownership": "primary"
+        }
+      ],
+      "rationale": "Why this is separate (max 15 words)",
+      "contextualMeaning": "How this code serves THIS specific child's purpose (max 20 words)",
+      "suggestedCrossReferences": [
+        {
+          "targetTheme": "name of related theme",
+          "relationship": "uses|used-by|modifies|depends-on",
+          "reason": "brief explanation (max 10 words)"
+        }
+      ]
+    }
+  ]
+}`;
+    }
+    /**
+     * Format complete code diff for AI analysis (no truncation)
+     * AI needs to see ALL code to make proper assignments
+     */
+    formatCompleteCodeDiff(codeDiffs) {
+        const output = [];
+        let globalLineNumber = 1;
+        for (const diff of codeDiffs) {
+            output.push(`\n=== FILE: ${diff.file} ===`);
+            for (const hunk of diff.hunks) {
+                output.push(`\n[Hunk @ old:${hunk.oldStart} new:${hunk.newStart}]`);
+                for (const change of hunk.changes) {
+                    const prefix = change.type === 'add' ? '+' : change.type === 'delete' ? '-' : ' ';
+                    output.push(`L${globalLineNumber}: ${prefix} ${change.content}`);
+                    globalLineNumber++;
+                }
+            }
+        }
+        return output.join('\n');
+    }
+    /**
+     * Validate direct code assignments from AI
+     */
+    validateDirectAssignments(assignments) {
+        const validated = [];
+        for (const assignment of assignments) {
+            // Validate required fields
+            if (!assignment.name ||
+                !assignment.technicalPurpose ||
+                !assignment.assignedCode) {
+                (0, utils_1.logInfo)(`Skipping invalid assignment: ${assignment.name}`);
+                continue;
+            }
+            // Validate and convert assigned code
+            const assignedCode = [];
+            for (const codeAssignment of assignment.assignedCode) {
+                if (!codeAssignment.file || !codeAssignment.hunks)
+                    continue;
+                const validHunks = [];
+                for (const hunk of codeAssignment.hunks) {
+                    if (!hunk.changes)
+                        continue;
+                    const validChanges = [];
+                    for (const change of hunk.changes) {
+                        if (change.type && change.content !== undefined) {
+                            validChanges.push({
+                                type: change.type,
+                                lineNumber: 0, // Line numbers not used in direct assignment
+                                content: change.content,
+                            });
+                        }
+                    }
+                    if (validChanges.length > 0) {
+                        validHunks.push({
+                            oldStart: hunk.oldStart || 0,
+                            oldLines: hunk.oldLines || 0,
+                            newStart: hunk.newStart || 0,
+                            newLines: hunk.newLines || 0,
+                            changes: validChanges,
+                        });
+                    }
+                }
+                if (validHunks.length > 0) {
+                    assignedCode.push({
+                        file: codeAssignment.file,
+                        hunks: validHunks,
+                        fileContext: {
+                            startLine: validHunks[0]?.newStart || 0,
+                            endLine: validHunks[validHunks.length - 1]?.newStart || 0,
+                            contextType: 'function',
+                        },
+                        ownership: codeAssignment.ownership ||
+                            'primary',
+                    });
+                }
+            }
+            if (assignedCode.length > 0) {
+                validated.push({
+                    name: this.trimToLimit(assignment.name, 8),
+                    description: assignment.description || assignment.technicalPurpose,
+                    businessValue: this.trimToLimit(assignment.businessValue || assignment.name, 12),
+                    technicalPurpose: this.trimToLimit(assignment.technicalPurpose, 10),
+                    assignedCode,
+                    ownership: 'primary',
+                    contextualMeaning: this.trimToLimit(assignment.contextualMeaning || assignment.technicalPurpose, 20),
+                    rationale: this.trimToLimit(assignment.rationale || 'Distinct concern', 15),
+                });
+            }
+        }
+        return validated;
+    }
+    /**
+     * Generate initial theme suggestions from semantic diff
+     * Used at the root level to identify major themes
+     */
+    async generateRootThemes(semanticDiff) {
+        const prompt = this.buildRootThemePrompt(semanticDiff);
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'themes',
+            ]);
+            if (result.success) {
+                const data = result.data;
+                return this.validateThemeSuggestions(data.themes, semanticDiff);
+            }
+        }
+        catch (error) {
+            (0, utils_1.logInfo)(`Root theme generation failed: ${error}`);
+        }
+        // Fallback: create single theme
+        return [
+            {
+                name: 'Code Changes',
+                businessValue: 'Update implementation',
+                description: 'Changes to codebase',
+                affectedFiles: semanticDiff.files.map((f) => f.path),
+                confidence: 0.5,
+            },
+        ];
+    }
+    /**
+     * Build prompt for root theme generation
+     */
+    buildRootThemePrompt(semanticDiff) {
+        const filesByType = this.groupFilesByType(semanticDiff);
+        return `Analyze this pull request and identify distinct business themes (user stories/capabilities).
+
+PR OVERVIEW:
+Total files: ${semanticDiff.files.length}
+Complexity: ${semanticDiff.totalComplexity}
+
+FILES BY TYPE:
+${Object.entries(filesByType)
+            .map(([type, files]) => `${type}: ${files.length} files`)
+            .join('\n')}
+
+BUSINESS PATTERNS DETECTED:
+${semanticDiff.businessPatterns
+            .map((p) => `- ${p.name}: ${p.description}`)
+            .join('\n') || 'None detected'}
+
+SEMANTIC CHANGES:
+${this.summarizeSemanticChanges(semanticDiff)}
+
+Identify 1-5 DISTINCT business themes that:
+1. Represent complete user stories or business capabilities
+2. Have clear, independent business value
+3. Could be deployed/rolled back separately
+4. Make sense to non-technical stakeholders
+
+CRITICAL: Respond with ONLY valid JSON:
+{
+  "themes": [
+    {
+      "name": "Clear business theme (max 8 words)",
+      "businessValue": "Value to users (max 12 words)",
+      "description": "What this accomplishes (1-2 sentences)",
+      "affectedFiles": ["relevant", "file", "paths"],
+      "confidence": 0.0-1.0
+    }
+  ]
+}`;
+    }
+    /**
+     * Group files by type for summary
+     */
+    groupFilesByType(semanticDiff) {
+        const grouped = {};
+        for (const file of semanticDiff.files) {
+            if (!grouped[file.fileType]) {
+                grouped[file.fileType] = [];
+            }
+            grouped[file.fileType].push(file.path);
+        }
+        return grouped;
+    }
+    /**
+     * Summarize semantic changes for prompt
+     */
+    summarizeSemanticChanges(semanticDiff) {
+        const summary = [];
+        const changeTypes = new Map();
+        for (const file of semanticDiff.files) {
+            for (const change of file.semanticChanges) {
+                const count = changeTypes.get(change.type) || 0;
+                changeTypes.set(change.type, count + 1);
+            }
+        }
+        for (const [type, count] of changeTypes) {
+            summary.push(`- ${type}: ${count} occurrences`);
+        }
+        return summary.join('\n') || 'No specific patterns identified';
+    }
+    /**
+     * Validate theme suggestions
+     */
+    validateThemeSuggestions(suggestions, semanticDiff) {
+        const allFiles = new Set(semanticDiff.files.map((f) => f.path));
+        const validated = [];
+        for (const suggestion of suggestions) {
+            if (!suggestion.name)
+                continue;
+            const affectedFiles = (suggestion.affectedFiles || []).filter((f) => allFiles.has(f));
+            if (affectedFiles.length === 0) {
+                // Skip themes with no valid files
+                continue;
+            }
+            validated.push({
+                name: this.trimToLimit(suggestion.name, 8),
+                businessValue: this.trimToLimit(suggestion.businessValue || suggestion.name, 12),
+                description: suggestion.description || suggestion.businessValue || '',
+                affectedFiles,
+                confidence: suggestion.confidence || 0.7,
+            });
+        }
+        return validated;
+    }
+    /**
+     * Trim text to word limit
+     */
+    trimToLimit(text, maxWords) {
+        if (!text)
+            return '';
+        const words = text.split(/\s+/);
+        if (words.length <= maxWords) {
+            return text;
+        }
+        return words.slice(0, maxWords).join(' ');
+    }
+    /**
+     * Generate contextual explanation for code in a specific theme
+     * PRD: "Same code shown differently based on usage context"
+     */
+    async generateContextualExplanation(code, viewingNode) {
+        const prompt = `
+Explain what this code change means specifically for "${viewingNode.name}".
+
+VIEWING CONTEXT:
+Theme: ${viewingNode.name}
+Business Purpose: ${viewingNode.businessContext}
+Technical Purpose: ${viewingNode.technicalContext}
+
+CODE CHANGE:
+File: ${code.file}
+${this.formatCompleteCodeDiff([code])}
+
+Provide a brief, contextual explanation (max 20 words) of what this code does FOR THIS SPECIFIC THEME.
+Focus on the relationship to the theme's purpose, not generic code description.`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            return this.trimToLimit(response.trim(), 20);
+        }
+        catch (error) {
+            return `Changes for ${viewingNode.name}`;
+        }
     }
 }
-exports.AIExpansionDecisionService = AIExpansionDecisionService;
+exports.AIMindmapService = AIMindmapService;
 
 
 /***/ }),
 
-/***/ 270:
+/***/ 5776:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AISimilarityService = void 0;
-const similarity_calculator_1 = __nccwpck_require__(7831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const claude_client_1 = __nccwpck_require__(3831);
-const logger_1 = __nccwpck_require__(7893);
+const similarity_calculator_1 = __nccwpck_require__(241);
+const json_extractor_1 = __nccwpck_require__(8168);
+const claude_client_1 = __nccwpck_require__(3861);
 class AISimilarityService {
     constructor(anthropicApiKey) {
         this.anthropicApiKey = anthropicApiKey;
@@ -30535,12 +31745,9 @@ class AISimilarityService {
         try {
             const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
             const result = this.parseAISimilarityResponse(output);
-            logger_1.logger.debug('AI-SIMILARITY', `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`);
-            logger_1.logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
             return result;
         }
         catch (error) {
-            logger_1.logger.warn('AI-SIMILARITY', `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`);
             // Fallback to basic string matching
             return this.createFallbackSimilarity(theme1, theme2);
         }
@@ -30604,8 +31811,8 @@ CRITICAL: Respond with ONLY valid JSON.
         details += `\nFiles: ${theme.affectedFiles.join(', ')}`;
         // Add code metrics if available
         if (theme.codeMetrics) {
-            const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-            details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+            const { filesChanged } = theme.codeMetrics;
+            details += `\nCode Metrics: ${filesChanged} files changed`;
         }
         // Add main functions/classes if available
         if (theme.mainFunctionsChanged && theme.mainFunctionsChanged.length > 0) {
@@ -30641,10 +31848,7 @@ CRITICAL: Respond with ONLY valid JSON.
                 businessScore: 0,
             };
         }
-        // Log the extraction failure for debugging
-        console.warn('[AI-SIMILARITY] JSON extraction failed:', extractionResult.error);
         if (extractionResult.originalResponse) {
-            console.debug('[AI-SIMILARITY] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
         }
         return {
             nameScore: 0,
@@ -30681,7 +31885,6 @@ CRITICAL: Respond with ONLY valid JSON.
     async calculateBatchSimilarity(batchPrompt, expectedResults) {
         try {
             const response = await this.claudeClient.callClaude(batchPrompt, 'batch-similarity', `batch of ${expectedResults} pairs`);
-            console.log(`[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`);
             // Extract and validate JSON response
             const jsonResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['results']);
             if (!jsonResult.success) {
@@ -30693,13 +31896,10 @@ CRITICAL: Respond with ONLY valid JSON.
                 throw new Error('Invalid batch response: missing results array');
             }
             if (batchData.results.length !== expectedResults) {
-                console.warn(`[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`);
             }
-            console.log(`[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`);
             return batchData;
         }
         catch (error) {
-            console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
             throw error;
         }
     }
@@ -30709,208 +31909,7 @@ exports.AISimilarityService = AISimilarityService;
 
 /***/ }),
 
-/***/ 325:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.BatchProcessor = void 0;
-const json_extractor_1 = __nccwpck_require__(2642);
-const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
-class BatchProcessor {
-    constructor() {
-        this.batchSize = 8; // Process 8 theme pairs per AI batch call
-        this.batchFailures = 0; // Track consecutive batch failures
-    }
-    async processBatchSimilarity(pairs) {
-        const prompt = this.buildBatchSimilarityPrompt(pairs);
-        try {
-            const { filePath: tempFile, cleanup } = secure_file_namer_1.SecureFileNamer.createSecureTempFile('claude-batch-similarity', prompt);
-            let output = '';
-            try {
-                await exec.exec('bash', ['-c', `cat "${tempFile}" | claude --print`], {
-                    silent: true,
-                    listeners: {
-                        stdout: (data) => {
-                            output += data.toString();
-                        },
-                    },
-                });
-                const results = this.parseBatchSimilarityResponse(output, pairs);
-                console.log(`[BATCH] Successfully processed ${results.length} pairs`);
-                return results;
-            }
-            finally {
-                cleanup(); // Ensure file is cleaned up even if execution fails
-            }
-        }
-        catch (error) {
-            console.error('Batch AI similarity failed:', error);
-            throw error;
-        }
-    }
-    getAdaptiveBatchSize() {
-        return Math.max(2, this.batchSize - Math.floor(this.batchFailures / 2));
-    }
-    incrementFailures() {
-        this.batchFailures++;
-    }
-    decrementFailures() {
-        this.batchFailures = Math.max(0, this.batchFailures - 1);
-    }
-    getFailureCount() {
-        return this.batchFailures;
-    }
-    chunkArray(array, chunkSize) {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
-        }
-        return chunks;
-    }
-    buildBatchSimilarityPrompt(pairs) {
-        const pairDescriptions = pairs
-            .map((pair, index) => `Pair ${index + 1}: ID="${pair.id}"
-- Theme A: "${pair.theme1.name}" | ${pair.theme1.description}
-- Theme B: "${pair.theme2.name}" | ${pair.theme2.description}
-- Files A: ${pair.theme1.affectedFiles.join(', ') || 'none'}
-- Files B: ${pair.theme2.affectedFiles.join(', ') || 'none'}`)
-            .join('\n\n');
-        return `You are analyzing ${pairs.length} theme pairs for similarity. For each pair, determine if the themes should be merged.
-
-THEME PAIRS:
-${pairDescriptions}
-
-RESPOND WITH ONLY A VALID JSON ARRAY - NO OTHER TEXT:
-[
-${pairs
-            .map((pair, index) => `  {
-    "pairId": "${pair.id}",
-    "nameScore": 0.5,
-    "descriptionScore": 0.5,
-    "patternScore": 0.5,
-    "businessScore": 0.5,
-    "semanticScore": 0.5,
-    "shouldMerge": false,
-    "confidence": 0.5,
-    "reasoning": "analysis for pair ${index + 1}"
-  }${index < pairs.length - 1 ? ',' : ''}`)
-            .join('\n')}
-]
-
-Replace the scores (0.0-1.0) and shouldMerge (true/false) based on your analysis. Keep the exact JSON structure.`;
-    }
-    parseBatchSimilarityResponse(output, pairs) {
-        console.log(`[BATCH-DEBUG] Raw AI output length: ${output.length}`);
-        console.log(`[BATCH-DEBUG] First 500 chars:`, output.substring(0, 500));
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'array', undefined);
-        if (extractionResult.success) {
-            const parsed = extractionResult.data;
-            console.log(`[BATCH-DEBUG] Parsed array length: ${parsed.length}, expected: ${pairs.length}`);
-            // Handle case where AI returns fewer results than expected
-            const results = [];
-            for (let i = 0; i < pairs.length; i++) {
-                const item = parsed[i];
-                const pair = pairs[i];
-                if (item && typeof item === 'object') {
-                    results.push({
-                        pairId: item.pairId || pair.id,
-                        similarity: {
-                            nameScore: this.clampScore(item.nameScore),
-                            descriptionScore: this.clampScore(item.descriptionScore),
-                            patternScore: this.clampScore(item.patternScore),
-                            businessScore: this.clampScore(item.businessScore),
-                            semanticScore: this.clampScore(item.semanticScore),
-                            shouldMerge: Boolean(item.shouldMerge),
-                            confidence: this.clampScore(item.confidence),
-                            reasoning: String(item.reasoning || 'No reasoning provided'),
-                        },
-                    });
-                }
-                else {
-                    // Missing or invalid item - create fallback
-                    console.warn(`[BATCH-DEBUG] Missing/invalid item at index ${i}, using fallback`);
-                    results.push({
-                        pairId: pair.id,
-                        similarity: this.createFallbackSimilarity(),
-                        error: `Missing AI response for pair ${i + 1}`,
-                    });
-                }
-            }
-            console.log(`[BATCH-DEBUG] Successfully parsed ${results.length} results`);
-            return results;
-        }
-        // JSON extraction failed
-        console.error('[BATCH] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[BATCH] Original response:', extractionResult.originalResponse?.substring(0, 500) + '...');
-        }
-        console.warn('[BATCH-DEBUG] Using fallback for all pairs');
-        // Fallback: create error results for all pairs
-        return pairs.map((pair) => ({
-            pairId: pair.id,
-            similarity: this.createFallbackSimilarity(),
-            error: `Failed to parse batch AI response: ${extractionResult.error}`,
-        }));
-    }
-    clampScore(value) {
-        const num = Number(value);
-        return isNaN(num) ? 0.5 : Math.max(0, Math.min(1, num));
-    }
-    createFallbackSimilarity() {
-        return {
-            nameScore: 0.3,
-            descriptionScore: 0.3,
-            patternScore: 0.3,
-            businessScore: 0.3,
-            semanticScore: 0.3,
-            shouldMerge: false,
-            confidence: 0.2,
-            reasoning: 'Fallback similarity due to parsing error',
-        };
-    }
-}
-exports.BatchProcessor = BatchProcessor;
-
-
-/***/ }),
-
-/***/ 8133:
+/***/ 6:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -30951,54 +31950,38 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BusinessDomainService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const ai_domain_analyzer_1 = __nccwpck_require__(6244);
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const ai_domain_analyzer_1 = __nccwpck_require__(9918);
 class BusinessDomainService {
     constructor(anthropicApiKey) {
         this.aiDomainAnalyzer = new ai_domain_analyzer_1.AIDomainAnalyzer(anthropicApiKey);
     }
     async groupByBusinessDomain(themes) {
         const domains = new Map();
-        console.log(`[DOMAIN] Extracting business domains for ${themes.length} themes using batch processing`);
         // Use batch processing for significant performance improvement
         const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
         const batches = this.createDomainBatches(themes, batchSize);
-        console.log(`[DOMAIN-BATCH] Split into ${batches.length} batches of ~${batchSize} themes each`);
-        // Process batches concurrently
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
-            return await this.processDomainBatch(batch);
-        }, {
-            concurrencyLimit: 3, // Fewer concurrent batches since each is larger
-            maxRetries: 2,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                const themesCompleted = completed * batchSize;
-                const totalThemes = themes.length;
-                console.log(`[DOMAIN-BATCH] Progress: ${themesCompleted}/${totalThemes} themes processed (${completed}/${total} batches)`);
-            },
-            onError: (error, batch, retryCount) => {
-                console.warn(`[DOMAIN-BATCH] Retry ${retryCount} for batch of ${batch.length} themes: ${error.message}`);
-            },
-        });
+        // Process batches using Promise.all
+        // ClaudeClient handles rate limiting and queuing
+        const results = await Promise.all(batches.map(async (batch) => {
+            try {
+                return await this.processDomainBatch(batch);
+            }
+            catch (error) {
+                console.warn(`[BUSINESS-DOMAIN] Batch failed: ${error}`);
+                return []; // Return empty array for failed batch
+            }
+        }));
         // Flatten batch results and group by domain
         const flatResults = [];
         for (const batchResult of results) {
-            if (batchResult &&
-                typeof batchResult === 'object' &&
-                'error' in batchResult) {
-                console.warn(`[DOMAIN-BATCH] Batch processing failed, using fallback`);
-                // Handle failed batch - use fallback for all themes in the failed batch
-                continue;
-            }
-            else if (Array.isArray(batchResult)) {
+            if (Array.isArray(batchResult)) {
                 flatResults.push(...batchResult);
             }
         }
         // Group results by domain
         for (const result of flatResults) {
             const { theme, domain } = result;
-            console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
             if (!domains.has(domain)) {
                 domains.set(domain, []);
             }
@@ -31027,56 +32010,107 @@ class BusinessDomainService {
             }
             else {
                 // Medium confidence - use with warning
-                console.log(`[DOMAIN] Medium confidence (${domainClassification.confidence}) for theme "${theme.name}": ${domainClassification.domain}`);
                 return domainClassification.domain;
             }
         }
         catch (error) {
-            console.warn(`[DOMAIN] AI classification failed for theme "${theme.name}": ${error}`);
             // Graceful degradation: use simplified heuristic fallback
             return this.extractBusinessDomainFallback(theme.name, theme.description);
         }
     }
     /**
-     * Fallback domain extraction for when AI fails
+     * Fallback business capability extraction for when AI fails
      * PRD: "Graceful degradation - never fail completely"
+     * Maps technical changes to user-centric business capabilities
      */
     extractBusinessDomainFallback(name, description) {
         const text = (name + ' ' + description).toLowerCase();
-        // Simple heuristics for common domains
-        if (text.includes('test') || text.includes('spec')) {
-            return 'Quality Assurance';
+        // Business capability heuristics focused on user value
+        if (text.includes('test') || text.includes('spec') || text.includes('quality')) {
+            return 'Development Workflow Optimization';
         }
-        if (text.includes('config') || text.includes('setting')) {
-            return 'System Configuration';
+        if (text.includes('config') || text.includes('setting') || text.includes('deploy')) {
+            return 'Development Workflow Optimization';
         }
         if (text.includes('auth') ||
             text.includes('login') ||
-            text.includes('user')) {
-            return 'User Management';
+            text.includes('password') ||
+            text.includes('security') ||
+            text.includes('account')) {
+            return 'User Account Management';
         }
-        if (text.includes('api') ||
-            text.includes('endpoint') ||
-            text.includes('service')) {
-            return 'API Services';
+        if (text.includes('payment') ||
+            text.includes('purchase') ||
+            text.includes('order') ||
+            text.includes('transaction') ||
+            text.includes('billing')) {
+            return 'Transaction Processing';
+        }
+        if (text.includes('search') ||
+            text.includes('discover') ||
+            text.includes('browse') ||
+            text.includes('filter') ||
+            text.includes('recommend')) {
+            return 'Content Discovery';
+        }
+        if (text.includes('message') ||
+            text.includes('notification') ||
+            text.includes('email') ||
+            text.includes('alert') ||
+            text.includes('communication')) {
+            return 'Communication & Collaboration';
         }
         if (text.includes('ui') ||
             text.includes('component') ||
-            text.includes('interface')) {
-            return 'User Interface';
+            text.includes('interface') ||
+            text.includes('design') ||
+            text.includes('layout')) {
+            return 'User Experience Enhancement';
         }
         if (text.includes('data') ||
             text.includes('database') ||
-            text.includes('storage')) {
+            text.includes('storage') ||
+            text.includes('backup') ||
+            text.includes('export')) {
             return 'Data Management';
+        }
+        if (text.includes('api') ||
+            text.includes('endpoint') ||
+            text.includes('service') ||
+            text.includes('integration') ||
+            text.includes('connect')) {
+            return 'Integration & Connectivity';
+        }
+        if (text.includes('report') ||
+            text.includes('analytics') ||
+            text.includes('dashboard') ||
+            text.includes('metrics') ||
+            text.includes('insights')) {
+            return 'Analytics & Insights';
+        }
+        if (text.includes('workflow') ||
+            text.includes('automation') ||
+            text.includes('process') ||
+            text.includes('efficiency') ||
+            text.includes('streamline')) {
+            return 'Workflow Automation';
+        }
+        if (text.includes('create') ||
+            text.includes('author') ||
+            text.includes('edit') ||
+            text.includes('publish') ||
+            text.includes('content')) {
+            return 'Content Creation & Publishing';
         }
         if (text.includes('error') ||
             text.includes('fix') ||
-            text.includes('bug')) {
-            return 'Error Resolution';
+            text.includes('bug') ||
+            text.includes('debug') ||
+            text.includes('log')) {
+            return 'Development Workflow Optimization';
         }
-        // Default domain
-        return 'System Enhancement';
+        // Default to user experience enhancement
+        return 'User Experience Enhancement';
     }
     async extractBusinessDomainWithContext(name, description, enhancedContext) {
         // Build code context summary if available
@@ -31115,13 +32149,11 @@ class BusinessDomainService {
             return stage1Result;
         }
         // Stage 2: Try structured prompt with context
-        console.log(`[AI-DOMAIN] Stage 1 failed for "${name}", trying Stage 2`);
         const stage2Result = await this.tryDomainExtraction(name, prompt, 'Stage 2 (Detailed)');
         if (stage2Result && this.isValidDomainName(stage2Result)) {
             return stage2Result;
         }
         // Stage 3: Enhanced fallback using AI response keywords
-        console.warn(`[AI-DOMAIN] Both stages failed for "${name}", using enhanced fallback`);
         return this.extractBusinessDomainFallback(name, description || '');
     }
     async tryDomainExtraction(name, prompt, stage) {
@@ -31138,7 +32170,6 @@ class BusinessDomainService {
                     },
                 });
                 const domain = this.parseDomainExtractionResponse(output);
-                console.log(`[AI-DOMAIN] ${stage} result for "${name}": "${domain}"`);
                 return domain;
             }
             finally {
@@ -31146,7 +32177,6 @@ class BusinessDomainService {
             }
         }
         catch (error) {
-            console.warn(`[AI-DOMAIN] ${stage} extraction failed:`, error);
             return null;
         }
     }
@@ -31227,7 +32257,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
         // Second try: extract domain from longer response
         const extractedDomain = this.extractDomainFromResponse(output);
         if (extractedDomain && this.isValidDomainName(extractedDomain)) {
-            console.log(`[AI-DOMAIN] Extracted domain from response: "${extractedDomain}"`);
             return extractedDomain;
         }
         return domain || 'General Changes';
@@ -31310,14 +32339,15 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
      * PRD: "Dynamic batch sizing" - adapt to content complexity
      */
     calculateOptimalDomainBatchSize(totalThemes) {
-        // Smaller batches for domain classification due to context complexity
+        // Optimize for concurrency while respecting domain analysis complexity
+        // Target: Create enough batches to utilize 6-10 concurrent request slots
         if (totalThemes <= 5)
-            return Math.max(1, totalThemes); // Very small PRs
+            return Math.max(1, Math.ceil(totalThemes / 3)); // 2-3 small batches
         if (totalThemes <= 20)
-            return 10; // Small PRs - moderate batching
+            return Math.max(2, Math.ceil(totalThemes / 8)); // 6-8 batches
         if (totalThemes <= 50)
-            return 15; // Medium PRs - larger batches
-        return 20; // Large PRs - maximum batch size for domain analysis
+            return Math.max(5, Math.ceil(totalThemes / 10)); // 8-10 batches
+        return Math.max(8, Math.ceil(totalThemes / 10)); // Target 10 batches for large sets
     }
     /**
      * Split themes into optimally-sized batches for domain processing
@@ -31355,12 +32385,10 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
                     domain = batchResults.primaryDomains[i].domain;
                 }
                 results.push({ theme, domain });
-                console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
             }
             return results;
         }
         catch (error) {
-            console.warn(`[DOMAIN-BATCH] Batch processing failed for ${themes.length} themes, falling back to individual processing: ${error}`);
             // Fallback to individual processing
             return await this.processDomainBatchIndividually(themes);
         }
@@ -31376,7 +32404,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
                 results.push({ theme, domain });
             }
             catch (error) {
-                console.warn(`[DOMAIN-BATCH-FALLBACK] Failed individual processing for "${theme.name}": ${error}`);
                 // Use fallback domain for failed individual processing
                 const fallbackDomain = this.extractBusinessDomainFallback(theme.name, theme.description);
                 results.push({ theme, domain: fallbackDomain });
@@ -31390,1153 +32417,18 @@ exports.BusinessDomainService = BusinessDomainService;
 
 /***/ }),
 
-/***/ 8318:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CodeStructureAnalyzer = void 0;
-const utils_1 = __nccwpck_require__(1798);
-/**
- * Analyzes code structure to provide intelligent hints for theme expansion
- */
-class CodeStructureAnalyzer {
-    /**
-     * Analyze code structure to generate expansion hints
-     */
-    async analyzeThemeStructure(theme) {
-        const analysis = {
-            functionCount: this.countFunctions(theme),
-            classCount: this.countClasses(theme),
-            moduleCount: this.countModules(theme),
-            changeTypes: this.identifyChangeTypes(theme),
-            complexityIndicators: this.analyzeComplexity(theme),
-            fileStructure: this.analyzeFileStructure(theme),
-            expansionHints: [],
-        };
-        // Generate contextual hints based on analysis
-        analysis.expansionHints = this.generateExpansionHints(analysis, theme);
-        (0, utils_1.logInfo)(`Code structure analysis for "${theme.name}": ${analysis.functionCount} functions, ${analysis.classCount} classes, ${analysis.changeTypes.length} change types`);
-        return analysis;
-    }
-    /**
-     * Count distinct functions/methods in code changes
-     */
-    countFunctions(theme) {
-        let functionCount = 0;
-        theme.codeSnippets.forEach((snippet) => {
-            // Match function declarations in various formats
-            const patterns = [
-                /function\s+\w+/g, // function name()
-                /\w+\s*:\s*function/g, // name: function
-                /\w+\s*=>\s*{/g, // arrow functions
-                /async\s+\w+\s*\(/g, // async functions
-                /\w+\s*\([^)]*\)\s*{/g, // method declarations
-                /export\s+function\s+\w+/g, // exported functions
-                /private\s+\w+\s*\(/g, // private methods
-                /public\s+\w+\s*\(/g, // public methods
-            ];
-            patterns.forEach((pattern) => {
-                const matches = snippet.match(pattern);
-                if (matches) {
-                    functionCount += matches.length;
-                }
-            });
-        });
-        return functionCount;
-    }
-    /**
-     * Count distinct classes/interfaces in code changes
-     */
-    countClasses(theme) {
-        let classCount = 0;
-        theme.codeSnippets.forEach((snippet) => {
-            const patterns = [
-                /class\s+\w+/g, // class declarations
-                /interface\s+\w+/g, // interface declarations
-                /type\s+\w+\s*=/g, // type definitions
-                /enum\s+\w+/g, // enum declarations
-                /export\s+class\s+\w+/g, // exported classes
-                /export\s+interface\s+\w+/g, // exported interfaces
-            ];
-            patterns.forEach((pattern) => {
-                const matches = snippet.match(pattern);
-                if (matches) {
-                    classCount += matches.length;
-                }
-            });
-        });
-        return classCount;
-    }
-    /**
-     * Count distinct modules/files with significant changes
-     */
-    countModules(theme) {
-        return theme.affectedFiles.length;
-    }
-    /**
-     * Identify types of changes (config, logic, UI, test, etc.)
-     */
-    identifyChangeTypes(theme) {
-        const types = new Set();
-        theme.affectedFiles.forEach((file) => {
-            if (file.includes('.test.') ||
-                file.includes('.spec.') ||
-                file.includes('/test/')) {
-                types.add('test');
-            }
-            else if (file.includes('config') ||
-                file.endsWith('.json') ||
-                file.endsWith('.yaml') ||
-                file.endsWith('.yml')) {
-                types.add('config');
-            }
-            else if (file.includes('/components/') ||
-                file.includes('/ui/') ||
-                file.includes('.css') ||
-                file.includes('.scss')) {
-                types.add('ui');
-            }
-            else if (file.includes('/api/') ||
-                file.includes('/services/') ||
-                file.includes('/business/')) {
-                types.add('logic');
-            }
-            else if (file.includes('/types/') || file.endsWith('.d.ts')) {
-                types.add('types');
-            }
-            else if (file.includes('/utils/') || file.includes('/helpers/')) {
-                types.add('utils');
-            }
-            else if (file.includes('README') || file.endsWith('.md')) {
-                types.add('docs');
-            }
-            else {
-                types.add('implementation');
-            }
-        });
-        // Also analyze code content for additional type detection
-        theme.codeSnippets.forEach((snippet) => {
-            if (snippet.includes('import') || snippet.includes('export')) {
-                types.add('imports');
-            }
-            if (snippet.includes('test(') ||
-                snippet.includes('describe(') ||
-                snippet.includes('it(')) {
-                types.add('test');
-            }
-            if (snippet.includes('interface') || snippet.includes('type ')) {
-                types.add('types');
-            }
-        });
-        return Array.from(types);
-    }
-    /**
-     * Analyze code complexity indicators
-     */
-    analyzeComplexity(theme) {
-        const indicators = {
-            hasConditionals: false,
-            hasLoops: false,
-            hasErrorHandling: false,
-            hasAsyncOperations: false,
-            nestingDepth: 0,
-            branchingFactor: 0,
-        };
-        theme.codeSnippets.forEach((snippet) => {
-            // Check for conditionals
-            if (/if\s*\(|switch\s*\(|case\s+|ternary\s*\?/.test(snippet)) {
-                indicators.hasConditionals = true;
-                indicators.branchingFactor += (snippet.match(/if\s*\(|case\s+/g) || []).length;
-            }
-            // Check for loops
-            if (/for\s*\(|while\s*\(|forEach|map\(|filter\(/.test(snippet)) {
-                indicators.hasLoops = true;
-            }
-            // Check for error handling
-            if (/try\s*{|catch\s*\(|throw\s+|\.catch\(/.test(snippet)) {
-                indicators.hasErrorHandling = true;
-            }
-            // Check for async operations
-            if (/async\s+|await\s+|Promise\.|\.then\(/.test(snippet)) {
-                indicators.hasAsyncOperations = true;
-            }
-            // Calculate nesting depth (simplified)
-            const openBraces = (snippet.match(/{/g) || []).length;
-            const closeBraces = (snippet.match(/}/g) || []).length;
-            const netDepth = Math.abs(openBraces - closeBraces);
-            indicators.nestingDepth = Math.max(indicators.nestingDepth, netDepth);
-        });
-        return indicators;
-    }
-    /**
-     * Analyze file structure patterns
-     */
-    analyzeFileStructure(theme) {
-        const analysis = {
-            directories: new Set(),
-            fileExtensions: new Set(),
-            isMultiDirectory: false,
-            isMultiLanguage: false,
-            hasTestFiles: false,
-            hasConfigFiles: false,
-        };
-        theme.affectedFiles.forEach((file) => {
-            const dir = file.substring(0, file.lastIndexOf('/'));
-            const ext = file.substring(file.lastIndexOf('.'));
-            analysis.directories.add(dir);
-            analysis.fileExtensions.add(ext);
-            if (file.includes('.test.') || file.includes('.spec.')) {
-                analysis.hasTestFiles = true;
-            }
-            if (file.includes('config') || ext === '.json' || ext === '.yaml') {
-                analysis.hasConfigFiles = true;
-            }
-        });
-        analysis.isMultiDirectory = analysis.directories.size > 1;
-        analysis.isMultiLanguage = analysis.fileExtensions.size > 2; // More than 2 different extensions
-        return analysis;
-    }
-    /**
-     * Generate contextual expansion hints based on analysis
-     */
-    generateExpansionHints(analysis, theme) {
-        const hints = [];
-        // Function-based hints
-        if (analysis.functionCount > 3) {
-            hints.push(`This theme modifies ${analysis.functionCount} functions - consider analyzing each function's purpose separately`);
-        }
-        else if (analysis.functionCount > 1) {
-            hints.push(`Multiple functions modified (${analysis.functionCount}) - each may serve a distinct purpose`);
-        }
-        // Class-based hints
-        if (analysis.classCount > 2) {
-            hints.push(`Multiple classes/interfaces affected (${analysis.classCount}) - each likely represents a separate concern`);
-        }
-        // Change type hints
-        if (analysis.changeTypes.length > 2) {
-            hints.push(`Mixed change types detected (${analysis.changeTypes.join(', ')}) - different types often benefit from separation`);
-        }
-        // Complexity hints
-        if (analysis.complexityIndicators.hasConditionals &&
-            analysis.complexityIndicators.hasErrorHandling) {
-            hints.push('Both control flow and error handling present - these are typically distinct responsibilities');
-        }
-        if (analysis.complexityIndicators.hasAsyncOperations &&
-            analysis.complexityIndicators.hasConditionals) {
-            hints.push('Async operations with conditional logic - consider separating flow control from async handling');
-        }
-        if (analysis.complexityIndicators.branchingFactor > 3) {
-            hints.push(`High branching complexity (${analysis.complexityIndicators.branchingFactor} branches) - multiple decision points suggest multiple concerns`);
-        }
-        // File structure hints
-        if (analysis.fileStructure.isMultiDirectory) {
-            hints.push('Changes span multiple directories - different locations often indicate different architectural concerns');
-        }
-        if (analysis.fileStructure.hasTestFiles &&
-            analysis.changeTypes.includes('implementation')) {
-            hints.push('Both implementation and test changes - consider separating test updates from feature implementation');
-        }
-        if (analysis.changeTypes.includes('config') &&
-            analysis.changeTypes.includes('logic')) {
-            hints.push('Configuration and logic changes - these typically serve different purposes and can be analyzed separately');
-        }
-        // Module-based hints
-        if (analysis.moduleCount > 3) {
-            hints.push(`Multiple modules affected (${analysis.moduleCount}) - each module likely represents a distinct component or service`);
-        }
-        // PRD-aligned testability and atomicity hints
-        const totalLines = theme.codeSnippets.join('\n').split('\n').length;
-        // PRD: "5-15 lines of focused change"
-        if (totalLines > 15) {
-            hints.push(`Exceeds PRD atomic size (${totalLines} > 15 lines) - split into smaller, testable units`);
-        }
-        // PRD: "Changes aren't independently testable" → expand
-        if (analysis.functionCount > 1) {
-            hints.push(`Multiple functions modified (${analysis.functionCount}) - separate for independent testing`);
-        }
-        // PRD: "Multiple concerns" → create child nodes
-        if (analysis.complexityIndicators.hasConditionals &&
-            analysis.complexityIndicators.branchingFactor > 1) {
-            hints.push(`Multiple test scenarios (${analysis.complexityIndicators.branchingFactor} branches) - split by test case`);
-        }
-        // PRD: Mixed dependencies and logic should be separated
-        if (analysis.complexityIndicators.hasAsyncOperations &&
-            analysis.functionCount > 1) {
-            hints.push('Mixed dependencies and logic - separate setup from behavior for testability');
-        }
-        if (theme.description.toLowerCase().includes(' and ')) {
-            hints.push('Description contains "and" - multiple concerns should be separated per PRD');
-        }
-        // Add generic expansion encouragement if no specific hints
-        if (hints.length === 0 &&
-            theme.codeSnippets.join('\n').split('\n').length > 10) {
-            hints.push('This change has sufficient complexity to potentially benefit from decomposition into more specific sub-themes');
-        }
-        return hints;
-    }
-}
-exports.CodeStructureAnalyzer = CodeStructureAnalyzer;
-
-
-/***/ }),
-
-/***/ 1814:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DynamicPromptBuilder = void 0;
-/**
- * Builds dynamic, context-aware prompts for AI expansion decisions
- */
-class DynamicPromptBuilder {
-    constructor() {
-        this.expansionExamples = [];
-        this.initializeExamples();
-    }
-    /**
-     * Build a context-rich prompt for expansion decisions
-     */
-    buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes) {
-        const contextSection = this.buildContextSection(theme, currentDepth, parentTheme, siblingThemes);
-        const analysisSection = this.buildAnalysisSection(codeAnalysis);
-        const guidanceSection = this.buildGuidanceSection(currentDepth, codeAnalysis);
-        const examplesSection = this.buildExamplesSection(codeAnalysis);
-        const decisionSection = this.buildDecisionSection(currentDepth, codeAnalysis, theme);
-        return `${contextSection}
-
-${analysisSection}
-
-${guidanceSection}
-
-${examplesSection}
-
-${decisionSection}`;
-    }
-    /**
-     * Build context section with theme information
-     */
-    buildContextSection(theme, currentDepth, parentTheme, siblingThemes) {
-        let context = `You are analyzing a code change to build a hierarchical mindmap.
-This mindmap should naturally organize code from high-level themes down to specific, reviewable units.
-
-CURRENT THEME:
-Name: "${theme.name}"
-Description: ${theme.description}
-Current depth: ${currentDepth}
-Files involved: ${theme.affectedFiles.length} files
-File list: ${theme.affectedFiles.join(', ')}`;
-        if (parentTheme) {
-            context += `
-
-PARENT THEME: "${parentTheme.name}"
-Purpose: ${parentTheme.description}`;
-        }
-        if (siblingThemes && siblingThemes.length > 0) {
-            context += `
-
-SIBLING THEMES (already identified at this level):
-${siblingThemes.map((s) => `- "${s.name}": ${s.description}`).join('\n')}
-
-Ensure suggested sub-themes don't duplicate these existing themes.`;
-        }
-        return context;
-    }
-    /**
-     * Build analysis section with code structure insights
-     */
-    buildAnalysisSection(codeAnalysis) {
-        let section = `CODE STRUCTURE ANALYSIS:
-- Functions/Methods: ${codeAnalysis.functionCount}
-- Classes/Interfaces: ${codeAnalysis.classCount}
-- Modules/Files: ${codeAnalysis.moduleCount}
-- Change Types: ${codeAnalysis.changeTypes.join(', ')}
-- Complexity: ${this.formatComplexityIndicators(codeAnalysis.complexityIndicators)}`;
-        if (codeAnalysis.expansionHints.length > 0) {
-            section += `
-
-EXPANSION INSIGHTS:
-${codeAnalysis.expansionHints.map((hint) => `• ${hint}`).join('\n')}`;
-        }
-        return section;
-    }
-    /**
-     * Build dynamic guidance based on depth and complexity
-     */
-    buildGuidanceSection(currentDepth, codeAnalysis) {
-        const achievements = this.identifyAchievements(currentDepth, codeAnalysis);
-        const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
-        let section = `EXPANSION GUIDANCE:
-Focus: Identify distinct functional concerns that could be independently tested or reviewed
-- Look for changes that address different requirements or use cases
-- Consider separating different functions, classes, or logical units
-- Each theme should represent a coherent concern that could have its own unit test
-- Consider if different aspects could be tested or reviewed separately`;
-        if (achievements.length > 0) {
-            section += `
-
-ACHIEVEMENTS SO FAR:
-${achievements.map((achievement) => `✓ ${achievement}`).join('\n')}`;
-        }
-        if (nextGoals.length > 0) {
-            section += `
-
-NEXT GOALS TO CONSIDER:
-${nextGoals.map((goal) => `→ ${goal}`).join('\n')}`;
-        }
-        return section;
-    }
-    /**
-     * Build examples section with relevant expansion patterns
-     */
-    buildExamplesSection(codeAnalysis) {
-        const relevantExamples = this.selectRelevantExamples(codeAnalysis);
-        if (relevantExamples.length === 0) {
-            return '';
-        }
-        let section = `EXPANSION EXAMPLES (similar patterns):`;
-        relevantExamples.forEach((example, index) => {
-            section += `
-
-Example ${index + 1}: "${example.themeName}"
-Pattern: ${example.pattern}
-Sub-themes created:
-${example.subThemes.map((sub) => `  - "${sub.name}": ${sub.description}`).join('\n')}
-Why this worked: ${example.reasoning}`;
-        });
-        return section;
-    }
-    /**
-     * Build decision section with specific questions
-     */
-    buildDecisionSection(currentDepth, codeAnalysis, theme) {
-        const questions = this.generateDecisionQuestions(currentDepth, codeAnalysis);
-        let section = `You are building a hierarchical mindmap per PRD requirements.
-Goal: Natural depth (2-30 levels) based on code complexity.
-
-CURRENT THEME: "${theme.name}"
-Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)} lines
-Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
-
-EXPANSION DECISION FRAMEWORK (from PRD):
-
-Create child nodes when:
-1. Multiple concerns present
-2. Not independently testable at this level
-3. Too complex for atomic understanding
-4. Mixed audiences (technical vs business)
-
-Stop expansion only when ALL true:
-1. Atomic: 5-15 lines of focused change
-2. Unit-testable as-is
-3. Single responsibility
-4. Natural code boundary
-
-CRITICAL: Multi-file changes are RARELY atomic. Consider:
-- If changing multiple files, each file likely represents a separate concern
-- Configuration + implementation = 2 separate atomic changes
-- Test + implementation = 2 separate atomic changes
-- Documentation + code = 2 separate atomic changes
-
-Multi-file themes should expand unless they are:
-1. Simple renames across files (atomic rename operation)
-2. Coordinated single-line changes (like version bumps)
-3. Pure refactoring with identical logic changes
-
-CONSIDER THESE QUESTIONS:
-${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
-
-CRITICAL FILE ASSIGNMENT RULES:
-1. Each sub-theme MUST have "files" array populated
-2. Files MUST be selected ONLY from the parent theme's files listed above
-3. You CANNOT suggest files that are not in the parent theme's file list
-4. If parent has only 1 file, ALL sub-themes must use that SAME file
-5. Each file should typically belong to only ONE sub-theme (unless parent has only 1 file)
-6. If a sub-theme doesn't modify any specific files, it shouldn't exist
-7. The "files" field is REQUIRED - omitting it will cause an error
-
-EXAMPLE: If parent theme affects ["src/services/theme-expansion.ts"], then ALL sub-themes 
-must have "files": ["src/services/theme-expansion.ts"]. You CANNOT suggest files like 
-"src/utils/concurrency-manager.ts" that are not in the parent's file list.`;
-        section += `
-
-RESPOND WITH PRD-COMPLIANT JSON:
-{
-  "shouldExpand": boolean,
-  "reasoning": "why (max 30 words)",
-  "businessContext": "user value (max 20 words)",
-  "technicalContext": "what it does (max 20 words)",
-  "testabilityAssessment": "how to test (max 15 words)",
-  "suggestedSubThemes": [
-    {
-      "name": "Clear title (max 8 words)",
-      "description": "1-3 sentences",
-      "businessContext": "Why this matters",
-      "technicalContext": "What this does",
-      "files": ["REQUIRED: list files from parent theme that this sub-theme modifies"],
-      "estimatedLines": number,
-      "rationale": "Why separate concern"
-    }
-  ] or null
-}`;
-        return section;
-    }
-    /**
-     * Format complexity indicators for display
-     */
-    formatComplexityIndicators(indicators) {
-        const features = [];
-        if (indicators.hasConditionals)
-            features.push(`conditionals (${indicators.branchingFactor} branches)`);
-        if (indicators.hasLoops)
-            features.push('loops');
-        if (indicators.hasErrorHandling)
-            features.push('error handling');
-        if (indicators.hasAsyncOperations)
-            features.push('async operations');
-        if (indicators.nestingDepth > 2)
-            features.push(`deep nesting (${indicators.nestingDepth})`);
-        return features.length > 0 ? features.join(', ') : 'low complexity';
-    }
-    /**
-     * Identify what has been achieved at current depth
-     */
-    identifyAchievements(currentDepth, codeAnalysis) {
-        const achievements = [];
-        if (currentDepth >= 1) {
-            if (codeAnalysis.changeTypes.length <= 2) {
-                achievements.push('Focused change types identified');
-            }
-            if (codeAnalysis.moduleCount <= 3) {
-                achievements.push('Module scope well-defined');
-            }
-        }
-        if (currentDepth >= 2) {
-            if (codeAnalysis.functionCount <= 2) {
-                achievements.push('Function-level granularity reached');
-            }
-            if (codeAnalysis.classCount <= 1) {
-                achievements.push('Single class/interface focus');
-            }
-        }
-        if (currentDepth >= 3) {
-            if (!codeAnalysis.complexityIndicators.hasConditionals ||
-                !codeAnalysis.complexityIndicators.hasLoops) {
-                achievements.push('Simplified control flow');
-            }
-        }
-        return achievements;
-    }
-    /**
-     * Identify next goals based on current state
-     */
-    identifyNextGoals(currentDepth, codeAnalysis) {
-        const goals = [];
-        if (codeAnalysis.changeTypes.length > 2) {
-            goals.push('Separate different types of changes (config vs logic vs UI)');
-        }
-        if (codeAnalysis.functionCount > 3) {
-            goals.push('Break down into individual function modifications');
-        }
-        if (codeAnalysis.complexityIndicators.hasConditionals &&
-            codeAnalysis.complexityIndicators.hasErrorHandling) {
-            goals.push('Separate control flow from error handling');
-        }
-        if (codeAnalysis.complexityIndicators.hasAsyncOperations &&
-            codeAnalysis.functionCount > 1) {
-            goals.push('Isolate asynchronous operations');
-        }
-        if (codeAnalysis.fileStructure.isMultiDirectory) {
-            goals.push('Group changes by architectural component');
-        }
-        // Add depth-specific goals
-        if (currentDepth < 2 && codeAnalysis.moduleCount > 1) {
-            goals.push('Achieve module-level separation');
-        }
-        if (currentDepth < 3 && codeAnalysis.classCount > 1) {
-            goals.push('Reach class/interface level granularity');
-        }
-        return goals;
-    }
-    /**
-     * Generate context-specific decision questions
-     */
-    generateDecisionQuestions(currentDepth, codeAnalysis) {
-        const questions = [
-            'Does this theme contain multiple distinct concerns that could be understood separately?',
-            'Would decomposition make the changes clearer and more reviewable?',
-            'Are there natural boundaries in the code that suggest separate sub-themes?',
-        ];
-        // Add complexity-specific questions
-        if (codeAnalysis.functionCount > 1) {
-            questions.push('Could different functions/methods be analyzed as separate concerns?');
-        }
-        if (codeAnalysis.changeTypes.length > 1) {
-            questions.push('Should different types of changes (config vs logic vs UI) be separated?');
-        }
-        if (codeAnalysis.complexityIndicators.hasConditionals) {
-            questions.push('Could different conditional branches or logic paths be treated separately?');
-        }
-        if (codeAnalysis.complexityIndicators.hasErrorHandling) {
-            questions.push('Should error handling be separated from main logic flow?');
-        }
-        // Add depth-specific questions
-        if (currentDepth >= 3) {
-            questions.push('Could different parts of this change be tested independently?');
-            questions.push('Would a code reviewer comment on different aspects separately?');
-        }
-        return questions;
-    }
-    /**
-     * Select relevant examples based on code patterns
-     */
-    selectRelevantExamples(codeAnalysis) {
-        return this.expansionExamples.filter((example) => this.isExampleRelevant(example, codeAnalysis)); // Include all relevant examples
-    }
-    /**
-     * Check if an example is relevant to current analysis
-     */
-    isExampleRelevant(example, analysis) {
-        // Match by change types
-        const typeMatch = example.changeTypes.some((type) => analysis.changeTypes.includes(type));
-        // Match by complexity
-        const complexityMatch = example.hasConditionals ===
-            analysis.complexityIndicators.hasConditionals ||
-            (example.hasMultipleFunctions && analysis.functionCount > 1) ||
-            (example.hasMultipleFiles && analysis.moduleCount > 1);
-        return typeMatch || complexityMatch;
-    }
-    /**
-     * Initialize example expansion patterns
-     */
-    initializeExamples() {
-        this.expansionExamples = [
-            {
-                themeName: 'Refactor authentication service',
-                pattern: 'service-refactor',
-                changeTypes: ['logic', 'types'],
-                hasConditionals: true,
-                hasMultipleFunctions: true,
-                hasMultipleFiles: true,
-                subThemes: [
-                    {
-                        name: 'Update token validation logic',
-                        description: 'Modify JWT token verification and expiration handling',
-                    },
-                    {
-                        name: 'Add new authentication methods',
-                        description: 'Implement OAuth2 and SAML authentication options',
-                    },
-                    {
-                        name: 'Refactor user session management',
-                        description: 'Improve session storage and cleanup mechanisms',
-                    },
-                ],
-                reasoning: 'Each sub-theme addresses a distinct aspect of authentication',
-            },
-            {
-                themeName: 'Add user feedback system',
-                pattern: 'feature-addition',
-                changeTypes: ['ui', 'logic', 'config'],
-                hasConditionals: false,
-                hasMultipleFunctions: true,
-                hasMultipleFiles: true,
-                subThemes: [
-                    {
-                        name: 'Create feedback UI components',
-                        description: 'Build feedback forms and display components',
-                    },
-                    {
-                        name: 'Implement feedback storage',
-                        description: 'Add database schema and API endpoints',
-                    },
-                    {
-                        name: 'Configure feedback notifications',
-                        description: 'Set up email and in-app notification system',
-                    },
-                ],
-                reasoning: 'UI, backend, and notifications are separate technical concerns',
-            },
-            {
-                themeName: 'Fix error handling in data processing',
-                pattern: 'error-handling-fix',
-                changeTypes: ['logic'],
-                hasConditionals: true,
-                hasMultipleFunctions: false,
-                hasMultipleFiles: false,
-                subThemes: [
-                    {
-                        name: 'Add input validation',
-                        description: 'Validate data format and requirements before processing',
-                    },
-                    {
-                        name: 'Improve error messages',
-                        description: 'Provide more descriptive error messages to users',
-                    },
-                    {
-                        name: 'Add retry logic',
-                        description: 'Implement automatic retry for transient failures',
-                    },
-                ],
-                reasoning: 'Prevention, messaging, and recovery are distinct error handling strategies',
-            },
-        ];
-    }
-}
-exports.DynamicPromptBuilder = DynamicPromptBuilder;
-
-
-/***/ }),
-
-/***/ 5902:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GitService = void 0;
-const github = __importStar(__nccwpck_require__(3228));
-const exec = __importStar(__nccwpck_require__(5236));
-const ai_code_analyzer_1 = __nccwpck_require__(9840);
-class GitService {
-    shouldIncludeFile(filename) {
-        const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
-        return !isExcluded;
-    }
-    constructor(githubToken, anthropicApiKey) {
-        this.githubToken = githubToken;
-        this.octokit = null;
-        // Initialize GitHub API client if token is available
-        if (this.githubToken) {
-            try {
-                this.octokit = github.getOctokit(this.githubToken);
-            }
-            catch (error) {
-                console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
-            }
-        }
-        // Initialize AI analyzer - use environment variable if not provided
-        const apiKey = anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-        if (!apiKey) {
-            throw new Error('[GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
-        }
-        this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(apiKey);
-    }
-    async getEnhancedChangedFiles() {
-        console.log('[GIT-SERVICE] Getting enhanced changed files with AI code analysis');
-        // Get basic changed files first
-        const changedFiles = await this.getChangedFiles();
-        if (changedFiles.length === 0) {
-            console.log('[GIT-SERVICE] No changed files to analyze');
-            return [];
-        }
-        // Prepare files for concurrent AI analysis
-        const filesToAnalyze = changedFiles.map((file) => ({
-            filename: file.filename,
-            diffPatch: file.patch || '',
-            changeType: file.status === 'removed'
-                ? 'deleted'
-                : file.status,
-            linesAdded: file.additions,
-            linesRemoved: file.deletions,
-        }));
-        console.log(`[GIT-SERVICE] Starting concurrent AI analysis of ${filesToAnalyze.length} files`);
-        // Use AICodeAnalyzer with ConcurrencyManager for parallel processing
-        const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
-        console.log(`[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
-        // Log cache statistics
-        const cacheStats = this.aiAnalyzer.getCacheStats();
-        console.log(`[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
-        return codeChanges;
-    }
-    async getPullRequestContext() {
-        // Check if we're in a GitHub Actions PR context
-        if (github.context.eventName === 'pull_request') {
-            const pr = github.context.payload.pull_request;
-            if (pr) {
-                console.log(`[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`);
-                return {
-                    number: pr.number,
-                    title: pr.title,
-                    body: pr.body || '',
-                    baseBranch: pr.base.ref,
-                    headBranch: pr.head.ref,
-                    baseSha: pr.base.sha,
-                    headSha: pr.head.sha,
-                };
-            }
-        }
-        // Dev mode: First try to find existing PR for current branch
-        const currentBranch = await this.getCurrentBranch();
-        const existingPR = await this.getPullRequestForBranch(currentBranch);
-        if (existingPR) {
-            console.log(`[GIT-SERVICE] Using existing PR #${existingPR.number} context for local testing`);
-            return existingPR;
-        }
-        // Fallback: create synthetic PR context from local git
-        console.log('[GIT-SERVICE] No PR found, using branch comparison mode');
-        return await this.createDevModeContext();
-    }
-    async getPullRequestForBranch(branchName) {
-        if (!this.octokit) {
-            console.log('[GIT-SERVICE] No GitHub token available, cannot check for existing PR');
-            return null;
-        }
-        try {
-            console.log(`[GIT-SERVICE] Checking for open PR for branch: ${branchName}`);
-            const { data: pulls } = await this.octokit.rest.pulls.list({
-                ...github.context.repo,
-                head: `${github.context.repo.owner}:${branchName}`,
-                state: 'open',
-            });
-            if (pulls.length > 0) {
-                const pr = pulls[0]; // Take the first matching PR
-                console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${branchName}`);
-                return {
-                    number: pr.number,
-                    title: pr.title,
-                    body: pr.body || '',
-                    baseBranch: pr.base.ref,
-                    headBranch: pr.head.ref,
-                    baseSha: pr.base.sha,
-                    headSha: pr.head.sha,
-                };
-            }
-            console.log(`[GIT-SERVICE] No open PR found for branch ${branchName}`);
-            return null;
-        }
-        catch (error) {
-            console.warn(`[GIT-SERVICE] Failed to check for PR on branch ${branchName}:`, error);
-            return null;
-        }
-    }
-    async createDevModeContext() {
-        try {
-            const currentBranch = await this.getCurrentBranch();
-            const baseBranch = 'main'; // Default comparison branch
-            const headSha = await this.getCurrentCommitSha();
-            const baseSha = await this.getBranchCommitSha(baseBranch);
-            return {
-                number: 0, // Synthetic PR number
-                title: `Local changes on ${currentBranch}`,
-                body: 'Development mode - comparing local changes against main branch',
-                baseBranch,
-                headBranch: currentBranch,
-                baseSha,
-                headSha,
-            };
-        }
-        catch (error) {
-            console.warn('Failed to create dev mode context:', error);
-            return null;
-        }
-    }
-    async getCurrentBranch() {
-        let branch = '';
-        await exec.exec('git', ['branch', '--show-current'], {
-            listeners: {
-                stdout: (data) => {
-                    branch += data.toString().trim();
-                },
-            },
-        });
-        return branch || 'unknown';
-    }
-    async getCurrentCommitSha() {
-        let sha = '';
-        await exec.exec('git', ['rev-parse', 'HEAD'], {
-            listeners: {
-                stdout: (data) => {
-                    sha += data.toString().trim();
-                },
-            },
-        });
-        return sha;
-    }
-    async getBranchCommitSha(branch) {
-        let sha = '';
-        try {
-            await exec.exec('git', ['rev-parse', `origin/${branch}`], {
-                listeners: {
-                    stdout: (data) => {
-                        sha += data.toString().trim();
-                    },
-                },
-            });
-        }
-        catch (error) {
-            // Fallback to local branch if remote doesn't exist
-            await exec.exec('git', ['rev-parse', branch], {
-                listeners: {
-                    stdout: (data) => {
-                        sha += data.toString().trim();
-                    },
-                },
-            });
-        }
-        return sha;
-    }
-    async getChangedFiles() {
-        const prContext = await this.getPullRequestContext();
-        if (!prContext) {
-            return [];
-        }
-        console.log(`[GIT-DEBUG] PR Context: number=${prContext.number}, event=${github.context.eventName}, hasToken=${!!this.githubToken}`);
-        console.log(`[GIT-DEBUG] baseBranch=${prContext.baseBranch}, headBranch=${prContext.headBranch}`);
-        // Use GitHub API for real PRs (in GitHub Actions or when PR found locally)
-        if (prContext.number > 0 && this.octokit) {
-            console.log(`[GIT-DEBUG] Using GitHub API for PR #${prContext.number} (exact same as live)`);
-            return await this.getChangedFilesFromGitHub(prContext.number);
-        }
-        // Fallback to git commands for synthetic dev mode (no PR)
-        console.log(`[GIT-DEBUG] Using git commands method for branch comparison`);
-        return await this.getChangedFilesFromGit(prContext.baseSha, prContext.headSha);
-    }
-    async getChangedFilesFromGitHub(prNumber) {
-        try {
-            if (!this.octokit) {
-                throw new Error('GitHub API client not initialized');
-            }
-            // Fetch all files using pagination (GitHub API returns max 30 per page)
-            const allFiles = [];
-            let page = 1;
-            let hasMore = true;
-            while (hasMore) {
-                const { data: files } = await this.octokit.rest.pulls.listFiles({
-                    ...github.context.repo,
-                    pull_number: prNumber,
-                    per_page: 100, // Maximum allowed by GitHub
-                    page: page,
-                });
-                allFiles.push(...files);
-                // If we got less than 100 files, we've reached the end
-                hasMore = files.length === 100;
-                page++;
-                // Safety limit to prevent infinite loops
-                if (page > 10) {
-                    console.warn('[GIT-SERVICE] Reached pagination limit, stopping at 1000 files');
-                    break;
-                }
-            }
-            const changedFiles = allFiles
-                .filter((file) => this.shouldIncludeFile(file.filename))
-                .map((file) => ({
-                filename: file.filename,
-                status: file.status,
-                additions: file.additions,
-                deletions: file.deletions,
-                patch: file.patch,
-            }));
-            console.log(`[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
-            return changedFiles;
-        }
-        catch (error) {
-            console.error('Failed to get changed files from GitHub:', error);
-            return [];
-        }
-    }
-    async getChangedFilesFromGit(baseSha, headSha) {
-        console.log(`[GIT-DEBUG] Comparing ${baseSha.substring(0, 8)} (base) vs ${headSha.substring(0, 8)} (head)`);
-        const files = [];
-        let fileList = '';
-        let diffCommand = [];
-        // Method 1: Try exact SHA comparison (remove triple-dot syntax)
-        try {
-            diffCommand = ['diff', '--name-status', baseSha, headSha];
-            console.log(`[GIT-DEBUG] Method 1: git ${diffCommand.join(' ')}`);
-            await exec.exec('git', diffCommand, {
-                listeners: {
-                    stdout: (data) => {
-                        fileList += data.toString();
-                    },
-                },
-            });
-            console.log(`[GIT-DEBUG] Method 1 succeeded`);
-        }
-        catch (method1Error) {
-            console.log(`[GIT-DEBUG] Method 1 failed: ${method1Error}`);
-            // Method 2: Fetch base branch and compare
-            try {
-                const prContext = await this.getPullRequestContext();
-                const baseBranch = prContext?.baseBranch || 'main';
-                console.log(`[GIT-DEBUG] Method 2: Fetching base branch ${baseBranch}`);
-                await exec.exec('git', ['fetch', 'origin', baseBranch]);
-                diffCommand = ['diff', '--name-status', `origin/${baseBranch}`, 'HEAD'];
-                console.log(`[GIT-DEBUG] Method 2: git ${diffCommand.join(' ')}`);
-                fileList = ''; // Reset for retry
-                await exec.exec('git', diffCommand, {
-                    listeners: {
-                        stdout: (data) => {
-                            fileList += data.toString();
-                        },
-                    },
-                });
-                console.log(`[GIT-DEBUG] Method 2 succeeded`);
-            }
-            catch (method2Error) {
-                console.log(`[GIT-DEBUG] Method 2 failed: ${method2Error}`);
-                // Method 3: Emergency fallback - recent commits only
-                try {
-                    diffCommand = ['diff', '--name-status', 'HEAD~1', 'HEAD'];
-                    console.log(`[GIT-DEBUG] Method 3 (emergency): git ${diffCommand.join(' ')}`);
-                    fileList = ''; // Reset for retry
-                    await exec.exec('git', diffCommand, {
-                        listeners: {
-                            stdout: (data) => {
-                                fileList += data.toString();
-                            },
-                        },
-                    });
-                    console.log(`[GIT-DEBUG] Method 3 succeeded (showing recent commits only)`);
-                }
-                catch (method3Error) {
-                    console.error(`[GIT-DEBUG] All methods failed. Method 3 error: ${method3Error}`);
-                    throw new Error(`Git diff failed with all methods. Last error: ${method3Error}`);
-                }
-            }
-        }
-        // Parse file status
-        const fileLines = fileList
-            .trim()
-            .split('\n')
-            .filter((line) => line.trim());
-        console.log(`[GIT-DEBUG] Found ${fileLines.length} changed files total before filtering`);
-        try {
-            for (const line of fileLines) {
-                const [status, filename] = line.split('\t');
-                if (!filename || !this.shouldIncludeFile(filename))
-                    continue;
-                // Get diff patch for this file using the same command that succeeded for file list
-                let patch = '';
-                try {
-                    const patchCommand = [...diffCommand, '--', filename];
-                    await exec.exec('git', patchCommand, {
-                        listeners: {
-                            stdout: (data) => {
-                                patch += data.toString();
-                            },
-                        },
-                    });
-                }
-                catch (error) {
-                    console.warn(`[GIT-DEBUG] Failed to get patch for ${filename}:`, error);
-                    // Continue without patch - we still have the file status
-                }
-                // Count additions/deletions from patch
-                const additions = (patch.match(/^\+(?!\+)/gm) || []).length;
-                const deletions = (patch.match(/^-(?!-)/gm) || []).length;
-                const file = {
-                    filename,
-                    status: this.mapGitStatusToChangedFileStatus(status),
-                    additions,
-                    deletions,
-                    patch,
-                };
-                files.push(file);
-            }
-            console.log(`[GIT-SERVICE] Found ${files.length} source files for analysis (excluded build artifacts)`);
-            return files;
-        }
-        catch (fileProcessingError) {
-            console.error('Failed to process files:', fileProcessingError);
-            return [];
-        }
-    }
-    mapGitStatusToChangedFileStatus(gitStatus) {
-        switch (gitStatus) {
-            case 'A':
-                return 'added';
-            case 'D':
-                return 'removed';
-            case 'M':
-                return 'modified';
-            case 'R':
-                return 'renamed';
-            default:
-                return 'modified';
-        }
-    }
-    async getDiffContent(baseSha, headSha) {
-        let diffOutput = '';
-        try {
-            await exec.exec('git', ['diff', `${baseSha}...${headSha}`], {
-                listeners: {
-                    stdout: (data) => {
-                        diffOutput += data.toString();
-                    },
-                },
-            });
-        }
-        catch (error) {
-            console.error('Failed to get diff content:', error);
-        }
-        return diffOutput;
-    }
-}
-exports.GitService = GitService;
-// Patterns for files to exclude from analysis
-GitService.EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-];
-
-
-/***/ }),
-
-/***/ 2983:
+/***/ 4200:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HierarchicalSimilarityService = void 0;
-const generic_cache_1 = __nccwpck_require__(9267);
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
+const generic_cache_1 = __nccwpck_require__(282);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const logger_1 = __nccwpck_require__(7893);
+const logger_1 = __nccwpck_require__(9000);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
  * Handles cross-level duplicate detection and hierarchy optimization
@@ -32596,29 +32488,30 @@ class HierarchicalSimilarityService {
         }
         // Process comparisons with controlled concurrency
         console.log(`[HIERARCHICAL] Starting ${comparisons.length} Claude API calls with concurrency limit of 10`);
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(comparisons, async (comparison) => {
-            return await this.analyzeCrossLevelSimilarityPair(comparison);
-        }, {
-            concurrencyLimit: 5,
-            maxRetries: 3,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                console.log(`[HIERARCHICAL] Cross-level analysis progress: ${completed}/${total} comparisons`);
-            },
-            onError: (error, comparison, retryCount) => {
-                console.warn(`[HIERARCHICAL] Retry ${retryCount} for comparison ${comparison.id}: ${error.message}`);
-            },
+        // Process all comparisons concurrently - let ClaudeClient handle rate limiting
+        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+        console.log(`[HIERARCHICAL] Processing all ${comparisons.length} comparisons concurrently`);
+        const comparisonPromises = comparisons.map(async (comparison) => {
+            try {
+                const result = await this.analyzeCrossLevelSimilarityPair(comparison);
+                return { success: true, result };
+            }
+            catch (error) {
+                console.warn(`[HIERARCHICAL] Failed comparison: ${comparison.id} - ${error instanceof Error ? error.message : 'Unknown error'}`);
+                return { success: false };
+            }
         });
-        // Extract successful results
+        // Wait for all comparisons to complete - ClaudeClient manages the 10 concurrent limit
+        const allResults = await Promise.all(comparisonPromises);
+        // Separate successful and failed results
         const successfulResults = [];
         let failedCount = 0;
-        for (const result of results) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                failedCount++;
-                console.warn(`[HIERARCHICAL] Failed comparison after all retries: ${result.item.id}`);
+        for (const result of allResults) {
+            if (result.success) {
+                successfulResults.push(result.result);
             }
             else {
-                successfulResults.push(result);
+                failedCount++;
             }
         }
         if (failedCount > 0) {
@@ -32867,10 +32760,8 @@ class HierarchicalSimilarityService {
      * Check if themes have severe size mismatch (one much larger than other)
      */
     hasSevereSizeMismatch(theme1, theme2) {
-        const size1 = (theme1.affectedFiles?.length || 0) +
-            (theme1.codeMetrics?.linesAdded || 0);
-        const size2 = (theme2.affectedFiles?.length || 0) +
-            (theme2.codeMetrics?.linesAdded || 0);
+        const size1 = theme1.affectedFiles?.length || 0;
+        const size2 = theme2.affectedFiles?.length || 0;
         if (size1 === 0 || size2 === 0) {
             return false; // Can't judge size mismatch
         }
@@ -32981,7 +32872,7 @@ Focus on business value and avoid merging themes with distinct business purposes
 `;
         try {
             console.log(`[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`);
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'hierarchical-analysis');
             console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
                 'similarityScore',
@@ -33124,14 +33015,14 @@ exports.HierarchicalSimilarityService = HierarchicalSimilarityService;
 
 /***/ }),
 
-/***/ 7329:
+/***/ 667:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SimilarityCache = void 0;
-const performance_tracker_1 = __nccwpck_require__(9766);
+const performance_tracker_1 = __nccwpck_require__(9600);
 class SimilarityCache {
     constructor() {
         this.cache = new Map();
@@ -33180,32 +33071,28 @@ exports.SimilarityCache = SimilarityCache;
 
 /***/ }),
 
-/***/ 7333:
+/***/ 8430:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
-const generic_cache_1 = __nccwpck_require__(9267);
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const ai_expansion_decision_service_1 = __nccwpck_require__(7257);
-const logger_1 = __nccwpck_require__(7893);
+const generic_cache_1 = __nccwpck_require__(282);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const ai_mindmap_service_1 = __nccwpck_require__(3555);
+const theme_mindmap_converter_1 = __nccwpck_require__(3936);
+const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
-    concurrencyLimit: 5,
-    maxRetries: 3,
-    retryDelay: 1000,
-    retryBackoffMultiplier: 2,
     enableProgressLogging: false,
-    dynamicConcurrency: true,
-    enableJitter: true,
 };
 class ThemeExpansionService {
     constructor(anthropicApiKey, config = {}) {
+        this.converter = theme_mindmap_converter_1.ThemeMindmapConverter;
         this.effectiveness = {
             themesEvaluated: 0,
             themesExpanded: 0,
@@ -33219,25 +33106,12 @@ class ThemeExpansionService {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
         this.cache = new generic_cache_1.GenericCache(3600000); // 1 hour TTL
         this.config = { ...exports.DEFAULT_EXPANSION_CONFIG, ...config };
-        this.aiDecisionService = new ai_expansion_decision_service_1.AIExpansionDecisionService(anthropicApiKey);
+        this.aiMindmapService = new ai_mindmap_service_1.AIMindmapService(anthropicApiKey);
     }
     /**
-     * Process items concurrently with limit and retry logic
+     * Process items sequentially with retry logic
+     * ClaudeClient handles rate limiting and queuing
      */
-    async processConcurrentlyWithLimit(items, processor, options) {
-        const concurrencyOptions = {
-            concurrencyLimit: options?.concurrencyLimit || this.config.concurrencyLimit,
-            maxRetries: options?.maxRetries || this.config.maxRetries,
-            retryDelay: options?.retryDelay || this.config.retryDelay,
-            retryBackoffMultiplier: this.config.retryBackoffMultiplier,
-            onProgress: options?.onProgress && this.config.enableProgressLogging
-                ? options.onProgress
-                : undefined,
-            onError: options?.onError,
-            enableLogging: this.config.enableProgressLogging,
-        };
-        return concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(items, processor, concurrencyOptions);
-    }
     /**
      * Main entry point for expanding themes hierarchically
      */
@@ -33246,24 +33120,20 @@ class ThemeExpansionService {
         const initialAICalls = this.claudeClient.getMetrics().totalCalls;
         logger_1.logger.info('EXPANSION', `Starting hierarchical expansion of ${consolidatedThemes.length} themes`);
         logger_1.logger.debug('EXPANSION', `Input theme names: ${consolidatedThemes.map((t) => t.name).join(', ')}`);
-        // DEBUG: Log all input themes with IDs
-        console.log(`[INPUT-THEMES] Starting with ${consolidatedThemes.length} root themes:`);
-        consolidatedThemes.forEach((theme, i) => {
-            console.log(`  [INPUT-THEME-${i}] "${theme.name}" (ID: ${theme.id})`);
-        });
         // Reset effectiveness tracking
         this.resetEffectiveness();
-        // Process themes with concurrency limit and retry logic
-        const results = await this.processConcurrentlyWithLimit(consolidatedThemes, (theme) => this.expandThemeRecursively(theme, 0), {
-            onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging) {
-                    console.log(`[THEME-EXPANSION] Progress: ${completed}/${total} root themes expanded`);
-                }
-            },
-            onError: (error, theme, retryCount) => {
-                console.warn(`[THEME-EXPANSION] Retry ${retryCount} for theme "${theme.name}": ${error.message}`);
-            },
+        // Process all themes concurrently - let ClaudeClient handle rate limiting
+        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Processing all ${consolidatedThemes.length} themes concurrently`);
+        const themePromises = consolidatedThemes.map(async (theme) => {
+            try {
+                return await this.expandThemeRecursively(theme, 0);
+            }
+            catch (error) {
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand theme "${theme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                return { error: error instanceof Error ? error : new Error(String(error)), item: theme };
+            }
         });
+        const results = await Promise.all(themePromises);
         // Separate successful and failed results
         const expandedThemes = [];
         const failedThemes = [];
@@ -33276,9 +33146,9 @@ class ThemeExpansionService {
             }
         }
         if (failedThemes.length > 0) {
-            console.warn(`[THEME-EXPANSION] Failed to expand ${failedThemes.length} themes after retries:`);
+            logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand ${failedThemes.length} themes after retries:`);
             for (const failed of failedThemes) {
-                console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `  - ${failed.theme.name}: ${failed.error.message}`);
             }
         }
         // Update effectiveness metrics
@@ -33295,21 +33165,21 @@ class ThemeExpansionService {
         logger_1.logger.debug('EXPANSION', `Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`);
         logger_1.logger.info('EXPANSION', `Max depth reached: ${this.effectiveness.maxDepthReached}, Atomic themes: ${this.effectiveness.atomicThemesIdentified}`);
         // Log expansion stop reasons for analysis
-        console.log(`[EXPANSION-ANALYSIS] Expansion stop reasons summary:`);
-        console.log(`[EXPANSION-ANALYSIS] Total themes that stopped expanding: ${this.expansionStopReasons.length}`);
+        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Expansion stop reasons summary:`);
+        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Total themes that stopped expanding: ${this.expansionStopReasons.length}`);
         const reasonCounts = this.expansionStopReasons.reduce((acc, reason) => {
             acc[reason.reason] = (acc[reason.reason] || 0) + 1;
             return acc;
         }, {});
         Object.entries(reasonCounts).forEach(([reason, count]) => {
-            console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
+            logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `${reason}: ${count} themes`);
         });
         // Log themes that exceeded PRD limits but were marked atomic
-        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && (r.lineCount > 15 || r.fileCount > 1));
+        const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && r.fileCount > 1);
         if (oversizedAtomic.length > 0) {
-            console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
+            logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
             oversizedAtomic.forEach((r) => {
-                console.log(`  - "${r.themeName}" (${r.fileCount} files, ${r.lineCount} lines) at depth ${r.depth}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `  - "${r.themeName}" (${r.fileCount} files) at depth ${r.depth}`);
             });
         }
         return expandedThemes;
@@ -33327,21 +33197,23 @@ class ThemeExpansionService {
         // Check if theme is candidate for expansion
         const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
         if (!expansionCandidate) {
-            console.log(`[EXPANSION-FLOW] Theme "${theme.name}" NOT selected for expansion at depth ${currentDepth}`);
-            console.log(`[EXPANSION-FLOW] Will only process existing ${theme.childThemes.length} child themes`);
             // Still process existing child themes recursively
-            const childResults = await this.processConcurrentlyWithLimit(theme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, theme), {
-                onProgress: (completed, total) => {
-                    if (this.config.enableProgressLogging && total > 1) {
-                        console.log(`[THEME-EXPANSION] Child themes progress: ${completed}/${total} for "${theme.name}"`);
-                    }
-                },
+            // Process child themes concurrently - let ClaudeClient handle rate limiting
+            const childPromises = theme.childThemes.map(async (child) => {
+                try {
+                    return await this.expandThemeRecursively(child, currentDepth + 1, theme);
+                }
+                catch (error) {
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand child theme "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    return { error: error instanceof Error ? error : new Error(String(error)), item: child };
+                }
             });
+            const childResults = await Promise.all(childPromises);
             // Extract successful results, keep failed themes as fallback
             const expandedChildren = [];
             for (const result of childResults) {
                 if ('error' in result) {
-                    console.warn(`[THEME-EXPANSION] Failed to expand child theme: ${result.error.message}`);
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand child theme: ${result.error.message}`);
                     expandedChildren.push(result.item); // Keep original theme if expansion fails
                 }
                 else {
@@ -33362,30 +33234,33 @@ class ThemeExpansionService {
         const result = await this.processExpansionRequest(expansionRequest);
         if (!result.success || !result.expandedTheme) {
             // Log expansion request context on failure
-            console.error(`[EXPANSION-REQUEST-FAILED] Theme: "${theme.name}" (ID: ${theme.id})`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Request ID: ${expansionRequest.id}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Depth: ${currentDepth}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Parent: ${parentTheme?.name || 'none'}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Error: ${result.error}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Processing time: ${result.processingTime}ms`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Theme: "${theme.name}" (ID: ${theme.id})`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Request ID: ${expansionRequest.id}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Depth: ${currentDepth}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Parent: ${parentTheme?.name || 'none'}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Error: ${result.error}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Processing time: ${result.processingTime}ms`);
             logger_1.logger.info('EXPANSION', `Expansion failed for theme ${theme.name}: ${result.error}`);
             return theme;
         }
         // Track successful expansion
         this.effectiveness.themesExpanded++;
-        // Recursively expand new sub-themes
-        const subThemeResults = await this.processConcurrentlyWithLimit(result.subThemes, (subTheme) => this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme), {
-            onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging && total > 1) {
-                    console.log(`[THEME-EXPANSION] Sub-themes progress: ${completed}/${total} for "${theme.name}"`);
-                }
-            },
+        // Recursively expand new sub-themes concurrently
+        const subThemePromises = result.subThemes.map(async (subTheme) => {
+            try {
+                return await this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme);
+            }
+            catch (error) {
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand sub-theme "${subTheme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                return { error: error instanceof Error ? error : new Error(String(error)), item: subTheme };
+            }
         });
+        const subThemeResults = await Promise.all(subThemePromises);
         // Extract successful sub-themes
         const expandedSubThemes = [];
         for (const subResult of subThemeResults) {
             if ('error' in subResult) {
-                console.warn(`[THEME-EXPANSION] Failed to expand sub-theme: ${subResult.error.message}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand sub-theme: ${subResult.error.message}`);
                 expandedSubThemes.push(subResult.item); // Keep original if expansion fails
             }
             else {
@@ -33395,18 +33270,21 @@ class ThemeExpansionService {
         // Process existing children only if we didn't create new sub-themes
         const expandedExistingChildren = [];
         if (result.subThemes.length === 0) {
-            // Only process existing children if we didn't create new sub-themes
-            const existingChildResults = await this.processConcurrentlyWithLimit(result.expandedTheme.childThemes, (child) => this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme), {
-                onProgress: (completed, total) => {
-                    if (this.config.enableProgressLogging && total > 1) {
-                        console.log(`[THEME-EXPANSION] Existing children progress: ${completed}/${total} for "${theme.name}"`);
-                    }
-                },
+            // Only process existing children if we didn't create new sub-themes concurrently
+            const existingChildPromises = result.expandedTheme.childThemes.map(async (child) => {
+                try {
+                    return await this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme);
+                }
+                catch (error) {
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand existing child "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    return { error: error instanceof Error ? error : new Error(String(error)), item: child };
+                }
             });
+            const existingChildResults = await Promise.all(existingChildPromises);
             // Extract successful existing children
             for (const childResult of existingChildResults) {
                 if ('error' in childResult) {
-                    console.warn(`[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`);
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand existing child: ${childResult.error.message}`);
                     expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
                 }
                 else {
@@ -33416,25 +33294,14 @@ class ThemeExpansionService {
         }
         else {
             // We created new sub-themes, so skip existing children to avoid duplicates
-            console.log(`[EXPANSION-FLOW] Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`);
         }
         // Combine all child themes
         const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
-        // DEBUG: Log theme combination details
-        console.log(`[COMBINE] Parent: "${result.expandedTheme.name}" (ID: ${result.expandedTheme.id})`);
-        console.log(`[COMBINE] Existing children: ${expandedExistingChildren.length}`);
-        expandedExistingChildren.forEach((child, i) => console.log(`  [EXISTING-${i}] "${child.name}" (ID: ${child.id})`));
-        console.log(`[COMBINE] New sub-themes: ${expandedSubThemes.length}`);
-        expandedSubThemes.forEach((child, i) => console.log(`  [NEW-${i}] "${child.name}" (ID: ${child.id})`));
-        console.log(`[COMBINE] Total after combination: ${allChildThemes.length}`);
-        allChildThemes.forEach((child, i) => console.log(`  [TOTAL-${i}] "${child.name}" (ID: ${child.id})`));
         // Deduplicate child themes using AI
         const deduplicatedChildren = await this.deduplicateSubThemes(allChildThemes);
         // NEW: Re-evaluate merged themes for potential expansion (PRD compliance)
         const finalChildren = await this.reEvaluateMergedThemes(deduplicatedChildren, currentDepth + 1, result.expandedTheme);
-        // DEBUG: Log final theme assembly
-        console.log(`[FINAL-ASSEMBLY] Theme "${result.expandedTheme.name}" (ID: ${result.expandedTheme.id}) final children: ${finalChildren.length}`);
-        finalChildren.forEach((child, i) => console.log(`  [FINAL-CHILD-${i}] "${child.name}" (ID: ${child.id})`));
         return {
             ...result.expandedTheme,
             childThemes: finalChildren,
@@ -33449,52 +33316,14 @@ class ThemeExpansionService {
         this.effectiveness.themesEvaluated++;
         // Get sibling themes for context
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
+        // Convert theme to MindmapNode for AI analysis
+        const mindmapNode = this.converter.convertThemeToMindmapNode(theme);
         // Let AI decide based on full context
-        console.log(`[AI-DECISION-INPUT] Calling AI for theme: "${theme.name}"`);
-        console.log(`[AI-DECISION-INPUT] Parent: "${parentTheme?.name || 'none'}"`);
-        console.log(`[AI-DECISION-INPUT] Siblings: ${siblingThemes.length} themes`);
-        console.log(`[AI-DECISION-INPUT] Depth: ${currentDepth}`);
-        const expansionDecision = await this.aiDecisionService.shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes);
-        console.log(`[AI-DECISION-OUTPUT] Result for "${theme.name}": expand=${expansionDecision.shouldExpand}`);
+        const expansionDecision = await this.aiMindmapService.shouldExpandNode(mindmapNode, currentDepth);
         // Update theme with PRD-aligned decision metadata
         theme.isAtomic = expansionDecision.isAtomic;
-        // Track expansion metrics for PRD analysis
-        const expansionMetrics = {
-            naturalDepth: currentDepth,
-            reason: 'complexity-driven',
-            atomicSize: theme.codeSnippets.join('\n').split('\n').length,
-            reasoning: expansionDecision.reasoning,
-        };
         // If theme is atomic or shouldn't expand, return null
         if (!expansionDecision.shouldExpand) {
-            // Detailed logging for expansion decisions
-            console.log(`[EXPANSION-DECISION] Evaluating theme: "${theme.name}" at depth ${currentDepth}`);
-            console.log(`[EXPANSION-DECISION] Theme files: [${theme.affectedFiles.join(', ')}]`);
-            const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
-            console.log(`[EXPANSION-DECISION] Code lines: ${totalLines}`);
-            // Debug: Log first few lines of each snippet
-            if (totalLines <= 10 && theme.codeSnippets.length > 0) {
-                console.log(`[EXPANSION-DECISION] DEBUG - snippets count: ${theme.codeSnippets.length}`);
-                theme.codeSnippets.forEach((snippet, idx) => {
-                    const lines = snippet.split('\n');
-                    console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx}: ${lines.length} lines`);
-                    if (lines.length <= 3) {
-                        console.log(`[EXPANSION-DECISION] DEBUG - snippet ${idx} content: ${JSON.stringify(snippet)}`);
-                    }
-                });
-            }
-            console.log(`[EXPANSION-DECISION] AI Decision: shouldExpand=${expansionDecision.shouldExpand}, isAtomic=${expansionDecision.isAtomic}`);
-            console.log(`[EXPANSION-DECISION] AI Reasoning: "${expansionDecision.reasoning}"`);
-            console.log(`[EXPANSION-DECISION] Business Context: "${expansionDecision.businessContext}"`);
-            console.log(`[EXPANSION-DECISION] Technical Context: "${expansionDecision.technicalContext}"`);
-            console.log(`[EXPANSION-DECISION] Testability: "${expansionDecision.testabilityAssessment}"`);
-            if (expansionDecision.suggestedSubThemes) {
-                console.log(`[EXPANSION-DECISION] Suggested sub-themes: ${expansionDecision.suggestedSubThemes.length} items`);
-            }
-            else {
-                console.log(`[EXPANSION-DECISION] No sub-themes suggested`);
-            }
-            console.log('---');
             if (expansionDecision.isAtomic) {
                 this.effectiveness.atomicThemesIdentified++;
             }
@@ -33504,15 +33333,10 @@ class ThemeExpansionService {
                 themeName: theme.name,
                 depth: currentDepth,
                 reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
-                details: expansionDecision.reasoning,
+                details: expansionDecision.atomicReason || 'AI decision',
                 fileCount: theme.affectedFiles.length,
-                lineCount: theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0),
             });
-            logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
-            // Log PRD metrics
-            if (expansionMetrics.atomicSize > 15) {
-                logger_1.logger.warn('EXPANSION', `Atomic theme exceeds PRD size (${expansionMetrics.atomicSize} > 15 lines)`);
-            }
+            logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.atomicReason || 'AI decision'}`);
             return null;
         }
         // Return candidate for expansion
@@ -33530,37 +33354,35 @@ class ThemeExpansionService {
         // Check if re-evaluation is disabled
         const reEvaluateAfterMerge = process.env.RE_EVALUATE_AFTER_MERGE !== 'false';
         if (!reEvaluateAfterMerge) {
-            console.log(`[RE-EVALUATION] Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`);
             return themes;
         }
         const reEvaluatedThemes = [];
-        const maxAtomicSize = parseInt(process.env.MAX_ATOMIC_SIZE || '15');
         const strictAtomicLimits = process.env.STRICT_ATOMIC_LIMITS !== 'false';
         for (const theme of themes) {
             // Check if this was a merged theme (has multiple source themes)
             if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-                const totalLines = theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0);
-                console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${totalLines} lines, ${theme.affectedFiles.length} files)`);
-                // PRD: If merged theme exceeds atomic size, it should be re-evaluated
-                const exceedsLineLimit = strictAtomicLimits && totalLines > maxAtomicSize;
+                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`);
+                // PRD: If merged theme has complexity indicators, it should be re-evaluated
                 const exceedsFileLimit = strictAtomicLimits && theme.affectedFiles.length > 1;
-                if (exceedsLineLimit || exceedsFileLimit) {
-                    console.log(`[RE-EVALUATION] Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`);
+                const hasMultipleSources = theme.sourceThemes.length > 2;
+                if (exceedsFileLimit || hasMultipleSources) {
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`);
                     // Re-evaluate if it should expand
                     const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
                     if (expansionCandidate) {
-                        console.log(`[RE-EVALUATION] Merged theme "${theme.name}" needs expansion after deduplication`);
+                        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" needs expansion after deduplication`);
                         // Recursively expand the merged theme
                         const expanded = await this.expandThemeRecursively(theme, currentDepth, parentTheme);
                         reEvaluatedThemes.push(expanded);
                     }
                     else {
-                        console.log(`[RE-EVALUATION] Merged theme "${theme.name}" remains atomic despite size`);
+                        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" remains atomic despite complexity`);
                         reEvaluatedThemes.push(theme);
                     }
                 }
                 else {
-                    console.log(`[RE-EVALUATION] Merged theme "${theme.name}" within atomic limits -> keeping as-is`);
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" within atomic limits -> keeping as-is`);
                     reEvaluatedThemes.push(theme);
                 }
             }
@@ -33575,11 +33397,8 @@ class ThemeExpansionService {
      * Deduplicate sub-themes using AI to identify duplicates
      */
     async deduplicateSubThemes(subThemes) {
-        // DEBUG: Log deduplication input
-        console.log(`[DEDUP-IN] Processing ${subThemes.length} sub-themes:`);
-        subThemes.forEach((theme, i) => console.log(`  [DEDUP-IN-${i}] "${theme.name}" (ID: ${theme.id})`));
         if (subThemes.length <= 1) {
-            console.log(`[DEDUP-OUT] Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
             return subThemes;
         }
         // Check if batch deduplication is disabled
@@ -33594,10 +33413,9 @@ class ThemeExpansionService {
             return subThemes;
         }
         // Pre-deduplication state logging
-        console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
+        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Themes before deduplication:`);
         subThemes.forEach((t) => {
-            const lines = t.codeSnippets.join('\n').split('\n').length;
-            console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${lines} lines)`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
         });
         logger_1.logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
         // Calculate optimal batch size based on theme count
@@ -33606,28 +33424,20 @@ class ThemeExpansionService {
         for (let i = 0; i < subThemes.length; i += batchSize) {
             batches.push(subThemes.slice(i, i + batchSize));
         }
-        // Process each batch with concurrency limit and context-aware settings
-        const deduplicationResults = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, (batch) => this.deduplicateBatch(batch), {
-            dynamicConcurrency: true,
-            context: 'theme_processing',
-            enableJitter: true,
-            enableLogging: this.config.enableProgressLogging,
-            onProgress: (completed, total) => {
-                if (this.config.enableProgressLogging && total > 1) {
-                    console.log(`[THEME-EXPANSION] Deduplication progress: ${completed}/${total} batches (batch size: ${batchSize})`);
-                }
-            },
-        });
-        // Extract successful results
+        // Process each batch sequentially
+        // ClaudeClient handles rate limiting and queuing
         const successfulResults = [];
-        for (const result of deduplicationResults) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                console.warn(`[THEME-EXPANSION] Deduplication batch failed: ${result.error?.message || 'Unknown error'}`);
-                // For failed batches, we could return the original batch as fallback
-                // but for now, we'll skip failed batches
-            }
-            else {
+        for (let i = 0; i < batches.length; i++) {
+            const batch = batches[i];
+            try {
+                const result = await this.deduplicateBatch(batch);
                 successfulResults.push(result);
+                if (this.config.enableProgressLogging && batches.length > 1) {
+                    logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`);
+                }
+            }
+            catch (error) {
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
         }
         // Flatten and combine results
@@ -33666,14 +33476,13 @@ class ThemeExpansionService {
             const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
             // Post-deduplication state logging (after second pass)
-            console.log(`[DEDUP-AFTER] Final themes after second pass deduplication:`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after second pass deduplication:`);
             secondPassResult.forEach((t) => {
-                const lines = t.codeSnippets.join('\n').split('\n').length;
                 if (t.sourceThemes && t.sourceThemes.length > 1) {
-                    console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
                 }
                 else {
-                    console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${lines} lines)`);
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
                 }
             });
             return secondPassResult;
@@ -33685,19 +33494,18 @@ class ThemeExpansionService {
             logger_1.logger.info('EXPANSION', `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`);
         }
         // Post-deduplication state logging (no second pass)
-        console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
+        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after first pass deduplication:`);
         finalThemes.forEach((t) => {
-            const lines = t.codeSnippets.join('\n').split('\n').length;
             if (t.sourceThemes && t.sourceThemes.length > 1) {
-                console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files, ${lines} lines)`);
+                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
             }
             else {
-                console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${lines} lines)`);
+                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
             }
         });
         // DEBUG: Log deduplication output
-        console.log(`[DEDUP-OUT] Returning ${finalThemes.length} sub-themes:`);
-        finalThemes.forEach((theme, i) => console.log(`  [DEDUP-OUT-${i}] "${theme.name}" (ID: ${theme.id})`));
+        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${finalThemes.length} sub-themes:`);
+        finalThemes.forEach((theme, i) => logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  [${i}] "${theme.name}" (ID: ${theme.id})`));
         return finalThemes;
     }
     /**
@@ -33739,7 +33547,7 @@ CRITICAL: Respond with ONLY valid JSON.
 
 If no duplicates found, return: {"duplicateGroups": []}`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['duplicateGroups']);
             if (!extractionResult.success) {
                 // No duplicates found or parsing failed
@@ -33826,7 +33634,7 @@ CRITICAL: Respond with ONLY valid JSON.
   ]
 }`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['groups']);
             if (!extractionResult.success) {
                 logger_1.logger.info('EXPANSION', `Failed to parse deduplication response: ${extractionResult.error}`);
@@ -33862,18 +33670,14 @@ CRITICAL: Respond with ONLY valid JSON.
             // Log batch deduplication results
             const mergedCount = groups.filter((g) => g.length > 1).length;
             const keptSeparate = groups.filter((g) => g.length === 1).length;
-            if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
-                console.log(`[BATCH-DEDUP] Processed ${themes.length} themes into ${groups.length} groups`);
-                console.log(`[BATCH-DEDUP] ${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
-                groups.forEach((group, idx) => {
-                    if (group.length > 1) {
-                        console.log(`[BATCH-DEDUP] Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`);
-                    }
-                });
-            }
-            else {
-                logger_1.logger.info('EXPANSION', `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`);
-            }
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Processed ${themes.length} themes into ${groups.length} groups`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
+            groups.forEach((group, idx) => {
+                if (group.length > 1) {
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`);
+                }
+            });
+            logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`);
             return groups;
         }
         catch (error) {
@@ -33912,7 +33716,7 @@ CRITICAL: Respond with ONLY valid JSON.
   "reasoning": "why this unified version is better"
 }`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
             const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['name', 'description']);
             if (!extractionResult.success) {
                 // Use the first theme as fallback
@@ -34010,138 +33814,46 @@ CRITICAL: Respond with ONLY valid JSON.
     async analyzeThemeForSubThemes(request) {
         const { theme, parentTheme, depth } = request;
         const expansionCandidate = request.context;
-        // We already have the expansion decision from evaluateExpansionCandidate
-        if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
-            // Debug: Log what AI provided
-            console.log(`[DEBUG-SUBTHEMES] AI suggested ${expansionCandidate.expansionDecision.suggestedSubThemes.length} sub-themes:`);
-            expansionCandidate.expansionDecision.suggestedSubThemes.forEach((st, i) => {
-                console.log(`  ${i + 1}. "${st.name}" - files: ${st.files ? JSON.stringify(st.files) : 'UNDEFINED'}`);
-            });
-            // Convert suggested sub-themes to ConsolidatedThemes
-            const suggestedSubThemes = expansionCandidate.expansionDecision.suggestedSubThemes;
-            // DEBUG: Log AI-generated sub-themes before conversion
-            console.log(`[AI-SUBTHEMES] Parent: "${theme.name}" (ID: ${theme.id}) AI generated ${suggestedSubThemes.length} sub-themes:`);
-            suggestedSubThemes.forEach((suggested, i) => {
-                console.log(`  [AI-SUBTHEME-${i}] "${suggested.name}"`);
-            });
-            const subThemes = this.convertSuggestedToConsolidatedThemes(suggestedSubThemes, theme);
-            // DEBUG: Log converted sub-themes
-            console.log(`[AI-CONVERTED] Converted to ${subThemes.length} ConsolidatedThemes:`);
-            subThemes.forEach((converted, i) => {
-                console.log(`  [AI-CONVERTED-${i}] "${converted.name}" (ID: ${converted.id})`);
-            });
+        // Check if we have expansion decision with DirectChildAssignment (new system)
+        if (expansionCandidate?.expansionDecision?.children) {
+            // NEW: Use DirectChildAssignment system
+            const childAssignments = expansionCandidate.expansionDecision.children;
+            const subThemes = this.convertDirectAssignmentToConsolidatedThemes(childAssignments, theme);
+            logger_1.logger.info('EXPANSION', `Using DirectChildAssignment system: ${subThemes.length} sub-themes with proper code assignment`);
             return {
                 subThemes,
                 shouldExpand: true,
-                confidence: 0.8,
-                reasoning: expansionCandidate.expansionDecision.reasoning,
+                confidence: expansionCandidate.expansionDecision.confidence,
+                reasoning: expansionCandidate.expansionDecision.atomicReason || 'AI-driven expansion with direct code assignment',
                 businessLogicPatterns: [],
                 userFlowPatterns: [],
             };
         }
-        // Fallback: Ask for sub-theme analysis if not already provided
-        const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
-        const prompt = `
-You already decided this theme should be expanded. Now create the specific sub-themes.
-
-THEME TO EXPAND:
-Name: ${theme.name}
-Description: ${theme.description}
-Business Impact: ${theme.businessImpact}
-Current Level: ${theme.level}
-Depth: ${depth}
-Files: ${theme.affectedFiles.join(', ')}
-
-${parentTheme
-            ? `PARENT CONTEXT: ${parentTheme.name} - ${parentTheme.businessImpact}`
-            : ''}
-
-${siblingThemes.length > 0
-            ? `SIBLING THEMES (avoid duplication):
-${siblingThemes.map((s) => `- ${s.name}`).join('\n')}
-`
-            : ''}
-
-CODE TO ANALYZE:
-${theme.codeSnippets.join('\n---\n')}
-
-CREATE SUB-THEMES:
-${depth < 3
-            ? `Focus on distinct business capabilities or user features within this theme.`
-            : `Focus on atomic, testable units (5-15 lines, single responsibility).`}
-
-Return JSON with specific sub-themes:
-{
-  "subThemes": [
-    {
-      "name": "What this accomplishes (max 8 words)",
-      "description": "What changes (max 15 words)",
-      "businessImpact": "User benefit (max 12 words)",
-      "relevantFiles": ["specific files for this sub-theme"],
-      "rationale": "Why this is separate (max 15 words)"
-    }
-  ],
-  "reasoning": "Overall expansion rationale (max 20 words)"
-}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['subThemes']);
-            if (!extractionResult.success) {
-                logger_1.logger.info('EXPANSION', `Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`);
-                return {
-                    subThemes: [],
-                    shouldExpand: false,
-                    confidence: 0.3,
-                    reasoning: `Sub-theme parsing failed: ${extractionResult.error}`,
-                    businessLogicPatterns: [],
-                    userFlowPatterns: [],
-                };
-            }
-            const analysis = extractionResult.data;
-            // Convert to ConsolidatedTheme objects
-            const subThemes = this.convertSuggestedToConsolidatedThemes(analysis.subThemes || [], theme);
-            return {
-                subThemes,
-                shouldExpand: subThemes.length > 0,
-                confidence: 0.8,
-                reasoning: analysis.reasoning || 'Sub-themes identified',
-                businessLogicPatterns: [],
-                userFlowPatterns: [],
-            };
-        }
-        catch (error) {
-            // Log detailed context on error
-            console.error(`[EXPANSION-ERROR] AI analysis failed for theme "${theme.name}"`);
-            console.error(`[EXPANSION-ERROR] Theme ID: ${theme.id}`);
-            console.error(`[EXPANSION-ERROR] Parent theme: ${parentTheme?.name || 'none'} (ID: ${parentTheme?.id || 'N/A'})`);
-            console.error(`[EXPANSION-ERROR] Current depth: ${depth}`);
-            console.error(`[EXPANSION-ERROR] Theme level: ${theme.level}`);
-            console.error(`[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`);
-            console.error(`[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`);
-            console.error(`[EXPANSION-ERROR] Total code lines: ${theme.codeSnippets.reduce((count, snippet) => count + snippet.split('\n').length, 0)}`);
-            console.error(`[EXPANSION-ERROR] Error: ${error}`);
-            console.error(`[EXPANSION-ERROR] Stack trace:`, error instanceof Error ? error.stack : 'No stack trace available');
-            logger_1.logger.info('EXPANSION', `AI analysis failed for theme ${theme.name}: ${error}`);
-            return {
-                subThemes: [],
-                shouldExpand: false,
-                confidence: 0,
-                reasoning: `Analysis failed: ${error}`,
-                businessLogicPatterns: [],
-                userFlowPatterns: [],
-            };
-        }
+        // Note: Legacy file-based system (suggestedSubThemes) removed
+        // All expansion now uses DirectChildAssignment system
+        // No sub-themes provided by multi-stage system - should not expand
+        logger_1.logger.info('EXPANSION', `No sub-themes provided for ${theme.name} - marking as atomic`);
+        return {
+            subThemes: [],
+            shouldExpand: false,
+            confidence: 0.9,
+            reasoning: 'Multi-stage analysis did not provide sub-themes',
+            businessLogicPatterns: [],
+            userFlowPatterns: [],
+        };
     }
     /**
      * Convert suggested sub-themes to ConsolidatedTheme objects
      */
     convertSuggestedToConsolidatedThemes(suggestedThemes, parentTheme) {
+        // This method is kept for backward compatibility with old system
+        // NEW: Also handle DirectChildAssignment from AI
         return suggestedThemes.map((suggested, index) => {
             const relevantFiles = suggested.files || suggested.relevantFiles || [];
             // Validate that AI provided files
             if (relevantFiles.length === 0) {
-                console.error(`[ERROR] AI did not provide files for sub-theme "${suggested.name}"`);
-                console.error(`[ERROR] Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `AI did not provide files for sub-theme "${suggested.name}"`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`);
                 throw new Error(`AI failed to provide files for sub-theme "${suggested.name}". ` +
                     `Parent theme has ${parentTheme.affectedFiles.length} files. ` +
                     `AI must specify which files each sub-theme affects.`);
@@ -34149,15 +33861,12 @@ Return JSON with specific sub-themes:
             const validFiles = relevantFiles.filter((file) => parentTheme.affectedFiles.includes(file));
             // Validate that provided files are valid
             if (validFiles.length === 0) {
-                console.error(`[ERROR] AI provided invalid files for sub-theme "${suggested.name}"`);
-                console.error(`[ERROR] AI suggested: ${JSON.stringify(relevantFiles)}`);
-                console.error(`[ERROR] Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `AI provided invalid files for sub-theme "${suggested.name}"`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `AI suggested: ${JSON.stringify(relevantFiles)}`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
                 throw new Error(`AI provided invalid files for sub-theme "${suggested.name}". ` +
                     `Suggested files ${JSON.stringify(relevantFiles)} are not in parent's files: ${JSON.stringify(parentTheme.affectedFiles)}`);
             }
-            console.log(`[FILE-ASSIGNMENT] Sub-theme "${suggested.name}":`);
-            console.log(`  - AI suggested files: ${JSON.stringify(relevantFiles)}`);
-            console.log(`  - Valid files assigned: ${JSON.stringify(validFiles)}`);
             return {
                 id: secure_file_namer_1.SecureFileNamer.generateHierarchicalId('sub', parentTheme.id, index),
                 name: suggested.name,
@@ -34177,6 +33886,21 @@ Return JSON with specific sub-themes:
                 consolidationMethod: 'expansion',
                 isAtomic: parentTheme.level >= 3, // Deeper levels likely atomic
             };
+        });
+    }
+    /**
+     * NEW: Convert DirectChildAssignment to ConsolidatedThemes
+     * This is the new system that uses proper AI code assignment
+     */
+    convertDirectAssignmentToConsolidatedThemes(assignments, // DirectChildAssignment[] - avoiding import for now
+    parentTheme) {
+        return assignments.map((assignment) => {
+            // Validate assignment using converter
+            if (!this.converter.validateDirectAssignment(assignment)) {
+                throw new Error(`Invalid DirectChildAssignment for "${assignment.name}"`);
+            }
+            // Convert using the new converter
+            return this.converter.convertDirectAssignmentToTheme(assignment, parentTheme);
         });
     }
     /**
@@ -34205,7 +33929,230 @@ exports.ThemeExpansionService = ThemeExpansionService;
 
 /***/ }),
 
-/***/ 9018:
+/***/ 3936:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ThemeMindmapConverter = void 0;
+const index_1 = __nccwpck_require__(8541);
+/**
+ * Bidirectional converter between ConsolidatedTheme and MindmapNode representations
+ * Ensures proper data flow between theme expansion and direct code assignment systems
+ */
+class ThemeMindmapConverter {
+    /**
+     * Convert ConsolidatedTheme to MindmapNode for use with AIMindmapService
+     */
+    static convertThemeToMindmapNode(theme) {
+        const codeDiff = this.convertCodeSnippetsToCodeDiff(theme.codeSnippets, theme.affectedFiles);
+        return {
+            id: theme.id,
+            name: theme.name,
+            level: theme.level,
+            description: theme.description,
+            businessContext: theme.businessImpact,
+            technicalContext: theme.detailedDescription || theme.description,
+            codeDiff,
+            affectedFiles: theme.affectedFiles,
+            metrics: {
+                complexity: (theme.codeMetrics?.filesChanged || 0) > 2 ? 'high' : 'medium',
+                fileCount: theme.affectedFiles.length
+            },
+            parentId: theme.parentId,
+            children: [], // Will be populated by expansion
+            crossReferences: [],
+            isPrimary: true,
+            expansionConfidence: theme.confidence
+        };
+    }
+    /**
+     * Convert MindmapNode back to ConsolidatedTheme
+     */
+    static convertMindmapNodeToTheme(node) {
+        const codeSnippets = this.convertCodeDiffToSnippets(node.codeDiff);
+        return {
+            id: node.id,
+            name: node.name,
+            description: node.description,
+            level: node.level,
+            parentId: node.parentId,
+            childThemes: [], // Will be populated separately
+            affectedFiles: node.affectedFiles,
+            confidence: node.expansionConfidence,
+            businessImpact: node.businessContext,
+            codeSnippets,
+            context: node.technicalContext,
+            lastAnalysis: new Date(),
+            sourceThemes: [node.id],
+            consolidationMethod: 'expansion',
+            detailedDescription: node.description,
+            technicalSummary: node.technicalContext,
+            codeMetrics: {
+                filesChanged: node.metrics.fileCount
+            }
+        };
+    }
+    /**
+     * Convert DirectChildAssignment to ConsolidatedTheme
+     */
+    static convertDirectAssignmentToTheme(assignment, parentTheme) {
+        const codeSnippets = this.convertCodeDiffToSnippets(assignment.assignedCode);
+        const affectedFiles = assignment.assignedCode.map(diff => diff.file);
+        return {
+            id: `${parentTheme.id}_child_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+            name: assignment.name,
+            description: assignment.description,
+            level: parentTheme.level + 1,
+            parentId: parentTheme.id,
+            childThemes: [],
+            affectedFiles,
+            confidence: 0.8, // Will be determined by AI analysis
+            businessImpact: assignment.businessValue,
+            codeSnippets,
+            context: assignment.contextualMeaning || assignment.description,
+            lastAnalysis: new Date(),
+            sourceThemes: [parentTheme.id],
+            consolidationMethod: 'expansion',
+            detailedDescription: assignment.description,
+            technicalSummary: assignment.technicalPurpose,
+            codeMetrics: {
+                filesChanged: affectedFiles.length
+            }
+        };
+    }
+    /**
+     * Convert code snippets (string[]) to structured CodeDiff[]
+     * This is a best-effort conversion since snippets may lack line numbers
+     */
+    static convertCodeSnippetsToCodeDiff(snippets, files) {
+        const codeDiffs = [];
+        for (const file of files) {
+            // Find snippets that mention this file
+            const relevantSnippets = snippets.filter(snippet => snippet.includes(file) || snippet.includes(file.split('/').pop() || ''));
+            if (relevantSnippets.length === 0)
+                continue;
+            // Create a single hunk for all changes in this file
+            const changes = [];
+            let lineNumber = 1;
+            for (const snippet of relevantSnippets) {
+                // Parse snippet for added/removed lines (simple heuristic)
+                const lines = snippet.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('+')) {
+                        changes.push({
+                            type: 'add',
+                            lineNumber: lineNumber++,
+                            content: line.substring(1).trim()
+                        });
+                    }
+                    else if (line.startsWith('-')) {
+                        changes.push({
+                            type: 'delete',
+                            lineNumber: lineNumber++,
+                            content: line.substring(1).trim()
+                        });
+                    }
+                    else if (line.trim() && !line.startsWith('@@') && !line.startsWith('diff')) {
+                        changes.push({
+                            type: 'context',
+                            lineNumber: lineNumber++,
+                            content: line.trim()
+                        });
+                    }
+                }
+            }
+            if (changes.length > 0) {
+                const hunk = {
+                    oldStart: 1,
+                    oldLines: changes.filter(c => c.type === 'delete' || c.type === 'context').length,
+                    newStart: 1,
+                    newLines: changes.filter(c => c.type === 'add' || c.type === 'context').length,
+                    changes
+                };
+                const fileContext = {
+                    startLine: 1,
+                    endLine: changes.length,
+                    contextType: this.inferContextType(file)
+                };
+                codeDiffs.push({
+                    file,
+                    hunks: [hunk],
+                    fileContext,
+                    ownership: 'primary',
+                    contextualMeaning: `Changes in ${file}`
+                });
+            }
+        }
+        return codeDiffs;
+    }
+    /**
+     * Convert structured CodeDiff[] back to simple code snippets
+     */
+    static convertCodeDiffToSnippets(codeDiffs) {
+        const snippets = [];
+        for (const diff of codeDiffs) {
+            let fileSnippet = `--- ${diff.file}\n`;
+            for (const hunk of diff.hunks) {
+                fileSnippet += `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@\n`;
+                for (const change of hunk.changes) {
+                    const prefix = change.type === 'add' ? '+' : change.type === 'delete' ? '-' : ' ';
+                    fileSnippet += `${prefix}${change.content}\n`;
+                }
+            }
+            snippets.push(fileSnippet);
+        }
+        return snippets;
+    }
+    /**
+     * Infer context type from file path
+     */
+    static inferContextType(filePath) {
+        if (filePath.includes('test') || filePath.includes('spec')) {
+            return 'test';
+        }
+        else if (filePath.includes('config') || filePath.endsWith('.json') || filePath.endsWith('.yml')) {
+            return 'config';
+        }
+        else if (filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+            return 'function'; // Default for code files
+        }
+        else {
+            return 'module';
+        }
+    }
+    /**
+     * Validate that DirectChildAssignment has proper code assignments
+     */
+    static validateDirectAssignment(assignment) {
+        if (!assignment.assignedCode || assignment.assignedCode.length === 0) {
+            (0, index_1.logError)(`DirectChildAssignment "${assignment.name}" has no assigned code`);
+            return false;
+        }
+        // Check that all assigned code has proper structure
+        for (const codeDiff of assignment.assignedCode) {
+            if (!codeDiff.file || !codeDiff.hunks || codeDiff.hunks.length === 0) {
+                (0, index_1.logError)(`DirectChildAssignment "${assignment.name}" has invalid CodeDiff structure`);
+                return false;
+            }
+            for (const hunk of codeDiff.hunks) {
+                if (!hunk.changes || hunk.changes.length === 0) {
+                    (0, index_1.logError)(`DirectChildAssignment "${assignment.name}" has empty hunk`);
+                    return false;
+                }
+            }
+        }
+        (0, index_1.logInfo)(`DirectChildAssignment "${assignment.name}" validation passed`);
+        return true;
+    }
+}
+exports.ThemeMindmapConverter = ThemeMindmapConverter;
+
+
+/***/ }),
+
+/***/ 3111:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -34245,9 +34192,9 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeNamingService = void 0;
-const json_extractor_1 = __nccwpck_require__(2642);
+const json_extractor_1 = __nccwpck_require__(8168);
 const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
+const secure_file_namer_1 = __nccwpck_require__(5584);
 class ThemeNamingService {
     async generateMergedThemeNameAndDescription(themes) {
         const prompt = this.buildMergedThemeNamingPrompt(themes);
@@ -34267,13 +34214,11 @@ class ThemeNamingService {
                     },
                 });
                 const result = this.parseMergedThemeNamingResponse(output);
-                console.log(`[AI-NAMING] Generated merged theme: "${result.name}"`);
                 // Validate the generated name
                 if (this.isValidThemeName(result.name)) {
                     return result;
                 }
                 else {
-                    console.warn(`[AI-NAMING] Generated name invalid, using fallback: "${result.name}"`);
                     return {
                         name: 'Merged Changes',
                         description: 'Consolidated related changes',
@@ -34285,7 +34230,6 @@ class ThemeNamingService {
             }
         }
         catch (error) {
-            console.warn('AI theme naming failed:', error);
             return {
                 name: 'Merged Changes',
                 description: 'Consolidated related changes',
@@ -34423,10 +34367,6 @@ Respond in this exact JSON format (no other text):
                 description: parsed.description || 'Consolidated related changes',
             };
         }
-        console.warn('[THEME-NAMING] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[THEME-NAMING] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
-        }
         return {
             name: 'Merged Changes',
             description: 'Consolidated related changes',
@@ -34452,7 +34392,7 @@ exports.ThemeNamingService = ThemeNamingService;
 
 /***/ }),
 
-/***/ 1599:
+/***/ 884:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -34493,19 +34433,17 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeService = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const theme_similarity_1 = __nccwpck_require__(4189);
-const theme_expansion_1 = __nccwpck_require__(7333);
-const hierarchical_similarity_1 = __nccwpck_require__(2983);
-const ai_code_analyzer_1 = __nccwpck_require__(9840);
-const json_extractor_1 = __nccwpck_require__(2642);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const performance_tracker_1 = __nccwpck_require__(9766);
-// Concurrency configuration
-const PARALLEL_CONFIG = {
-    CONCURRENCY_LIMIT: 5,
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const theme_similarity_1 = __nccwpck_require__(3500);
+const theme_expansion_1 = __nccwpck_require__(8430);
+const hierarchical_similarity_1 = __nccwpck_require__(4200);
+const ai_code_analyzer_1 = __nccwpck_require__(3562);
+const json_extractor_1 = __nccwpck_require__(8168);
+const performance_tracker_1 = __nccwpck_require__(9600);
+const business_prompt_templates_1 = __nccwpck_require__(2813);
+// Processing configuration
+const PROCESSING_CONFIG = {
     CHUNK_TIMEOUT: 120000, // 2 minutes
-    MAX_RETRIES: 3,
 };
 class ClaudeService {
     constructor(_apiKey) {
@@ -34537,7 +34475,6 @@ class ClaudeService {
         }
         catch (err) {
             const error = err instanceof Error ? err.message : String(err);
-            console.warn('Claude analysis failed, using fallback:', error);
             return this.createFallbackAnalysis(chunk);
         }
     }
@@ -34550,7 +34487,6 @@ class ClaudeService {
             enhancedContext += `\n\nPre-analyzed code structure:`;
             enhancedContext += `\nFile type: ${codeChange.fileType}`;
             enhancedContext += `\nComplexity: ${codeChange.codeComplexity}`;
-            enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
             if (codeChange.functionsChanged.length > 0) {
                 enhancedContext += `\nFunctions changed: ${codeChange.functionsChanged.join(', ')}`;
             }
@@ -34567,44 +34503,33 @@ class ClaudeService {
                 enhancedContext += `\nThis is a CONFIG file`;
             }
         }
-        return `${enhancedContext}
-
-Analyze this code change. Be specific but concise.
-
-File: ${chunk.filename}
-Code changes:
-${truncatedContent}
-
-Focus on WHAT changed with exact details:
-- Exact values changed (before → after)
-- Business purpose of the changes
-- User impact
-
-Examples:
-✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
-✅ "Added detailedDescription field to ConsolidatedTheme interface"
-❌ "Enhanced workflow configuration for improved flexibility"
-❌ "Expanded theme structure with comprehensive analysis capabilities"
-
-CRITICAL: Respond with ONLY valid JSON:
-
-{
-  "themeName": "what this accomplishes (max 10 words)",
-  "description": "one specific sentence with exact names/values (max 20 words)",
-  "detailedDescription": "additional context if needed (max 15 words, or null)",
-  "businessImpact": "user benefit in one sentence (max 15 words)",
-  "technicalSummary": "exact technical change (max 12 words)",
-  "keyChanges": ["max 3 changes, each max 10 words"],
-  "userScenario": null,
-  "suggestedParent": null,
-  "confidence": 0.8,
-  "codePattern": "change type (max 3 words)"
-}`;
+        // Use business-first prompt template for theme analysis
+        return business_prompt_templates_1.BusinessPromptTemplates.createBusinessImpactPrompt(chunk.filename, truncatedContent, enhancedContext);
     }
     parseClaudeResponse(output, chunk, codeChange) {
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
-        if (extractionResult.success) {
-            const data = extractionResult.data;
+        // Try new business capability format first
+        const businessCapabilityResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['businessCapability', 'userValue', 'businessProcess', 'confidence']);
+        if (businessCapabilityResult.success) {
+            const data = businessCapabilityResult.data;
+            return {
+                themeName: data.businessCapability || 'Unknown Business Capability',
+                description: data.userValue || 'No user value identified',
+                businessImpact: data.businessProcess || 'Unknown business process',
+                confidence: data.confidence || 0.5,
+                codePattern: data.businessDomain || 'General Enhancement',
+                suggestedParent: undefined,
+                detailedDescription: data.executiveSummary,
+                technicalSummary: data.technicalImplementation,
+                keyChanges: data.userScenarios,
+                userScenario: data.userScenarios?.[0],
+                mainFunctionsChanged: codeChange?.functionsChanged || [],
+                mainClassesChanged: codeChange?.classesChanged || [],
+            };
+        }
+        // Fallback to legacy format for backward compatibility
+        const legacyResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
+        if (legacyResult.success) {
+            const data = legacyResult.data;
             return {
                 themeName: data.themeName || 'Unknown Theme',
                 description: data.description || 'No description provided',
@@ -34620,21 +34545,44 @@ CRITICAL: Respond with ONLY valid JSON:
                 mainClassesChanged: codeChange?.classesChanged || data.mainClassesChanged || [],
             };
         }
-        console.warn('[THEME-SERVICE] JSON extraction failed:', extractionResult.error);
-        if (extractionResult.originalResponse) {
-            console.debug('[THEME-SERVICE] Original response:', extractionResult.originalResponse?.substring(0, 200) + '...');
-        }
         // Use the better fallback that includes filename
         return this.createFallbackAnalysis(chunk);
     }
     createFallbackAnalysis(chunk) {
+        // Try to infer business capability from filename
+        const fileName = chunk.filename.toLowerCase();
+        let businessCapability = 'User Experience Enhancement';
+        let userValue = 'Users benefit from improved system functionality';
+        let businessProcess = 'General system improvement and optimization';
+        if (fileName.includes('auth') || fileName.includes('login')) {
+            businessCapability = 'User Account Management';
+            userValue = 'Users access their accounts securely and efficiently';
+            businessProcess = 'Secure user authentication and access control';
+        }
+        else if (fileName.includes('test') || fileName.includes('spec')) {
+            businessCapability = 'Development Workflow Optimization';
+            userValue = 'Developers catch issues before users experience them';
+            businessProcess = 'Quality assurance and automated testing';
+        }
+        else if (fileName.includes('config') || fileName.includes('setting')) {
+            businessCapability = 'Development Workflow Optimization';
+            userValue = 'Developers deploy and maintain systems reliably';
+            businessProcess = 'System configuration and deployment management';
+        }
+        else if (fileName.includes('ui') || fileName.includes('component')) {
+            businessCapability = 'User Experience Enhancement';
+            userValue = 'Users accomplish tasks intuitively and efficiently';
+            businessProcess = 'Intuitive user interface and interaction design';
+        }
         return {
-            themeName: `Changes in ${chunk.filename}`,
-            description: 'Analysis unavailable - using fallback',
-            businessImpact: 'Unknown impact',
-            confidence: 0.3,
-            codePattern: 'File modification',
+            themeName: businessCapability,
+            description: userValue,
+            businessImpact: businessProcess,
+            confidence: 0.4,
+            codePattern: 'User Experience Enhancement',
             suggestedParent: undefined,
+            detailedDescription: `Business analysis unavailable - inferred from file: ${chunk.filename}`,
+            technicalSummary: `Modifications in ${chunk.filename}`,
         };
     }
 }
@@ -34681,7 +34629,6 @@ class ThemeContextManager {
     processBatchResults(results, codeChangeMap) {
         for (const result of results) {
             if (result.error) {
-                console.warn(`Chunk analysis failed for ${result.chunk.filename}: ${result.error}`);
             }
             const placement = this.determineThemePlacement(result.analysis);
             const codeChange = codeChangeMap.get(result.chunk.filename);
@@ -34742,14 +34689,10 @@ class ThemeContextManager {
                     existingTheme.codeChanges.push(codeChange);
                     // Update metrics
                     if (existingTheme.codeMetrics && codeChange) {
-                        existingTheme.codeMetrics.linesAdded += codeChange.linesAdded;
-                        existingTheme.codeMetrics.linesRemoved += codeChange.linesRemoved;
                         existingTheme.codeMetrics.filesChanged += 1;
                     }
                     else if (codeChange) {
                         existingTheme.codeMetrics = {
-                            linesAdded: codeChange.linesAdded,
-                            linesRemoved: codeChange.linesRemoved,
                             filesChanged: 1,
                         };
                     }
@@ -34804,8 +34747,6 @@ class ThemeContextManager {
                 mainClassesChanged: analysis.mainClassesChanged,
                 codeMetrics: codeChange
                     ? {
-                        linesAdded: codeChange.linesAdded,
-                        linesRemoved: codeChange.linesRemoved,
                         filesChanged: 1,
                     }
                     : undefined,
@@ -34840,21 +34781,16 @@ class ThemeService {
     }
     async analyzeThemesWithEnhancedContext(gitService) {
         performance_tracker_1.performanceTracker.startTiming('Code Analysis');
-        console.log('[THEME-SERVICE] Starting enhanced theme analysis');
         const startTime = Date.now();
         // Get enhanced code changes instead of basic changed files
         const codeChanges = await gitService.getEnhancedChangedFiles();
-        console.log(`[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`);
         // Analyze the code changes to build smart context with AI
         const aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(this.anthropicApiKey);
         const smartContext = await aiAnalyzer.analyzeCodeChanges(codeChanges);
-        console.log(`[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`);
         // Convert to the legacy format for ChunkProcessor compatibility
         const changedFiles = codeChanges.map((change) => ({
             filename: change.file,
             status: change.changeType,
-            additions: change.linesAdded,
-            deletions: change.linesRemoved,
             patch: change.diffHunk,
         }));
         const analysisResult = {
@@ -34891,54 +34827,44 @@ class ThemeService {
             const chunkProcessor = new ChunkProcessor();
             contextManager.setProcessingState('processing');
             const chunks = chunkProcessor.splitChangedFiles(changedFiles);
-            // Parallel processing: analyze all chunks concurrently, then update context sequentially
-            console.log(`[THEME-SERVICE] Starting concurrent analysis of ${chunks.length} chunks`);
-            const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(chunks, (chunk) => {
-                const codeChange = codeChangeMap.get(chunk.filename);
-                return contextManager.analyzeChunkOnly(chunk, codeChange);
-            }, {
-                concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
-                maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-                enableLogging: false,
-                onProgress: (completed, total) => {
-                    console.log(`[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`);
-                },
-                onError: (error, chunk, retryCount) => {
-                    console.warn(`[THEME-SERVICE] Retry ${retryCount} for chunk ${chunk.filename}: ${error.message}`);
-                },
-            });
-            // Transform results to handle ConcurrencyManager's mixed return types
+            // Process chunks in parallel batches
+            // ClaudeClient handles rate limiting and queuing
             const analysisResults = [];
-            for (let i = 0; i < results.length; i++) {
-                const result = results[i];
-                if (result && typeof result === 'object' && 'error' in result) {
-                    // Convert ConcurrencyManager error format to ChunkAnalysisResult format
-                    const errorResult = result;
-                    console.warn(`[THEME-SERVICE] Chunk analysis failed for ${errorResult.item.filename}: ${errorResult.error.message}`);
-                    analysisResults.push({
-                        chunk: errorResult.item,
-                        analysis: {
-                            themeName: `Changes in ${errorResult.item.filename}`,
-                            description: 'Analysis failed - using fallback',
-                            businessImpact: 'Unknown impact',
-                            confidence: 0.3,
-                            codePattern: 'File modification',
-                            suggestedParent: undefined,
-                        },
-                        error: errorResult.error.message,
-                    });
-                }
-                else {
-                    analysisResults.push(result);
-                }
+            const batchSize = 10; // Match ClaudeClient MAX_CONCURRENT_REQUESTS
+            for (let i = 0; i < chunks.length; i += batchSize) {
+                const batch = chunks.slice(i, Math.min(i + batchSize, chunks.length));
+                // Process batch in parallel
+                const batchPromises = batch.map(async (chunk) => {
+                    try {
+                        const codeChange = codeChangeMap.get(chunk.filename);
+                        const result = await contextManager.analyzeChunkOnly(chunk, codeChange);
+                        return result;
+                    }
+                    catch (error) {
+                        const errorObj = error instanceof Error ? error : new Error(String(error));
+                        return {
+                            chunk,
+                            analysis: {
+                                themeName: `Changes in ${chunk.filename}`,
+                                description: 'Analysis failed - using fallback',
+                                businessImpact: 'Unknown impact',
+                                confidence: 0.3,
+                                codePattern: 'File modification',
+                                suggestedParent: undefined,
+                            },
+                            error: errorObj.message,
+                        };
+                    }
+                });
+                // Wait for all chunks in batch to complete
+                const batchResults = await Promise.all(batchPromises);
+                analysisResults.push(...batchResults);
             }
-            console.log(`[THEME-SERVICE] Analysis completed: ${analysisResults.length} chunks processed`);
             // Sequential context updates to maintain thread safety
             contextManager.processBatchResults(analysisResults, codeChangeMap);
             contextManager.setProcessingState('complete');
             const originalThemes = contextManager.getRootThemes();
             // Pipeline optimization: Overlap consolidation and expansion preparation
-            console.log('[THEME-SERVICE] Starting pipeline optimization with overlapped phases');
             performance_tracker_1.performanceTracker.endTiming('Code Analysis');
             performance_tracker_1.performanceTracker.startTiming('Theme Consolidation');
             const consolidationStartTime = Date.now();
@@ -34954,26 +34880,21 @@ class ThemeService {
             // Track consolidation effectiveness
             performance_tracker_1.performanceTracker.trackEffectiveness('Theme Consolidation', originalThemes.length, consolidatedThemes.length, consolidationTime);
             performance_tracker_1.performanceTracker.endTiming('Theme Consolidation');
-            console.log(`[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`);
             // Apply hierarchical expansion if enabled
             let expansionTime = 0;
             let expansionStats = undefined;
             if (this.expansionEnabled && consolidatedThemes.length > 0) {
                 performance_tracker_1.performanceTracker.startTiming('Theme Expansion');
-                console.log('[THEME-SERVICE] Starting AI-driven hierarchical expansion');
                 const expansionStartTime = Date.now();
                 try {
                     // Expand themes hierarchically using pre-identified candidates for optimization
-                    console.log(`[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`);
                     const beforeExpansionCount = consolidatedThemes.length;
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
-                    console.log(`[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`);
                     // Apply cross-level deduplication
                     const minThemesForCrossLevel = parseInt(process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20');
                     if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
                         expandedThemes.length >= minThemesForCrossLevel) {
                         performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
-                        console.log('[THEME-SERVICE] Running cross-level deduplication...');
                         const beforeDedup = expandedThemes.length;
                         const dedupStartTime = Date.now();
                         await this.hierarchicalSimilarityService.deduplicateHierarchy(expandedThemes);
@@ -34981,23 +34902,15 @@ class ThemeService {
                         performance_tracker_1.performanceTracker.trackEffectiveness('Cross-Level Deduplication', beforeDedup, expandedThemes.length, Date.now() - dedupStartTime);
                         performance_tracker_1.performanceTracker.endTiming('Cross-Level Deduplication');
                     }
-                    else if (process.env.SKIP_CROSS_LEVEL_DEDUP === 'true') {
-                        console.log('[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)');
-                    }
-                    else {
-                        console.log(`[THEME-SERVICE] Skipping cross-level deduplication: ${expandedThemes.length} themes < minimum ${minThemesForCrossLevel}`);
-                    }
                     // Track expansion effectiveness
                     performance_tracker_1.performanceTracker.trackEffectiveness('Theme Expansion', beforeExpansionCount, expandedThemes.length, Date.now() - expansionStartTime);
                     // Update consolidated themes with expanded and deduplicated results
                     consolidatedThemes = expandedThemes; // For now, use expanded themes directly
-                    console.log(`[DEBUG-THEME-SERVICE] Final themes after processing: ${consolidatedThemes.length}`);
                     // Calculate expansion statistics
                     expansionStats = this.calculateExpansionStats(consolidatedThemes);
-                    console.log(`[THEME-SERVICE] Expansion complete: ${expansionStats.expandedThemes} themes expanded, max depth: ${expansionStats.maxDepth}`);
                 }
                 catch (error) {
-                    console.warn('[THEME-SERVICE] Expansion failed, using consolidated themes:', error);
+                    // Expansion failed, continue with consolidated themes
                 }
                 expansionTime = Date.now() - expansionStartTime;
                 performance_tracker_1.performanceTracker.endTiming('Theme Expansion');
@@ -35035,7 +34948,6 @@ class ThemeService {
             }
         }
         catch (error) {
-            console.error('Theme analysis failed:', error);
             analysisResult.summary = 'Theme analysis failed - using fallback';
             const fallbackThemes = this.createFallbackThemes(changedFiles);
             analysisResult.themes = fallbackThemes.map((theme) => ({
@@ -35131,7 +35043,6 @@ class ThemeService {
      * PRD: "Progressive rendering of deep trees" and "Lazy expansion for large PRs"
      */
     async identifyExpansionCandidates(themes) {
-        console.log(`[THEME-SERVICE] Identifying expansion candidates for ${themes.length} themes`);
         const candidates = [];
         // Quick heuristic-based candidate identification (fast, runs in parallel with consolidation)
         for (const theme of themes) {
@@ -35139,7 +35050,6 @@ class ThemeService {
                 candidates.push(theme);
             }
         }
-        console.log(`[THEME-SERVICE] Identified ${candidates.length} expansion candidates`);
         return candidates;
     }
     /**
@@ -35209,21 +35119,19 @@ exports.ThemeService = ThemeService;
 
 /***/ }),
 
-/***/ 4189:
+/***/ 3500:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeSimilarityService = void 0;
-const similarity_cache_1 = __nccwpck_require__(7329);
-const similarity_calculator_1 = __nccwpck_require__(7831);
-const ai_similarity_1 = __nccwpck_require__(270);
-const batch_processor_1 = __nccwpck_require__(325);
-const business_domain_1 = __nccwpck_require__(8133);
-const theme_naming_1 = __nccwpck_require__(9018);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const logger_1 = __nccwpck_require__(7893);
+const similarity_cache_1 = __nccwpck_require__(667);
+const similarity_calculator_1 = __nccwpck_require__(241);
+const ai_similarity_1 = __nccwpck_require__(5776);
+const business_domain_1 = __nccwpck_require__(6);
+const theme_naming_1 = __nccwpck_require__(3111);
+const logger_1 = __nccwpck_require__(9000);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.pendingCalculations = new Map();
@@ -35247,23 +35155,19 @@ class ThemeSimilarityService {
         this.similarityCache = new similarity_cache_1.SimilarityCache();
         this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
         this.aiSimilarityService = new ai_similarity_1.AISimilarityService(anthropicApiKey);
-        this.batchProcessor = new batch_processor_1.BatchProcessor();
         this.businessDomainService = new business_domain_1.BusinessDomainService(anthropicApiKey);
         this.themeNamingService = new theme_naming_1.ThemeNamingService();
-        logger_1.logger.info('SIMILARITY', `Config: threshold=${this.config.similarityThreshold}, minForParent=${this.config.minThemesForParent}`);
     }
     async calculateSimilarity(theme1, theme2) {
         const cacheKey = this.similarityCache.getCacheKey(theme1, theme2);
         // Check if already calculating
         const pending = this.pendingCalculations.get(cacheKey);
         if (pending) {
-            logger_1.logger.trace('SIMILARITY', `Pending: ${theme1.name} vs ${theme2.name}`);
             return pending;
         }
         // Check cache
         const cached = this.similarityCache.getCachedSimilarity(cacheKey);
         if (cached) {
-            logger_1.logger.trace('SIMILARITY', `Cache hit: ${theme1.name} vs ${theme2.name}`);
             return cached.similarity;
         }
         // Start new calculation
@@ -35283,7 +35187,6 @@ class ThemeSimilarityService {
         const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
         // Skip only if NO file overlap AND completely different names
         if (fileOverlap === 0 && nameSimilarity < 0.1) {
-            logger_1.logger.trace('SIMILARITY', `Skip: no overlap - ${theme1.name} vs ${theme2.name}`);
             const result = {
                 combinedScore: 0,
                 nameScore: 0,
@@ -35313,7 +35216,6 @@ class ThemeSimilarityService {
         return result;
     }
     async consolidateThemes(themes) {
-        console.log(`[CONSOLIDATION] Starting with ${themes.length} themes`);
         if (themes.length === 0)
             return [];
         const startTime = Date.now();
@@ -35321,15 +35223,10 @@ class ThemeSimilarityService {
             .getClaudeClient()
             .getMetrics().totalCalls;
         // Step 1: Find merge candidates
-        logger_1.logger.info('SIMILARITY', 'Step 1: Finding merge candidates');
         const mergeGroups = await this.findMergeGroups(themes);
-        logger_1.logger.info('SIMILARITY', `Found ${mergeGroups.size} merge groups`);
         // Step 2: Create consolidated themes
-        logger_1.logger.info('SIMILARITY', 'Step 2: Creating consolidated themes');
         const consolidated = await this.createConsolidatedThemes(mergeGroups, themes);
-        logger_1.logger.info('SIMILARITY', `Created ${consolidated.length} consolidated themes`);
         // Step 3: Build hierarchies
-        logger_1.logger.info('SIMILARITY', 'Step 3: Building hierarchies');
         const hierarchical = await this.buildHierarchies(consolidated);
         // Update effectiveness metrics
         this.effectiveness.processingTime = Date.now() - startTime;
@@ -35342,9 +35239,6 @@ class ThemeSimilarityService {
                     this.effectiveness.pairsAnalyzed) *
                     100
                 : 0;
-        const reductionPercent = (((themes.length - hierarchical.length) / themes.length) *
-            100).toFixed(1);
-        logger_1.logger.info('SIMILARITY', `Final result: ${hierarchical.length} themes (${reductionPercent}% reduction, ${this.effectiveness.mergeRate.toFixed(1)}% merge rate)`);
         return hierarchical;
     }
     /**
@@ -35366,7 +35260,6 @@ class ThemeSimilarityService {
         };
     }
     async findMergeGroups(themes) {
-        logger_1.logger.debug('SIMILARITY', `Using batch processing for ${themes.length} themes`);
         // Step 1: Collect all theme pairs that need comparison
         const allPairs = [];
         for (let i = 0; i < themes.length; i++) {
@@ -35379,7 +35272,6 @@ class ThemeSimilarityService {
             }
         }
         this.effectiveness.pairsAnalyzed = allPairs.length;
-        logger_1.logger.info('SIMILARITY', `Total pairs to analyze: ${allPairs.length}`);
         // Step 2: Calculate similarities using batch processing and early termination
         const similarities = await this.calculateBatchSimilarities(allPairs);
         // Step 3: Build merge groups based on calculated similarities
@@ -35388,49 +35280,30 @@ class ThemeSimilarityService {
     async calculateBatchSimilarities(pairs) {
         const similarities = new Map();
         // Use batch AI processing for significant performance improvement
-        logger_1.logger.debug('SIMILARITY', `Processing ${pairs.length} pairs in batches`);
         // Split into batches for optimal processing
         const batchSize = this.calculateOptimalBatchSize(pairs.length);
         const batches = this.createPairBatches(pairs, batchSize);
-        logger_1.logger.debug('SIMILARITY', `${batches.length} batches of ~${batchSize} pairs each`);
-        // Process batches concurrently
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(batches, async (batch) => {
-            return await this.processSimilarityBatch(batch);
-        }, {
-            concurrencyLimit: 3, // Fewer concurrent batches since each is larger
-            maxRetries: 2,
-            enableLogging: false,
-            onProgress: (completed, total) => {
-                // Only log major progress milestones to reduce noise
-                if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
-                    const pairsCompleted = completed * batchSize;
-                    const totalPairs = pairs.length;
-                    logger_1.logger.debug('SIMILARITY', `Progress: ${pairsCompleted}/${totalPairs} pairs (${Math.round((completed / total) * 100)}%)`);
-                }
-            },
-            onError: (error, batch, retryCount) => {
-                logger_1.logger.warn('SIMILARITY', `Retry ${retryCount} for batch: ${error.message}`);
-            },
-        });
-        // Store successful results
-        let successCount = 0;
-        let failedCount = 0;
-        for (const result of results) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                failedCount++;
-                // For failed batches, we can't process individual pairs, so skip them
-                console.warn(`[SIMILARITY-BATCH] Batch failed: ${result.error}`);
+        // Process batches using Promise.all
+        // ClaudeClient handles rate limiting and queuing
+        const results = await Promise.all(batches.map(async (batch, index) => {
+            try {
+                return await this.processSimilarityBatch(batch);
             }
-            else {
+            catch (error) {
+                logger_1.logger.warn('THEME-SIMILARITY', `Batch ${index + 1} failed: ${error}`);
+                return new Map(); // Return empty map for failed batch
+            }
+        }));
+        // Store results
+        let successCount = 0;
+        for (const batchResultMap of results) {
+            if (batchResultMap.size > 0) {
                 successCount++;
-                // result is a Map<string, SimilarityMetrics> from processSimilarityBatch
-                const batchResultMap = result;
                 for (const [pairId, similarity] of batchResultMap) {
                     similarities.set(pairId, similarity);
                 }
             }
         }
-        logger_1.logger.info('SIMILARITY', `Batch processing: ${successCount} successful, ${failedCount} failed`);
         return similarities;
     }
     buildMergeGroupsFromSimilarities(themes, similarities) {
@@ -35452,7 +35325,6 @@ class ThemeSimilarityService {
                     similarity.combinedScore >= this.config.similarityThreshold) {
                     group.push(otherTheme.id);
                     processed.add(otherTheme.id);
-                    logger_1.logger.trace('SIMILARITY', `Merge: ${theme.name} + ${otherTheme.name} (${similarity.combinedScore.toFixed(2)})`);
                 }
             }
             mergeGroups.set(theme.id, group);
@@ -35460,34 +35332,31 @@ class ThemeSimilarityService {
         return mergeGroups;
     }
     async createConsolidatedThemes(mergeGroups, allThemes) {
-        const consolidated = [];
         const themeMap = new Map(allThemes.map((t) => [t.id, t]));
-        for (const [, groupIds] of mergeGroups) {
+        // Process merge groups in parallel
+        const groupEntries = Array.from(mergeGroups.entries());
+        const consolidated = await Promise.all(groupEntries.map(async ([, groupIds]) => {
             const themesInGroup = groupIds
                 .map((id) => themeMap.get(id))
                 .filter((t) => t !== undefined);
             if (themesInGroup.length === 1) {
                 // Single theme - convert to consolidated
-                consolidated.push(this.themeToConsolidated(themesInGroup[0]));
+                return this.themeToConsolidated(themesInGroup[0]);
             }
             else {
                 // Multiple themes - merge them
-                const merged = await this.mergeThemes(themesInGroup);
-                consolidated.push(merged);
+                return await this.mergeThemes(themesInGroup);
             }
-        }
+        }));
         return consolidated;
     }
     async buildHierarchies(themes) {
         // Group themes by business domain
         const domainGroups = await this.businessDomainService.groupByBusinessDomain(themes);
         const result = [];
-        console.log(`[HIERARCHY] Found ${domainGroups.size} business domains:`);
         for (const [domain, domainThemes] of domainGroups) {
-            console.log(`[HIERARCHY] Domain "${domain}": ${domainThemes.length} themes (min required: ${this.config.minThemesForParent})`);
             if (domainThemes.length >= this.config.minThemesForParent) {
                 // Create parent theme
-                console.log(`[HIERARCHY] ✅ Creating parent theme for "${domain}"`);
                 const parentTheme = this.themeNamingService.createParentTheme(domain, domainThemes);
                 // Set children
                 domainThemes.forEach((child) => {
@@ -35499,7 +35368,6 @@ class ThemeSimilarityService {
             }
             else {
                 // Keep as root themes
-                console.log(`[HIERARCHY] ⚠️ Keeping "${domain}" themes as individual (below threshold)`);
                 domainThemes.forEach((theme) => {
                     theme.level = 0;
                     result.push(theme);
@@ -35543,8 +35411,6 @@ class ThemeSimilarityService {
         const allFunctions = new Set();
         const allClasses = new Set();
         const allCodeExamples = [];
-        let totalLinesAdded = 0;
-        let totalLinesRemoved = 0;
         themes.forEach((theme) => {
             theme.affectedFiles.forEach((file) => allFiles.add(file));
             allSnippets.push(...theme.codeSnippets);
@@ -35558,10 +35424,6 @@ class ThemeSimilarityService {
                 theme.mainClassesChanged.forEach((c) => allClasses.add(c));
             if (theme.codeExamples)
                 allCodeExamples.push(...theme.codeExamples);
-            if (theme.codeMetrics) {
-                totalLinesAdded += theme.codeMetrics.linesAdded;
-                totalLinesRemoved += theme.codeMetrics.linesRemoved;
-            }
         });
         // Generate AI-powered name and description for merged themes
         const { name, description } = await this.themeNamingService.generateMergedThemeNameAndDescription(themes);
@@ -35596,10 +35458,8 @@ class ThemeSimilarityService {
             keyChanges: allKeyChanges.length > 0 ? allKeyChanges : undefined,
             mainFunctionsChanged: allFunctions.size > 0 ? Array.from(allFunctions) : undefined,
             mainClassesChanged: allClasses.size > 0 ? Array.from(allClasses) : undefined,
-            codeMetrics: totalLinesAdded > 0 || totalLinesRemoved > 0
+            codeMetrics: allFiles.size > 0
                 ? {
-                    linesAdded: totalLinesAdded,
-                    linesRemoved: totalLinesRemoved,
                     filesChanged: allFiles.size,
                 }
                 : undefined,
@@ -35611,14 +35471,18 @@ class ThemeSimilarityService {
      * PRD: "Dynamic batch sizing" - adapt to content complexity
      */
     calculateOptimalBatchSize(totalPairs) {
-        // Dynamic batch sizing based on total pairs and estimated complexity
+        // Dynamic batch sizing optimized for concurrency while respecting token limits
+        // Target: Create enough batches to utilize 8-10 concurrent request slots
+        // Apply token-based limits
         if (totalPairs <= 10)
-            return Math.max(1, totalPairs); // Small PRs - process all at once
-        if (totalPairs <= 50)
-            return 25; // Medium PRs - moderate batching
+            return Math.max(1, Math.ceil(totalPairs / 3)); // 3-4 small batches
+        if (totalPairs <= 30)
+            return Math.max(3, Math.ceil(totalPairs / 8)); // 8 batches max
+        if (totalPairs <= 100)
+            return Math.max(5, Math.ceil(totalPairs / 10)); // 10 batches max
         if (totalPairs <= 200)
-            return 50; // Large PRs - larger batches for efficiency
-        return 75; // Very large PRs - maximum batch size for token limits
+            return Math.max(10, Math.ceil(totalPairs / 10)); // 10 batches max
+        return Math.max(15, Math.ceil(totalPairs / 10)); // Still target 10 batches for large sets
     }
     /**
      * Split pairs into optimally-sized batches for AI processing
@@ -35643,10 +35507,8 @@ class ThemeSimilarityService {
             const response = await this.aiSimilarityService.calculateBatchSimilarity(batchPrompt, pairs.length);
             // Parse batch response into individual similarity metrics
             this.parseBatchSimilarityResponse(response, pairs, batchResults);
-            console.log(`[SIMILARITY-BATCH] Successfully processed batch of ${pairs.length} pairs`);
         }
         catch (error) {
-            console.warn(`[SIMILARITY-BATCH] Batch processing failed for ${pairs.length} pairs, falling back to individual processing: ${error}`);
             // Fallback to individual processing if batch fails
             await this.processBatchIndividually(pairs, batchResults);
         }
@@ -35720,10 +35582,8 @@ Be conservative - only merge when themes serve the same business purpose.`;
                     results.set(pair.id, similarity);
                 }
             }
-            console.log(`[SIMILARITY-BATCH] Parsed ${results.size}/${pairs.length} similarity results from batch`);
         }
         catch (error) {
-            console.warn(`[SIMILARITY-BATCH] Failed to parse batch response: ${error}`);
             throw error;
         }
     }
@@ -35731,38 +35591,34 @@ Be conservative - only merge when themes serve the same business purpose.`;
      * Fallback to individual processing if batch fails
      */
     async processBatchIndividually(pairs, results) {
-        console.log(`[SIMILARITY-FALLBACK] Processing ${pairs.length} pairs individually`);
-        for (const pair of pairs) {
+        // Process individual pairs in parallel instead of sequential
+        // ClaudeClient handles rate limiting and queuing
+        const individualPromises = pairs.map(async (pair) => {
             try {
                 const similarity = await this.calculateSimilarity(pair.theme1, pair.theme2);
-                results.set(pair.id, similarity);
+                return { pairId: pair.id, similarity };
             }
             catch (error) {
-                console.warn(`[SIMILARITY-FALLBACK] Failed individual processing for ${pair.id}: ${error}`);
                 // Set default non-match result
-                results.set(pair.id, {
-                    combinedScore: 0,
-                    nameScore: 0,
-                    descriptionScore: 0,
-                    businessScore: 0,
-                    fileOverlap: 0,
-                    patternScore: 0,
-                });
+                return {
+                    pairId: pair.id,
+                    similarity: {
+                        combinedScore: 0,
+                        nameScore: 0,
+                        descriptionScore: 0,
+                        businessScore: 0,
+                        fileOverlap: 0,
+                        patternScore: 0,
+                    }
+                };
             }
+        });
+        // Wait for all individual calculations to complete
+        const individualResults = await Promise.all(individualPromises);
+        // Store results in the map
+        for (const { pairId, similarity } of individualResults) {
+            results.set(pairId, similarity);
         }
-    }
-    /**
-     * Convert AI similarity result to SimilarityMetrics
-     */
-    convertAIResultToMetrics(aiResult) {
-        return {
-            combinedScore: Math.max(0, Math.min(1, aiResult.semanticScore || 0)),
-            nameScore: Math.max(0, Math.min(1, aiResult.nameScore || 0)),
-            descriptionScore: Math.max(0, Math.min(1, aiResult.descriptionScore || 0)),
-            businessScore: Math.max(0, Math.min(1, aiResult.businessScore || 0)),
-            fileOverlap: 0, // Not available in AI result, would need separate calculation
-            patternScore: Math.max(0, Math.min(1, aiResult.patternScore || 0)),
-        };
     }
 }
 exports.ThemeSimilarityService = ThemeSimilarityService;
@@ -35770,7 +35626,697 @@ exports.ThemeSimilarityService = ThemeSimilarityService;
 
 /***/ }),
 
-/***/ 1798:
+/***/ 2813:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Business-first prompt templates for transforming technical code analysis
+ * into business-oriented themes aligned with PRD requirements
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BusinessPromptTemplates = void 0;
+const prompt_templates_1 = __nccwpck_require__(1958);
+class BusinessPromptTemplates extends prompt_templates_1.PromptTemplates {
+    /**
+     * Business capability identification prompt - transforms technical changes to user value
+     */
+    static createBusinessImpactPrompt(filePath, codeChanges, technicalContext) {
+        return this.createJsonPrompt({
+            instruction: `You are a product manager analyzing code changes for business impact and user value.
+
+PERSPECTIVE: Focus on USER VALUE and BUSINESS CAPABILITY, not technical implementation.
+
+CONTEXT:
+File: ${filePath}
+Code Changes: ${codeChanges}
+Technical Context: ${technicalContext}
+
+CRITICAL QUESTIONS TO ANSWER:
+1. What user problem does this solve or improve?
+2. What business process does this enable or enhance?
+3. What user journey or workflow does this affect?
+4. How does this create value for end users?
+5. What can users now DO that they couldn't before (or do BETTER)?
+
+BUSINESS-FIRST ANALYSIS:
+Think like a product manager explaining this change to an executive board.
+Focus on user outcomes, business processes, and customer value.
+Avoid technical jargon - use business language.`,
+            jsonSchema: `{
+  "businessCapability": "What user capability this creates (max 8 words)",
+  "userValue": "Direct benefit to end users (max 12 words)",
+  "businessProcess": "Business workflow this improves (max 15 words)",
+  "userScenarios": ["When users will experience this benefit"],
+  "businessDomain": "Primary business area affected",
+  "executiveSummary": "One-sentence business value for executives",
+  "technicalImplementation": "How it's implemented (max 10 words)",
+  "confidence": 0.0-1.0
+}`,
+            examples: [
+                `{
+  "businessCapability": "Streamline User Password Recovery",
+  "userValue": "Users reset passwords without contacting support",
+  "businessProcess": "Self-service account recovery reduces support burden",
+  "userScenarios": ["User forgets password", "Account locked situations"],
+  "businessDomain": "User Account Management",
+  "executiveSummary": "Reduces support costs while improving user experience through automated password recovery.",
+  "technicalImplementation": "Email verification and reset token system",
+  "confidence": 0.9
+}`,
+                `{
+  "businessCapability": "Accelerate Developer Productivity",
+  "userValue": "Developers find and fix issues 50% faster",
+  "businessProcess": "Streamlined debugging and error diagnosis workflow",
+  "userScenarios": ["Production issue investigation", "Code quality analysis"],
+  "businessDomain": "Development Workflow Optimization", 
+  "executiveSummary": "Improves development velocity and reduces time-to-resolution for customer issues.",
+  "technicalImplementation": "Centralized logging and monitoring system",
+  "confidence": 0.85
+}`
+            ],
+            constraints: [
+                'Business capability must be user-facing or directly support user value',
+                'User value must be measurable and specific',
+                'Business process must connect to actual business workflows',
+                'Executive summary must be compelling to non-technical stakeholders',
+                'Avoid technical terms in business fields',
+                'Confidence reflects certainty of business impact assessment'
+            ]
+        });
+    }
+    /**
+     * Business domain classification - maps code to business capabilities
+     */
+    static createBusinessCapabilityPrompt(filePath, codeChanges, functionalContext) {
+        return this.createJsonPrompt({
+            instruction: `You are a business analyst identifying the PRIMARY USER CAPABILITY affected by code changes.
+
+USER-CENTRIC ANALYSIS:
+File: ${filePath}
+Changes: ${codeChanges}
+Context: ${functionalContext}
+
+BUSINESS CAPABILITY FRAMEWORK:
+Ask: "What can users now DO that they couldn't before, or do BETTER than before?"
+
+PRIMARY CAPABILITY CATEGORIES (Choose ONE):
+- "User Account Management" - Registration, login, profile, preferences, security
+- "Content Discovery" - Search, browse, recommendations, navigation, filtering
+- "Transaction Processing" - Payments, orders, purchases, bookings, financial operations
+- "Communication & Collaboration" - Messaging, notifications, sharing, team features
+- "Data Management" - Upload, organize, analyze, export, backup user data
+- "Workflow Automation" - Process simplification, task automation, efficiency tools
+- "User Experience Enhancement" - Interface improvements, accessibility, performance
+- "Content Creation & Publishing" - Authoring, editing, publishing, content management
+- "Security & Privacy" - Data protection, access control, compliance, privacy controls
+- "Integration & Connectivity" - Third-party connections, API access, data synchronization
+- "Analytics & Insights" - Reporting, dashboards, data visualization, metrics
+- "Development Workflow Optimization" - Developer tools, debugging, monitoring, deployment`,
+            jsonSchema: `{
+  "primaryCapability": "Main user capability (from categories above)",
+  "userValue": "What users can now accomplish (max 15 words)",
+  "businessImpact": "Business outcome this enables (max 12 words)",
+  "userJourney": "Step in user workflow this improves",
+  "affectedUserTypes": ["Primary users who benefit"],
+  "businessMetrics": ["Metrics this improvement could affect"],
+  "confidence": 0.0-1.0,
+  "reasoning": "Why this capability classification (max 20 words)"
+}`,
+            examples: [
+                `{
+  "primaryCapability": "User Account Management",
+  "userValue": "Users create accounts and access personalized features securely",
+  "businessImpact": "Increased user engagement and retention through personalization",
+  "userJourney": "Account creation and initial setup",
+  "affectedUserTypes": ["New users", "Returning users"],
+  "businessMetrics": ["User registration rate", "Time to first value", "Account security incidents"],
+  "confidence": 0.9,
+  "reasoning": "Changes directly affect user registration and authentication flows"
+}`,
+                `{
+  "primaryCapability": "Development Workflow Optimization", 
+  "userValue": "Developers diagnose and resolve issues faster and more effectively",
+  "businessImpact": "Reduced development costs and faster feature delivery",
+  "userJourney": "Error investigation and debugging process",
+  "affectedUserTypes": ["Software developers", "DevOps engineers"],
+  "businessMetrics": ["Time to resolution", "Developer productivity", "Bug fix cycle time"],
+  "confidence": 0.85,
+  "reasoning": "Improves developer tools and debugging capabilities for faster issue resolution"
+}`
+            ],
+            constraints: [
+                'Must choose from predefined capability categories',
+                'User value must be specific and measurable',
+                'Business impact must connect to actual business outcomes',
+                'User journey must be a recognizable workflow step',
+                'Affected user types must be specific roles or personas',
+                'Business metrics must be trackable and relevant'
+            ]
+        });
+    }
+    /**
+     * Business hierarchy expansion - determines if capability needs sub-capabilities
+     */
+    static createBusinessHierarchyPrompt(capability, userValue, businessProcess, currentDepth, technicalScope) {
+        return this.createJsonPrompt({
+            instruction: `You are a product manager organizing user capabilities into business hierarchy.
+
+CURRENT BUSINESS CAPABILITY: "${capability}"
+User Value: ${userValue}
+Business Process: ${businessProcess}
+Current Depth: ${currentDepth}
+Technical Scope: ${technicalScope}
+
+BUSINESS DECOMPOSITION CRITERIA:
+- EXPAND if this capability serves MULTIPLE distinct user needs
+- EXPAND if users accomplish this through MULTIPLE distinct workflows
+- EXPAND if this affects MULTIPLE business processes  
+- EXPAND if this capability is too broad for users to understand easily
+- ATOMIC if this serves ONE specific user need completely
+- ATOMIC if this represents a single, cohesive user workflow
+
+BUSINESS HIERARCHY RULES:
+Level 0: User-facing capabilities ("Enable Secure User Login")
+Level 1: Business processes ("Account Verification", "Profile Setup") 
+Level 2: User workflows ("Email Confirmation", "Welcome Onboarding")
+Level 3+: Technical implementations (only if absolutely necessary for user understanding)
+
+AUDIENCE PROGRESSIVE LANGUAGE:
+- Level 0: Executive language - business outcomes and user value
+- Level 1: Product manager language - business processes and user workflows
+- Level 2: Technical product language - system behaviors and user interactions
+- Level 3+: Developer language - implementation details (avoid if possible)`,
+            jsonSchema: `{
+  "shouldExpand": boolean,
+  "businessReasoning": "User-centric reason for expansion/atomic decision",
+  "atomicReason": "If atomic, why this is a complete user capability",
+  "userCapabilities": [
+    {
+      "name": "Specific user capability (max 8 words)",
+      "userValue": "What users accomplish (max 12 words)", 
+      "businessProcess": "Business workflow supported (max 10 words)",
+      "userScenarios": ["When users need this capability"],
+      "audienceLevel": "executive|product-manager|technical-product|developer",
+      "technicalScope": "Implementation details (max 8 words)"
+    }
+  ],
+  "confidence": 0.0-1.0
+}`,
+            examples: [
+                `{
+  "shouldExpand": true,
+  "businessReasoning": "User account management involves distinct workflows: creation, verification, and maintenance",
+  "atomicReason": null,
+  "userCapabilities": [
+    {
+      "name": "Account Creation Workflow",
+      "userValue": "New users join platform with guided registration",
+      "businessProcess": "User onboarding and initial setup",
+      "userScenarios": ["First-time visitor wants to sign up", "User needs account for premium features"],
+      "audienceLevel": "product-manager",
+      "technicalScope": "Registration form and validation logic"
+    },
+    {
+      "name": "Account Verification Process", 
+      "userValue": "Users confirm identity for account security",
+      "businessProcess": "Identity verification and fraud prevention",
+      "userScenarios": ["Email verification required", "Two-factor authentication setup"],
+      "audienceLevel": "product-manager", 
+      "technicalScope": "Email verification and 2FA systems"
+    }
+  ],
+  "confidence": 0.9
+}`,
+                `{
+  "shouldExpand": false,
+  "businessReasoning": "Password reset is a single, cohesive user workflow with one clear outcome",
+  "atomicReason": "Users have one specific need: regain access to their account when password is forgotten",
+  "userCapabilities": [],
+  "confidence": 0.95
+}`
+            ],
+            constraints: [
+                'Maximum 4 sub-capabilities per expansion',
+                'Each sub-capability must serve distinct user needs',
+                'Sub-capabilities must not overlap in user value',
+                'Audience level must progress logically with depth',
+                'Business reasoning must focus on user needs, not technical complexity',
+                'Atomic decisions must justify why further expansion serves no user value'
+            ]
+        });
+    }
+    /**
+     * Progressive language enforcement - ensures appropriate language for hierarchy level
+     */
+    static createProgressiveLanguagePrompt(currentName, currentDescription, targetLevel, targetAudience) {
+        const audienceConfig = this.getAudienceConfig(targetAudience);
+        return this.createJsonPrompt({
+            instruction: `Transform this theme to use appropriate language for ${targetAudience} audience at hierarchy level ${targetLevel}.
+
+CURRENT THEME:
+Name: ${currentName}
+Description: ${currentDescription}
+
+TARGET AUDIENCE: ${targetAudience.toUpperCase()}
+${audienceConfig.description}
+
+LANGUAGE REQUIREMENTS:
+- Maximum ${audienceConfig.maxWords} words
+- Focus: ${audienceConfig.focus}
+- Use these terms: ${audienceConfig.allowedTerms.join(', ')}
+- Avoid these terms: ${audienceConfig.forbiddenTerms.join(', ')}
+- Tone: ${audienceConfig.tone}
+
+TRANSFORMATION GOALS:
+1. Make the theme understandable to the target audience
+2. Focus on value that matters to this audience 
+3. Use appropriate level of technical detail
+4. Maintain business accuracy while adjusting language`,
+            jsonSchema: `{
+  "transformedName": "Theme name for ${targetAudience} (max ${audienceConfig.nameWords} words)",
+  "transformedDescription": "Description for ${targetAudience} (max ${audienceConfig.maxWords} words)",
+  "audienceValue": "Why this matters to ${targetAudience} specifically",
+  "confidence": 0.0-1.0
+}`,
+            examples: audienceConfig.examples,
+            constraints: [
+                `Name must be ${audienceConfig.nameWords} words or less`,
+                `Description must be ${audienceConfig.maxWords} words or less`,
+                `Must use ${targetAudience} appropriate language`,
+                'Must maintain factual accuracy',
+                'Must focus on value relevant to target audience'
+            ]
+        });
+    }
+    /**
+     * Business value consolidation - merges themes by user value rather than technical similarity
+     */
+    static createBusinessValueConsolidationPrompt(themes) {
+        const themesList = themes.map((theme, index) => `Theme ${index + 1}: "${theme.name}"
+User Value: ${theme.userValue}
+Business Process: ${theme.businessProcess}
+Technical Scope: ${theme.technicalScope}`).join('\n\n');
+        return this.createJsonPrompt({
+            instruction: `Analyze these themes for business value consolidation opportunities.
+
+THEMES TO ANALYZE:
+${themesList}
+
+BUSINESS CONSOLIDATION CRITERIA:
+- Themes serve the SAME user need (even if technical implementation differs)
+- Themes support the SAME business process workflow
+- Themes provide similar user value propositions
+- Users would perceive these as the same capability
+
+IMPORTANT: Only consolidate themes that users would see as the same capability.
+Do NOT consolidate based on technical similarity alone.
+
+CONSOLIDATION RULES:
+1. User value must be nearly identical
+2. Business process must be the same or complementary
+3. Combined theme must be clearer to users than separate themes
+4. Consolidation must simplify user understanding, not complicate it`,
+            jsonSchema: `{
+  "consolidationGroups": [
+    {
+      "themeIndices": [1, 3],
+      "consolidatedName": "Single capability name (max 8 words)",
+      "consolidatedUserValue": "Combined user value (max 15 words)",
+      "consolidatedBusinessProcess": "Unified business process (max 12 words)",
+      "userBenefit": "Why consolidation improves user understanding",
+      "reasoning": "Business justification for consolidation"
+    }
+  ],
+  "standaloneThemes": [2, 4],
+  "confidence": 0.0-1.0
+}`,
+            examples: [
+                `{
+  "consolidationGroups": [
+    {
+      "themeIndices": [1, 3],
+      "consolidatedName": "Streamline User Password Management",
+      "consolidatedUserValue": "Users manage passwords securely without support contact",
+      "consolidatedBusinessProcess": "Self-service account security management",
+      "userBenefit": "Users see one coherent password management capability instead of fragmented features",
+      "reasoning": "Both themes serve the same user need: secure password management independence"
+    }
+  ],
+  "standaloneThemes": [2],
+  "confidence": 0.9
+}`
+            ],
+            constraints: [
+                'Only consolidate themes with truly similar user value',
+                'Consolidated themes must be clearer than separate themes',
+                'User benefit must explain improved user understanding',
+                'Reasoning must justify from user perspective, not technical perspective'
+            ]
+        });
+    }
+    /**
+     * Get audience-specific configuration for progressive language
+     */
+    static getAudienceConfig(audience) {
+        const configs = {
+            executive: {
+                description: 'Senior leadership focused on business outcomes, ROI, and strategic value',
+                maxWords: 12,
+                nameWords: 6,
+                focus: 'Business outcomes and strategic value',
+                allowedTerms: ['revenue', 'efficiency', 'growth', 'value', 'competitive advantage', 'user satisfaction'],
+                forbiddenTerms: ['API', 'function', 'class', 'method', 'implementation', 'refactor', 'technical debt'],
+                tone: 'Strategic and outcome-focused',
+                examples: [
+                    `{
+  "transformedName": "Accelerate Customer Onboarding",
+  "transformedDescription": "Streamline new customer signup process to increase conversion rates and reduce support burden",
+  "audienceValue": "Drives revenue growth through improved customer acquisition efficiency",
+  "confidence": 0.9
+}`
+                ]
+            },
+            'product-manager': {
+                description: 'Product managers focused on user workflows, business processes, and feature value',
+                maxWords: 18,
+                nameWords: 8,
+                focus: 'User workflows and business processes',
+                allowedTerms: ['workflow', 'process', 'user experience', 'feature', 'integration', 'automation'],
+                forbiddenTerms: ['class', 'method', 'function', 'code', 'implementation details'],
+                tone: 'Process-oriented and user-focused',
+                examples: [
+                    `{
+  "transformedName": "Improve User Authentication Workflow",
+  "transformedDescription": "Enhance login process with streamlined verification steps and improved user experience across multiple touchpoints",
+  "audienceValue": "Reduces user friction and improves conversion rates through better authentication flow",
+  "confidence": 0.85
+}`
+                ]
+            },
+            'technical-product': {
+                description: 'Technical product managers focused on system behavior and integration points',
+                maxWords: 25,
+                nameWords: 10,
+                focus: 'System behavior and technical capabilities',
+                allowedTerms: ['service', 'component', 'integration', 'validation', 'processing', 'system'],
+                forbiddenTerms: ['specific function names', 'variable names', 'detailed implementation'],
+                tone: 'System-focused with business context',
+                examples: [
+                    `{
+  "transformedName": "Authentication Service Integration and Validation",
+  "transformedDescription": "Implement robust user authentication service with multi-factor validation and secure session management for improved system security",
+  "audienceValue": "Provides technical foundation for secure user access while maintaining development flexibility",
+  "confidence": 0.8
+}`
+                ]
+            },
+            developer: {
+                description: 'Software developers focused on implementation details and technical specifications',
+                maxWords: 35,
+                nameWords: 15,
+                focus: 'Implementation details and technical specifications',
+                allowedTerms: ['function', 'class', 'method', 'API', 'component', 'service', 'implementation'],
+                forbiddenTerms: [],
+                tone: 'Technical and implementation-focused',
+                examples: [
+                    `{
+  "transformedName": "Implement authenticateUser() and validateSession() methods",
+  "transformedDescription": "Create user authentication functions with JWT token generation, session validation middleware, and database integration for secure user access control",
+  "audienceValue": "Provides clear implementation guidelines and technical specifications for secure authentication features",
+  "confidence": 0.95
+}`
+                ]
+            }
+        };
+        return configs[audience] || configs.developer;
+    }
+}
+exports.BusinessPromptTemplates = BusinessPromptTemplates;
+
+
+/***/ }),
+
+/***/ 1958:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Standardized prompt templates for consistent Claude AI responses
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PromptTemplates = void 0;
+class PromptTemplates {
+    /**
+     * Create a standardized JSON-only prompt
+     */
+    static createJsonPrompt(config) {
+        const { instruction, jsonSchema, examples = [], constraints = [] } = config;
+        let prompt = `${instruction}\n\n`;
+        // Add strict JSON formatting requirements
+        prompt += `CRITICAL RESPONSE FORMAT:\n`;
+        prompt += `- Return ONLY valid JSON matching this exact schema: ${jsonSchema}\n`;
+        prompt += `- No explanatory text, no markdown formatting, no code blocks\n`;
+        prompt += `- Response must start with { or [ character\n`;
+        prompt += `- Response must end with } or ] character\n`;
+        prompt += `- No text before or after the JSON\n\n`;
+        // Add examples if provided
+        if (examples.length > 0) {
+            prompt += `VALID RESPONSE EXAMPLES:\n`;
+            examples.forEach((example, index) => {
+                prompt += `Example ${index + 1}: ${example}\n`;
+            });
+            prompt += `\n`;
+        }
+        // Add constraints if provided
+        if (constraints.length > 0) {
+            prompt += `CONSTRAINTS:\n`;
+            constraints.forEach((constraint) => {
+                prompt += `- ${constraint}\n`;
+            });
+            prompt += `\n`;
+        }
+        prompt += `TASK: ${instruction}`;
+        return prompt;
+    }
+    /**
+     * Template for business pattern identification
+     */
+    static createBusinessPatternPrompt(themeName, themeDescription, businessImpact, affectedFiles) {
+        return this.createJsonPrompt({
+            instruction: `Analyze this code theme for distinct business logic patterns and user flows:
+
+Theme: ${themeName}
+Description: ${themeDescription}
+Business Impact: ${businessImpact}
+Affected Files: ${affectedFiles.join(', ')}
+
+Identify distinct business patterns within this theme. Look for:
+1. Different user interaction flows
+2. Separate business logic concerns
+3. Distinct functional areas
+4. Different data processing patterns
+5. Separate integration points
+
+Focus on business value, not technical implementation details.`,
+            jsonSchema: '["pattern1", "pattern2", "pattern3"]',
+            examples: [
+                '["User Authentication Flow", "Data Validation Logic", "API Integration"]',
+                '["Payment Processing", "Order Management", "Customer Notifications"]',
+                '["Configuration Management", "Error Handling", "Monitoring Integration"]',
+            ],
+            constraints: [
+                'Maximum 6 patterns',
+                'Focus on business/user value',
+                'Use descriptive pattern names',
+                'Avoid technical implementation details',
+            ],
+        });
+    }
+    /**
+     * Template for sub-theme analysis
+     */
+    static createSubThemeAnalysisPrompt(themeName, themeDescription, businessImpact, level, affectedFiles, parentContext) {
+        const contextSection = parentContext
+            ? `\nPARENT THEME CONTEXT:\n${parentContext}\n`
+            : '';
+        return this.createJsonPrompt({
+            instruction: `Analyze this code theme for potential sub-theme expansion:
+
+THEME TO ANALYZE:
+Name: ${themeName}
+Description: ${themeDescription}
+Business Impact: ${businessImpact}
+Current Level: ${level}
+Files: ${affectedFiles.join(', ')}${contextSection}
+
+Determine if this theme contains distinct sub-patterns that warrant separate sub-themes.
+Focus on:
+1. Business logic separation (different business rules/processes)
+2. User flow distinction (different user interaction patterns)
+3. Functional area separation (different system responsibilities)
+4. Data processing patterns (different data handling approaches)
+
+EXPANSION CRITERIA:
+- Sub-themes must have distinct business value
+- Each sub-theme should represent a coherent business concept
+- Avoid technical implementation splitting
+- Maintain file scope relevance
+- Ensure no duplication with parent or sibling themes
+
+Only create sub-themes if there are genuinely distinct business concerns.`,
+            jsonSchema: `{
+  "shouldExpand": boolean,
+  "confidence": number,
+  "reasoning": "explanation",
+  "businessLogicPatterns": ["pattern1", "pattern2"],
+  "userFlowPatterns": ["flow1", "flow2"],
+  "subThemes": [
+    {
+      "name": "Sub-theme name",
+      "description": "Business-focused description",
+      "businessImpact": "User/business value",
+      "relevantFiles": ["file1.ts", "file2.ts"],
+      "confidence": number
+    }
+  ]
+}`,
+            examples: [
+                `{
+  "shouldExpand": true,
+  "confidence": 0.85,
+  "reasoning": "Theme contains distinct authentication and authorization patterns",
+  "businessLogicPatterns": ["User Authentication", "Permission Management"],
+  "userFlowPatterns": ["Login Flow", "Access Control"],
+  "subThemes": [
+    {
+      "name": "User Authentication System",
+      "description": "Handles user login and session management",
+      "businessImpact": "Secure user access to the application",
+      "relevantFiles": ["auth.ts", "session.ts"],
+      "confidence": 0.9
+    }
+  ]
+}`,
+            ],
+            constraints: [
+                'Maximum 4 sub-themes per expansion',
+                'Each sub-theme must have confidence >= 0.6',
+                'Sub-themes must be distinct from each other',
+                'Maintain business focus over technical details',
+            ],
+        });
+    }
+    /**
+     * Template for cross-level similarity analysis
+     */
+    static createCrossLevelSimilarityPrompt(theme1Name, theme1Description, theme1Level, theme1Files, theme2Name, theme2Description, theme2Level, theme2Files, levelDifference) {
+        return this.createJsonPrompt({
+            instruction: `Analyze these two themes from different hierarchy levels for similarity and relationship:
+
+THEME 1:
+Level: ${theme1Level}
+Name: ${theme1Name}
+Description: ${theme1Description}
+Files: ${theme1Files.join(', ')}
+
+THEME 2:
+Level: ${theme2Level}
+Name: ${theme2Name}
+Description: ${theme2Description}
+Files: ${theme2Files.join(', ')}
+
+Level Difference: ${levelDifference}
+
+Determine the relationship between these themes across hierarchy levels:
+
+1. SIMILARITY SCORE (0-1): How similar are these themes in business purpose?
+2. RELATIONSHIP TYPE: 
+   - "duplicate": Essentially the same theme (should be merged)
+   - "overlap": Significant overlap in scope (should be consolidated)
+   - "related": Related but distinct (keep separate)
+   - "distinct": Completely different themes
+
+3. MERGE ACTION:
+   - "merge_up": Merge into higher-level theme
+   - "merge_down": Merge into lower-level theme
+   - "merge_sibling": Merge at same level under common parent
+   - "keep_separate": Keep as separate themes
+
+Focus on business value and avoid merging themes with distinct business purposes.`,
+            jsonSchema: `{
+  "similarityScore": number,
+  "relationshipType": "duplicate|overlap|related|distinct",
+  "action": "merge_up|merge_down|merge_sibling|keep_separate",
+  "confidence": number,
+  "reasoning": "detailed explanation"
+}`,
+            examples: [
+                `{
+  "similarityScore": 0.85,
+  "relationshipType": "duplicate",
+  "action": "merge_up",
+  "confidence": 0.9,
+  "reasoning": "Both themes handle user authentication with nearly identical scope and files"
+}`,
+                `{
+  "similarityScore": 0.3,
+  "relationshipType": "distinct",
+  "action": "keep_separate",
+  "confidence": 0.95,
+  "reasoning": "Themes address completely different business concerns - authentication vs data processing"
+}`,
+            ],
+            constraints: [
+                'Similarity score must be between 0 and 1',
+                'Confidence must be between 0 and 1',
+                'Reasoning must explain the decision clearly',
+                'Consider file overlap and business purpose',
+            ],
+        });
+    }
+    /**
+     * Template for theme naming
+     */
+    static createThemeNamingPrompt(description, businessImpact, codeSnippets) {
+        return this.createJsonPrompt({
+            instruction: `Generate a concise, business-focused name for this code theme:
+
+Description: ${description}
+Business Impact: ${businessImpact}
+Code Context: ${codeSnippets.join('\n---\n')}
+
+Create a theme name that:
+1. Focuses on business value, not technical implementation
+2. Is clear and understandable to non-technical stakeholders
+3. Captures the primary business purpose
+4. Is concise (2-6 words)
+
+The name should answer "what business value does this provide?"`,
+            jsonSchema: '{"name": "Business-focused theme name"}',
+            examples: [
+                '{"name": "Improve User Authentication"}',
+                '{"name": "Streamline Payment Processing"}',
+                '{"name": "Enhance Data Validation"}',
+                '{"name": "Automate Report Generation"}',
+            ],
+            constraints: [
+                'Name must be 2-6 words',
+                'Focus on business value',
+                'Avoid technical jargon',
+                'Use action verbs when possible',
+            ],
+        });
+    }
+}
+exports.PromptTemplates = PromptTemplates;
+
+
+/***/ }),
+
+/***/ 5584:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -35809,26 +36355,1028 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handleError = handleError;
-exports.logInfo = logInfo;
-exports.setOutput = setOutput;
-const core = __importStar(__nccwpck_require__(7484));
-function handleError(error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    core.error(`Action failed: ${errorMessage}`);
-    core.setFailed(errorMessage);
+exports.SecureFileNamer = void 0;
+const crypto = __importStar(__nccwpck_require__(6982));
+const os = __importStar(__nccwpck_require__(857));
+const path = __importStar(__nccwpck_require__(6928));
+const fs = __importStar(__nccwpck_require__(9896));
+/**
+ * Secure file naming utility that prevents collisions in parallel execution
+ * by using UUIDs, process IDs, and crypto-grade randomness
+ */
+class SecureFileNamer {
+    /**
+     * Generate a collision-resistant file name for temporary files
+     */
+    static generateSecureFileName(prefix, extension = 'txt') {
+        const uuid = crypto.randomUUID().substring(0, 8);
+        const pid = this.processId;
+        const random = crypto.randomBytes(4).toString('hex');
+        const timestamp = Date.now();
+        return `${prefix}-${pid}-${uuid}-${random}-${timestamp}.${extension}`;
+    }
+    /**
+     * Generate a collision-resistant ID for entities (themes, batches, etc.)
+     */
+    static generateSecureId(prefix) {
+        const uuid = crypto.randomUUID();
+        return `${prefix}-${uuid}`;
+    }
+    /**
+     * Generate a short collision-resistant ID for performance-critical operations
+     */
+    static generateShortSecureId(prefix) {
+        const shortUuid = crypto.randomUUID().substring(0, 8);
+        const random = crypto.randomBytes(2).toString('hex');
+        return `${prefix}-${shortUuid}-${random}`;
+    }
+    /**
+     * Create a process-isolated temporary file path
+     */
+    static createSecureTempFilePath(prefix, extension = 'txt') {
+        const fileName = this.generateSecureFileName(prefix, extension);
+        const processDir = this.getProcessTempDir();
+        return path.join(processDir, fileName);
+    }
+    /**
+     * Get or create a process-specific temporary directory
+     */
+    static getProcessTempDir() {
+        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
+        try {
+            if (!fs.existsSync(processDir)) {
+                fs.mkdirSync(processDir, { recursive: true });
+            }
+        }
+        catch (error) {
+            // Fallback to system temp dir if process dir creation fails
+            console.warn(`Failed to create process temp dir: ${error}`);
+            return os.tmpdir();
+        }
+        return processDir;
+    }
+    /**
+     * Create a temporary file with secure naming and optional content
+     */
+    static createSecureTempFile(prefix, content = '', extension = 'txt') {
+        const filePath = this.createSecureTempFilePath(prefix, extension);
+        try {
+            fs.writeFileSync(filePath, content, 'utf8');
+        }
+        catch (error) {
+            throw new Error(`Failed to create secure temp file: ${error}`);
+        }
+        const cleanup = () => {
+            try {
+                if (fs.existsSync(filePath)) {
+                    fs.unlinkSync(filePath);
+                }
+            }
+            catch (error) {
+                console.warn(`Failed to cleanup temp file ${filePath}: ${error}`);
+            }
+        };
+        return { filePath, cleanup };
+    }
+    /**
+     * Clean up process-specific temporary directory
+     */
+    static cleanupProcessTempDir() {
+        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
+        try {
+            if (fs.existsSync(processDir)) {
+                // Remove all files in the directory
+                const files = fs.readdirSync(processDir);
+                for (const file of files) {
+                    fs.unlinkSync(path.join(processDir, file));
+                }
+                // Remove the directory
+                fs.rmdirSync(processDir);
+            }
+        }
+        catch (error) {
+            console.warn(`Failed to cleanup process temp dir: ${error}`);
+        }
+    }
+    /**
+     * Generate batch ID with collision resistance for concurrent operations
+     */
+    static generateBatchId(batchType, promptType) {
+        const uuid = crypto.randomUUID().substring(0, 12);
+        const pid = this.processId;
+        const random = crypto.randomBytes(3).toString('hex');
+        if (promptType) {
+            return `${batchType}-${promptType}-${pid}-${uuid}-${random}`;
+        }
+        return `${batchType}-${pid}-${uuid}-${random}`;
+    }
+    /**
+     * Generate expansion/request ID with hierarchy support
+     */
+    static generateHierarchicalId(type, parentId, index) {
+        const uuid = crypto.randomUUID().substring(0, 8);
+        const random = crypto.randomBytes(2).toString('hex');
+        if (parentId && typeof index === 'number') {
+            return `${parentId}_${type}_${index}_${uuid}_${random}`;
+        }
+        if (parentId) {
+            return `${parentId}_${type}_${uuid}_${random}`;
+        }
+        return `${type}_${uuid}_${random}`;
+    }
+    /**
+     * Validate that a generated ID/filename is collision-resistant
+     */
+    static validateSecureNaming(name) {
+        // Check for minimum entropy (process ID + UUID parts + random)
+        const parts = name.split('-');
+        if (parts.length < 4)
+            return false;
+        // Check for presence of process ID (numeric)
+        if (!parts.some((part) => /^\d+$/.test(part)))
+            return false;
+        // Check for presence of hex random data
+        if (!parts.some((part) => /^[a-f0-9]{4,}$/i.test(part)))
+            return false;
+        return true;
+    }
+    /**
+     * Get statistics about the naming system
+     */
+    static getStats() {
+        return {
+            processId: this.processId,
+            processStartTime: this.processStartTime,
+            tempDir: this.getProcessTempDir(),
+            entropyBits: 128 + 32 + 16, // UUID + random bytes + timestamp
+        };
+    }
 }
-function logInfo(message) {
-    core.info(message);
+exports.SecureFileNamer = SecureFileNamer;
+SecureFileNamer.processId = process.pid;
+SecureFileNamer.processStartTime = Date.now();
+/**
+ * Setup process cleanup handlers
+ */
+function setupCleanupHandlers() {
+    const cleanup = () => SecureFileNamer.cleanupProcessTempDir();
+    process.on('exit', cleanup);
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    process.on('uncaughtException', (error) => {
+        console.error('Uncaught exception:', error);
+        cleanup();
+        process.exit(1);
+    });
 }
-function setOutput(name, value) {
-    core.setOutput(name, value);
-}
+// Initialize cleanup handlers
+setupCleanupHandlers();
 
 
 /***/ }),
 
-/***/ 9840:
+/***/ 2542:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ThemeFormatter = void 0;
+/**
+ * Utility for formatting theme hierarchies for output
+ */
+class ThemeFormatter {
+    /**
+     * Format themes for GitHub Actions output with deep hierarchy support
+     */
+    static formatThemesForOutput(themes) {
+        const themeCount = this.countTotalThemes(themes);
+        let output = `Found ${themeCount} themes:\\n`;
+        themes.forEach((theme, index) => {
+            output += this.formatThemeRecursively(theme, index + 1, 0);
+        });
+        return output;
+    }
+    /**
+     * Format a single theme recursively with proper indentation
+     */
+    static formatThemeRecursively(theme, number, depth, parentNumber) {
+        const indent = '   '.repeat(depth);
+        const confidence = (theme.confidence * 100).toFixed(0);
+        // Create theme number (e.g., "1", "1.1", "1.1.1")
+        const themeNumber = parentNumber
+            ? `${parentNumber}.${number}`
+            : `${number}`;
+        // Truncate description if too long
+        const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim(), this.MAX_DESCRIPTION_LENGTH);
+        let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
+        // Files on the same line or next line depending on length
+        const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
+        const fileList = theme.affectedFiles.length > this.MAX_FILES_SHOWN
+            ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
+            : files;
+        output += `\\n${indent}   ${fileList}`;
+        // Main description
+        output += `\\n${indent}   ${description}`;
+        // Show detailed description only if significantly different and adds value
+        if (theme.detailedDescription &&
+            theme.detailedDescription.length > 20 &&
+            !theme.description
+                .toLowerCase()
+                .includes(theme.detailedDescription.toLowerCase().substring(0, 10))) {
+            output += ` ${theme.detailedDescription}`;
+        }
+        // No merge indicators, no emoji, just content
+        // Show child themes recursively without announcement
+        if (theme.childThemes && theme.childThemes.length > 0) {
+            output += '\\n'; // Add blank line before sub-themes
+            theme.childThemes.forEach((childTheme, childIndex) => {
+                output += this.formatThemeRecursively(childTheme, childIndex + 1, depth + 1, themeNumber);
+            });
+        }
+        return output;
+    }
+    /**
+     * Create a concise summary of the theme analysis
+     */
+    static createThemeSummary(themes) {
+        const totalThemes = this.countTotalThemes(themes);
+        const maxDepth = this.calculateMaxDepth(themes);
+        const avgConfidence = this.calculateAverageConfidence(themes);
+        const rootThemes = themes.length;
+        const expandedThemes = this.countExpandedThemes(themes);
+        const mergedThemes = this.countMergedThemes(themes);
+        let summary = `Analyzed code changes and identified ${totalThemes} themes across ${maxDepth + 1} hierarchy levels. `;
+        summary += `Root themes: ${rootThemes}, Average confidence: ${(avgConfidence * 100).toFixed(0)}%. `;
+        if (expandedThemes > 0) {
+            summary += `${expandedThemes} themes expanded for detailed analysis. `;
+        }
+        if (mergedThemes > 0) {
+            summary += `${mergedThemes} themes consolidated from similar patterns.`;
+        }
+        return summary;
+    }
+    /**
+     * Format themes for JSON output (useful for integrations)
+     */
+    static formatThemesAsJson(themes) {
+        const formatted = themes.map((theme) => this.themeToJsonObject(theme));
+        return JSON.stringify(formatted, null, 2);
+    }
+    /**
+     * Create a flat list of all themes with hierarchy indicators
+     */
+    static createFlatThemeList(themes) {
+        const flatThemes = [];
+        const collectThemes = (themeList, parentPath = '') => {
+            themeList.forEach((theme, index) => {
+                const currentPath = parentPath
+                    ? `${parentPath}.${index + 1}`
+                    : `${index + 1}`;
+                flatThemes.push({ theme, path: currentPath });
+                if (theme.childThemes.length > 0) {
+                    collectThemes(theme.childThemes, currentPath);
+                }
+            });
+        };
+        collectThemes(themes);
+        let output = `Theme hierarchy (${flatThemes.length} total themes):\\n`;
+        flatThemes.forEach(({ theme, path }) => {
+            const confidence = (theme.confidence * 100).toFixed(0);
+            const level = path.split('.').length;
+            const indent = '  '.repeat(level - 1);
+            output += `\\n${indent}${path}. ${theme.name} (${confidence}%, ${theme.affectedFiles.length} files)`;
+        });
+        return output;
+    }
+    // Private helper methods
+    static countTotalThemes(themes) {
+        let count = 0;
+        const countRecursively = (themeList) => {
+            count += themeList.length;
+            themeList.forEach((theme) => {
+                if (theme.childThemes.length > 0) {
+                    countRecursively(theme.childThemes);
+                }
+            });
+        };
+        countRecursively(themes);
+        return count;
+    }
+    static calculateMaxDepth(themes) {
+        let maxDepth = 0;
+        const findMaxDepth = (themeList, currentDepth) => {
+            maxDepth = Math.max(maxDepth, currentDepth);
+            themeList.forEach((theme) => {
+                if (theme.childThemes.length > 0) {
+                    findMaxDepth(theme.childThemes, currentDepth + 1);
+                }
+            });
+        };
+        findMaxDepth(themes, 0);
+        return maxDepth;
+    }
+    static calculateAverageConfidence(themes) {
+        const allThemes = [];
+        const collectAllThemes = (themeList) => {
+            themeList.forEach((theme) => {
+                allThemes.push(theme);
+                if (theme.childThemes.length > 0) {
+                    collectAllThemes(theme.childThemes);
+                }
+            });
+        };
+        collectAllThemes(themes);
+        if (allThemes.length === 0)
+            return 0;
+        const totalConfidence = allThemes.reduce((sum, theme) => sum + theme.confidence, 0);
+        return totalConfidence / allThemes.length;
+    }
+    static countExpandedThemes(themes) {
+        let count = 0;
+        const countRecursively = (themeList) => {
+            themeList.forEach((theme) => {
+                if (theme.isExpanded || theme.consolidationMethod === 'expansion') {
+                    count++;
+                }
+                if (theme.childThemes.length > 0) {
+                    countRecursively(theme.childThemes);
+                }
+            });
+        };
+        countRecursively(themes);
+        return count;
+    }
+    static countMergedThemes(themes) {
+        let count = 0;
+        const countRecursively = (themeList) => {
+            themeList.forEach((theme) => {
+                if (theme.consolidationMethod === 'merge' &&
+                    theme.sourceThemes.length > 1) {
+                    count++;
+                }
+                if (theme.childThemes.length > 0) {
+                    countRecursively(theme.childThemes);
+                }
+            });
+        };
+        countRecursively(themes);
+        return count;
+    }
+    static truncateText(text, maxLength) {
+        if (text.length <= maxLength) {
+            return text;
+        }
+        return text.substring(0, maxLength - 3) + '...';
+    }
+    static themeToJsonObject(theme) {
+        return {
+            id: theme.id,
+            name: theme.name,
+            description: theme.description,
+            level: theme.level,
+            confidence: theme.confidence,
+            businessImpact: theme.businessImpact,
+            affectedFiles: theme.affectedFiles,
+            consolidationMethod: theme.consolidationMethod,
+            isExpanded: theme.isExpanded,
+            businessLogicPatterns: theme.businessLogicPatterns,
+            userFlowPatterns: theme.userFlowPatterns,
+            childThemes: theme.childThemes.map((child) => this.themeToJsonObject(child)),
+        };
+    }
+}
+exports.ThemeFormatter = ThemeFormatter;
+ThemeFormatter.MAX_FILES_SHOWN = 3;
+ThemeFormatter.MAX_DESCRIPTION_LENGTH = 200;
+
+
+/***/ }),
+
+/***/ 5061:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CodeAnalysisCache = void 0;
+const crypto = __importStar(__nccwpck_require__(6982));
+const generic_cache_1 = __nccwpck_require__(282);
+const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
+const performance_tracker_1 = __nccwpck_require__(9600);
+/**
+ * Specialized cache for AI-based code analysis results
+ * Uses content-based hashing for cache keys to ensure cache hits on identical diffs
+ */
+class CodeAnalysisCache extends generic_cache_1.GenericCache {
+    constructor(ttlMs = 86400000) {
+        // 24 hour default TTL
+        super(ttlMs);
+    }
+    /**
+     * Generate a cache key based on filename and diff content
+     * Uses SHA-256 hash for deterministic, collision-resistant keys
+     */
+    generateCacheKey(filename, diffContent) {
+        const content = `${filename}:${diffContent}`;
+        return crypto
+            .createHash('sha256')
+            .update(content)
+            .digest('hex')
+            .substring(0, 16); // Use first 16 chars for memory efficiency
+    }
+    /**
+     * Get cached analysis result or execute the processor function
+     * Provides transparent caching for AI code analysis
+     */
+    async getOrAnalyze(filename, diffContent, processor) {
+        const key = this.generateCacheKey(filename, diffContent);
+        const cached = this.get(key);
+        if (cached) {
+            logger_1.logger.trace('CACHE', `Hit: ${filename}`);
+            performance_tracker_1.performanceTracker.trackCache(true);
+            return cached;
+        }
+        logger_1.logger.trace('CACHE', `Miss: ${filename}`);
+        performance_tracker_1.performanceTracker.trackCache(false);
+        const result = await processor();
+        // Store in cache with default TTL
+        this.set(key, result);
+        logger_1.logger.trace('CACHE', `Cached: ${filename}`);
+        return result;
+    }
+    /**
+     * Get cache statistics for monitoring
+     */
+    getStats() {
+        return {
+            size: this.size(),
+            ttlMs: this['defaultTtlMs'], // Access private property for stats
+        };
+    }
+    /**
+     * Pre-warm cache with known results (useful for testing)
+     */
+    preWarm(filename, diffContent, result) {
+        const key = this.generateCacheKey(filename, diffContent);
+        this.set(key, result);
+        logger_1.logger.debug(constants_1.LoggerServices.CACHE_ANALYSIS, `Pre-warmed cache for ${filename} (key: ${key})`);
+    }
+}
+exports.CodeAnalysisCache = CodeAnalysisCache;
+
+
+/***/ }),
+
+/***/ 282:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GenericCache = void 0;
+/**
+ * Generic cache utility for storing any type of data with expiration
+ */
+class GenericCache {
+    constructor(defaultTtlMs = 3600000) {
+        this.cache = new Map();
+        // Default 1 hour TTL
+        this.defaultTtlMs = defaultTtlMs;
+    }
+    get(key) {
+        const cached = this.cache.get(key);
+        if (!cached)
+            return null;
+        // Check if cache has expired
+        const ageMs = Date.now() - cached.timestamp.getTime();
+        if (ageMs > this.defaultTtlMs) {
+            this.cache.delete(key);
+            return null;
+        }
+        return cached.data;
+    }
+    set(key, data, ttlMs) {
+        this.cache.set(key, {
+            data,
+            timestamp: new Date(),
+        });
+        // If custom TTL is provided, set a timeout to clear this specific entry
+        if (ttlMs && ttlMs !== this.defaultTtlMs) {
+            setTimeout(() => {
+                this.cache.delete(key);
+            }, ttlMs);
+        }
+    }
+    delete(key) {
+        return this.cache.delete(key);
+    }
+    clear() {
+        this.cache.clear();
+    }
+    size() {
+        return this.cache.size;
+    }
+    has(key) {
+        const cached = this.cache.get(key);
+        if (!cached)
+            return false;
+        // Check if cache has expired
+        const ageMs = Date.now() - cached.timestamp.getTime();
+        if (ageMs > this.defaultTtlMs) {
+            this.cache.delete(key);
+            return false;
+        }
+        return true;
+    }
+    /**
+     * Get all keys with a specific prefix
+     * Used for semantic cache operations
+     */
+    getKeysWithPrefix(prefix) {
+        const keys = [];
+        for (const key of this.cache.keys()) {
+            if (key.startsWith(prefix)) {
+                // Check if entry is still valid (not expired)
+                if (this.has(key)) {
+                    keys.push(key);
+                }
+            }
+        }
+        return keys;
+    }
+}
+exports.GenericCache = GenericCache;
+
+
+/***/ }),
+
+/***/ 6895:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Logger Constants
+ *
+ * Centralized constants for logging configuration and service naming
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LogMessages = exports.LogLevels = exports.LoggerServices = void 0;
+// Standard service names - use UPPERCASE_UNDERSCORE format
+exports.LoggerServices = {
+    // Core application services
+    MAIN: 'MAIN',
+    PERF: 'PERF',
+    PERFORMANCE: 'PERFORMANCE',
+    // AI and analysis services
+    CODE_ANALYSIS: 'CODE_ANALYSIS',
+    AI_ANALYZER: 'AI_ANALYZER',
+    // Theme services
+    EXPANSION: 'EXPANSION',
+    CONSOLIDATION: 'CONSOLIDATION',
+    SIMILARITY: 'SIMILARITY',
+    SIMILARITY_HIERARCHICAL: 'SIMILARITY_HIERARCHICAL',
+    // Cache services
+    CACHE_SEMANTIC: 'CACHE_SEMANTIC',
+    CACHE_ANALYSIS: 'CACHE_ANALYSIS',
+    // Claude client services
+    CLAUDE_CLIENT: 'CLAUDE_CLIENT',
+    // Business domain services
+    BUSINESS_DOMAIN: 'BUSINESS_DOMAIN',
+    // Git services
+    GIT_SERVICE: 'GIT_SERVICE',
+};
+// Log level priorities (from logger.ts LogLevel enum)
+exports.LogLevels = {
+    ERROR: 0,
+    WARN: 1,
+    INFO: 2,
+    DEBUG: 3,
+    TRACE: 4,
+};
+// Common message patterns to avoid duplication
+exports.LogMessages = {
+    STARTING_ANALYSIS: 'Starting analysis',
+    ANALYSIS_COMPLETE: 'Analysis complete',
+    PROCESSING_ITEMS: (count, type) => `Processing ${count} ${type}`,
+    FAILED_OPERATION: (operation, error) => `${operation} failed: ${error}`,
+    CACHE_HIT: (context) => `Cache hit for ${context}`,
+    CACHE_MISS: (context) => `Cache miss for ${context}`,
+};
+
+
+/***/ }),
+
+/***/ 9000:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logger = exports.Logger = exports.LogLevel = void 0;
+/**
+ * Logging utility with configurable levels
+ */
+const fs = __importStar(__nccwpck_require__(9896));
+var LogLevel;
+(function (LogLevel) {
+    LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
+    LogLevel[LogLevel["WARN"] = 1] = "WARN";
+    LogLevel[LogLevel["INFO"] = 2] = "INFO";
+    LogLevel[LogLevel["DEBUG"] = 3] = "DEBUG";
+    LogLevel[LogLevel["TRACE"] = 4] = "TRACE";
+})(LogLevel || (exports.LogLevel = LogLevel = {}));
+class Logger {
+    static parseLogLevel(level) {
+        switch (level.toUpperCase()) {
+            case 'ERROR':
+                return LogLevel.ERROR;
+            case 'WARN':
+                return LogLevel.WARN;
+            case 'INFO':
+                return LogLevel.INFO;
+            case 'DEBUG':
+                return LogLevel.DEBUG;
+            case 'TRACE':
+                return LogLevel.TRACE;
+            default:
+                return LogLevel.INFO;
+        }
+    }
+    static formatMessage(level, service, message) {
+        const timestamp = process.env.LOG_TIMESTAMPS === 'true'
+            ? `[${new Date().toISOString()}] `
+            : '';
+        return `${timestamp}[${level}] [${service}] ${message}`;
+    }
+    static initializeLiveLogging(logFilePath) {
+        try {
+            Logger.logFileStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+            Logger.logHistory = []; // Reset history when starting new log file
+        }
+        catch (error) {
+            console.error(`Failed to initialize log file: ${error}`);
+            Logger.logFileStream = null;
+        }
+    }
+    static closeLiveLogging() {
+        if (Logger.logFileStream) {
+            Logger.logFileStream.end();
+            Logger.logFileStream = null;
+        }
+    }
+    static getLogHistory() {
+        return Logger.logHistory.join('\n');
+    }
+    static clearLogHistory() {
+        Logger.logHistory = [];
+    }
+    static writeToLog(formattedMessage) {
+        // Add to history buffer
+        Logger.logHistory.push(formattedMessage);
+        // Maintain history size limit
+        if (Logger.logHistory.length > Logger.MAX_HISTORY_SIZE) {
+            Logger.logHistory.shift();
+        }
+        // Write to live log file if available
+        if (Logger.logFileStream) {
+            try {
+                Logger.logFileStream.write(formattedMessage + '\n');
+            }
+            catch (error) {
+                console.error(`Failed to write to log file: ${error}`);
+            }
+        }
+    }
+    static error(service, message) {
+        if (Logger.level >= LogLevel.ERROR) {
+            const formatted = Logger.formatMessage('ERROR', service, message);
+            console.error(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static warn(service, message) {
+        if (Logger.level >= LogLevel.WARN) {
+            const formatted = Logger.formatMessage('WARN', service, message);
+            console.warn(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static info(service, message) {
+        if (Logger.level >= LogLevel.INFO) {
+            const formatted = Logger.formatMessage('INFO', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static debug(service, message) {
+        if (Logger.level >= LogLevel.DEBUG) {
+            const formatted = Logger.formatMessage('DEBUG', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static trace(service, message) {
+        if (Logger.level >= LogLevel.TRACE) {
+            const formatted = Logger.formatMessage('TRACE', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static setLevel(level) {
+        Logger.level = level;
+    }
+    static getLevel() {
+        return Logger.level;
+    }
+}
+exports.Logger = Logger;
+Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
+Logger.logFileStream = null;
+Logger.logHistory = [];
+Logger.MAX_HISTORY_SIZE = 10000;
+// Export convenience functions
+exports.logger = {
+    error: (service, message) => Logger.error(service, message),
+    warn: (service, message) => Logger.warn(service, message),
+    info: (service, message) => Logger.info(service, message),
+    debug: (service, message) => Logger.debug(service, message),
+    trace: (service, message) => Logger.trace(service, message),
+};
+
+
+/***/ }),
+
+/***/ 8416:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitService = void 0;
+const github = __importStar(__nccwpck_require__(3228));
+const exec = __importStar(__nccwpck_require__(5236));
+const ai_code_analyzer_1 = __nccwpck_require__(3562);
+class GitService {
+    shouldIncludeFile(filename) {
+        const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
+        console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
+        return !isExcluded;
+    }
+    constructor(githubToken, anthropicApiKey) {
+        this.githubToken = githubToken;
+        this.octokit = null;
+        // Initialize GitHub API client if token is available
+        if (this.githubToken) {
+            try {
+                this.octokit = github.getOctokit(this.githubToken);
+            }
+            catch (error) {
+                console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
+            }
+        }
+        // Initialize AI analyzer - use environment variable if not provided
+        const apiKey = anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+        if (!apiKey) {
+            throw new Error('[GIT-SERVICE] ANTHROPIC_API_KEY is required for AI code analysis');
+        }
+        this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(apiKey);
+    }
+    async getEnhancedChangedFiles() {
+        console.log('[GIT-SERVICE] Getting enhanced changed files with AI code analysis');
+        // Get basic changed files first
+        const changedFiles = await this.getChangedFiles();
+        if (changedFiles.length === 0) {
+            console.log('[GIT-SERVICE] No changed files to analyze');
+            return [];
+        }
+        // Prepare files for concurrent AI analysis
+        const filesToAnalyze = changedFiles.map((file) => ({
+            filename: file.filename,
+            diffPatch: file.patch || '',
+            changeType: file.status === 'removed'
+                ? 'deleted'
+                : file.status,
+        }));
+        console.log(`[GIT-SERVICE] Starting AI analysis of ${filesToAnalyze.length} files`);
+        // Use AICodeAnalyzer for processing changed files
+        const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
+        console.log(`[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
+        // Log cache statistics
+        const cacheStats = this.aiAnalyzer.getCacheStats();
+        console.log(`[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
+        return codeChanges;
+    }
+    async getPullRequestContext() {
+        // Production mode: Only handle GitHub Actions PR context
+        if (github.context.eventName === 'pull_request') {
+            const pr = github.context.payload.pull_request;
+            if (pr) {
+                console.log(`[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`);
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+        }
+        console.log('[GIT-SERVICE] No PR context found in GitHub Actions');
+        return null;
+    }
+    async getChangedFiles() {
+        const prContext = await this.getPullRequestContext();
+        if (!prContext) {
+            console.log('[GIT-SERVICE] No PR context available, returning empty file list');
+            return [];
+        }
+        console.log(`[GIT-SERVICE] PR Context: #${prContext.number}, event=${github.context.eventName}`);
+        // Production mode: Use GitHub API for PR files
+        if (prContext.number > 0 && this.octokit) {
+            console.log(`[GIT-SERVICE] Using GitHub API for PR #${prContext.number}`);
+            return await this.getChangedFilesFromGitHub(prContext.number);
+        }
+        console.log('[GIT-SERVICE] No GitHub API access or invalid PR context');
+        return [];
+    }
+    async getChangedFilesFromGitHub(prNumber) {
+        try {
+            if (!this.octokit) {
+                throw new Error('GitHub API client not initialized');
+            }
+            // Fetch all files using pagination (GitHub API returns max 30 per page)
+            const allFiles = [];
+            let page = 1;
+            let hasMore = true;
+            while (hasMore) {
+                const { data: files } = await this.octokit.rest.pulls.listFiles({
+                    ...github.context.repo,
+                    pull_number: prNumber,
+                    per_page: 100, // Maximum allowed by GitHub
+                    page: page,
+                });
+                allFiles.push(...files);
+                // If we got less than 100 files, we've reached the end
+                hasMore = files.length === 100;
+                page++;
+                // Safety limit to prevent infinite loops
+                if (page > 10) {
+                    console.warn('[GIT-SERVICE] Reached pagination limit, stopping at 1000 files');
+                    break;
+                }
+            }
+            const changedFiles = allFiles
+                .filter((file) => this.shouldIncludeFile(file.filename))
+                .map((file) => ({
+                filename: file.filename,
+                status: file.status,
+                additions: file.additions,
+                deletions: file.deletions,
+                patch: file.patch,
+            }));
+            console.log(`[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
+            return changedFiles;
+        }
+        catch (error) {
+            console.error('Failed to get changed files from GitHub:', error);
+            return [];
+        }
+    }
+    async getDiffContent(baseSha, headSha) {
+        let diffOutput = '';
+        try {
+            await exec.exec('git', ['diff', `${baseSha}...${headSha}`], {
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            console.error('Failed to get diff content:', error);
+        }
+        return diffOutput;
+    }
+}
+exports.GitService = GitService;
+// Patterns for files to exclude from analysis
+GitService.EXCLUDED_PATTERNS = [
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /package-lock\.json$/, // Exclude lock files
+];
+
+
+/***/ }),
+
+/***/ 3562:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -35869,11 +37417,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AICodeAnalyzer = void 0;
 const path = __importStar(__nccwpck_require__(6928));
-const claude_client_1 = __nccwpck_require__(3831);
-const json_extractor_1 = __nccwpck_require__(2642);
-const code_analysis_cache_1 = __nccwpck_require__(8940);
-const concurrency_manager_1 = __nccwpck_require__(8692);
-const logger_1 = __nccwpck_require__(7893);
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
+const code_analysis_cache_1 = __nccwpck_require__(5061);
+const logger_1 = __nccwpck_require__(9000);
 /**
  * AI-powered code analyzer that replaces regex-based analysis
  * Uses Claude to understand code structure across all programming languages
@@ -35891,7 +37438,7 @@ class AICodeAnalyzer {
         logger_1.logger.debug('CODE-ANALYSIS', `Analyzing ${changes.length} code changes`);
         const fileMetrics = this.analyzeFileMetrics(changes);
         const changePatterns = this.extractChangePatterns(changes);
-        const contextSummary = this.buildContextSummary(changes, fileMetrics, changePatterns);
+        const contextSummary = this.buildContextSummary(fileMetrics, changePatterns);
         const significantChanges = this.extractSignificantChanges(changes);
         return {
             fileMetrics,
@@ -35904,7 +37451,7 @@ class AICodeAnalyzer {
      * Process a single changed file with AI analysis
      * Replaces the static processChangedFile method
      */
-    async processChangedFile(filename, diffPatch, changeType, linesAdded, linesRemoved) {
+    async processChangedFile(filename, diffPatch, changeType) {
         logger_1.logger.trace('CODE-ANALYSIS', `Processing ${filename} (${changeType})`);
         return await this.cache.getOrAnalyze(filename, diffPatch, async () => {
             try {
@@ -35913,8 +37460,6 @@ class AICodeAnalyzer {
                     file: filename,
                     diffHunk: diffPatch,
                     changeType,
-                    linesAdded,
-                    linesRemoved,
                     functionsChanged: aiAnalysis.functionsChanged,
                     classesChanged: aiAnalysis.classesChanged,
                     importsChanged: aiAnalysis.importsChanged,
@@ -35930,35 +37475,45 @@ class AICodeAnalyzer {
             catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 console.warn(`[AI-CODE-ANALYZER] AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`);
-                return this.createMinimalAnalysis(filename, diffPatch, changeType, linesAdded, linesRemoved);
+                return this.createMinimalAnalysis(filename, diffPatch, changeType);
             }
         });
     }
     /**
-     * Process multiple files concurrently using ConcurrencyManager
+     * Process multiple files in parallel batches
+     * ClaudeClient handles rate limiting and concurrency
      */
     async processChangedFilesConcurrently(files) {
         logger_1.logger.debug('CODE-ANALYSIS', `Processing ${files.length} files`);
-        const results = await concurrency_manager_1.ConcurrencyManager.processConcurrentlyWithLimit(files, async (file) => {
-            return await this.processChangedFile(file.filename, file.diffPatch, file.changeType, file.linesAdded, file.linesRemoved);
-        }, {
-            concurrencyLimit: 5,
-            maxRetries: 3,
-            enableLogging: false, // Disable ConcurrencyManager's own logging
-            onProgress: (completed, total) => {
-                // Only log major milestones
-                if (completed % Math.max(1, Math.floor(total / 4)) === 0) {
-                    logger_1.logger.debug('CODE-ANALYSIS', `Progress: ${completed}/${total} files`);
-                }
-            },
-            onError: (error, item, retryCount) => logger_1.logger.warn('CODE-ANALYSIS', `Retry ${retryCount} for ${item.filename}: ${error.message}`),
+        // Process all files concurrently - let ClaudeClient handle rate limiting
+        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
+        logger_1.logger.debug('CODE-ANALYSIS', `Processing all ${files.length} files concurrently`);
+        const filePromises = files.map(async (file) => {
+            try {
+                const result = await this.processChangedFile(file.filename, file.diffPatch, file.changeType);
+                return { success: true, result, file };
+            }
+            catch (error) {
+                const errorObj = error instanceof Error ? error : new Error(String(error));
+                logger_1.logger.warn('CODE-ANALYSIS', `Failed: ${file.filename} - ${errorObj.message}`);
+                return { success: false, error: errorObj, file };
+            }
         });
-        const { successful, failed } = concurrency_manager_1.ConcurrencyManager.separateResults(results);
+        // Wait for all files to complete - ClaudeClient manages the 10 concurrent limit
+        const allResults = await Promise.all(filePromises);
+        // Separate successful and failed results
+        const successful = [];
+        const failed = [];
+        for (const result of allResults) {
+            if (result.success) {
+                successful.push(result.result);
+            }
+            else {
+                failed.push({ filename: result.file.filename, error: result.error });
+            }
+        }
         if (failed.length > 0) {
             logger_1.logger.warn('CODE-ANALYSIS', `${failed.length} files failed analysis`);
-            for (const failure of failed) {
-                logger_1.logger.warn('CODE-ANALYSIS', `Failed: ${failure.item.filename} - ${failure.error.message}`);
-            }
         }
         logger_1.logger.info('CODE-ANALYSIS', `Analyzed ${successful.length}/${files.length} files`);
         return successful;
@@ -35968,7 +37523,7 @@ class AICodeAnalyzer {
      */
     async analyzeWithAI(filename, diffContent, changeType) {
         const prompt = this.buildCodeAnalysisPrompt(filename, diffContent, changeType);
-        const response = await this.claudeClient.callClaude(prompt);
+        const response = await this.claudeClient.callClaude(prompt, 'code-analysis', filename);
         const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['functionsChanged', 'classesChanged', 'importsChanged', 'fileType']);
         if (!extractionResult.success) {
             throw new Error(`Failed to parse AI response: ${extractionResult.error}`);
@@ -36036,13 +37591,11 @@ Respond with ONLY the JSON object, no explanations.`;
     /**
      * Create minimal analysis when AI fails
      */
-    createMinimalAnalysis(filename, diffPatch, changeType, linesAdded, linesRemoved) {
+    createMinimalAnalysis(filename, diffPatch, changeType) {
         return {
             file: filename,
             diffHunk: diffPatch,
             changeType,
-            linesAdded,
-            linesRemoved,
             functionsChanged: [],
             classesChanged: [],
             importsChanged: [],
@@ -36125,17 +37678,16 @@ Respond with ONLY the JSON object, no explanations.`;
         const fileTypes = [
             ...new Set(changes.map((c) => c.fileType).filter((type) => type)),
         ];
-        const totalLines = changes.reduce((sum, c) => sum + c.linesAdded + c.linesRemoved, 0);
         const fileCount = changes.length;
         // Enhanced complexity scoring using AI results
         const complexityScores = changes.map((c) => c.codeComplexity);
         const highComplexity = complexityScores.filter((c) => c === 'high').length;
         const mediumComplexity = complexityScores.filter((c) => c === 'medium').length;
         let codeComplexity = 'low';
-        if (highComplexity > 0 || fileCount > 10 || totalLines > 500) {
+        if (highComplexity > 0 || fileCount > 10) {
             codeComplexity = 'high';
         }
-        else if (mediumComplexity > 1 || fileCount > 3 || totalLines > 100) {
+        else if (mediumComplexity > 1 || fileCount > 3) {
             codeComplexity = 'medium';
         }
         return {
@@ -36187,7 +37739,7 @@ Respond with ONLY the JSON object, no explanations.`;
             businessDomains,
         };
     }
-    buildContextSummary(changes, metrics, patterns) {
+    buildContextSummary(metrics, patterns) {
         const summary = [];
         // File overview
         summary.push(`${metrics.totalFiles} files changed`);
@@ -36218,11 +37770,6 @@ Respond with ONLY the JSON object, no explanations.`;
     }
     extractSignificantChanges(changes) {
         const significant = [];
-        // Large files
-        const largeChanges = changes.filter((c) => c.linesAdded + c.linesRemoved > 50);
-        for (const change of largeChanges) {
-            significant.push(`Large change in ${change.file} (+${change.linesAdded}/-${change.linesRemoved})`);
-        }
         // New files
         const newFiles = changes.filter((c) => c.changeType === 'added');
         for (const file of newFiles) {
@@ -36254,7 +37801,7 @@ exports.AICodeAnalyzer = AICodeAnalyzer;
 
 /***/ }),
 
-/***/ 3831:
+/***/ 3861:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
@@ -36295,8 +37842,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ClaudeClient = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
-const secure_file_namer_1 = __nccwpck_require__(1661);
-const performance_tracker_1 = __nccwpck_require__(9766);
+const secure_file_namer_1 = __nccwpck_require__(5584);
+const performance_tracker_1 = __nccwpck_require__(9600);
 /**
  * Enhanced Claude client with performance tracking and global rate limiting
  */
@@ -36340,9 +37887,9 @@ class ClaudeClient {
             ClaudeClient.queueMetrics.maxQueueLength = Math.max(ClaudeClient.queueMetrics.maxQueueLength, ClaudeClient.requestQueue.length);
             // Start processing if not already running
             ClaudeClient.startQueueProcessor();
-            // Log queue status every 10 requests
+            // Log enhanced queue status every 10 requests
             if (ClaudeClient.queueMetrics.totalQueued % 10 === 0) {
-                console.log(`[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting, ${ClaudeClient.activeRequests} active, ${ClaudeClient.queueMetrics.totalProcessed} completed`);
+                ClaudeClient.logEnhancedQueueStatus();
             }
         });
     }
@@ -36353,35 +37900,72 @@ class ClaudeClient {
         if (!ClaudeClient.isProcessing) {
             ClaudeClient.isProcessing = true;
             ClaudeClient.processingPromise = ClaudeClient.processQueue();
+            // Start periodic diagnostic logging
+            ClaudeClient.startPeriodicLogging();
         }
+    }
+    /**
+     * Start periodic diagnostic logging every 10 seconds
+     */
+    static startPeriodicLogging() {
+        const logInterval = setInterval(() => {
+            if (ClaudeClient.requestQueue.length > 0 || ClaudeClient.activeRequests > 0) {
+                const cbActive = Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil;
+                console.log(`[CLAUDE-DIAGNOSTIC] active: ${ClaudeClient.activeRequests}/${ClaudeClient.MAX_CONCURRENT_REQUESTS}, queue: ${ClaudeClient.requestQueue.length}, processed: ${ClaudeClient.queueMetrics.totalProcessed}/${ClaudeClient.queueMetrics.totalQueued}${cbActive ? ', CB-ACTIVE' : ''}`);
+            }
+            else if (ClaudeClient.queueMetrics.totalProcessed > 0) {
+                // Stop logging when queue is empty and some work was done
+                clearInterval(logInterval);
+                console.log('[CLAUDE-DIAGNOSTIC] Queue empty, stopping logs');
+            }
+        }, 10000); // Every 10 seconds
     }
     /**
      * Process the request queue with rate limiting
      */
     static async processQueue() {
+        let loopIterations = 0;
+        let lastDiagnosticLog = Date.now();
         while (ClaudeClient.requestQueue.length > 0 ||
             ClaudeClient.activeRequests > 0) {
+            loopIterations++;
+            // Early termination check - if truly idle, exit immediately
+            if (ClaudeClient.requestQueue.length === 0 && ClaudeClient.activeRequests === 0) {
+                break;
+            }
+            // Log diagnostics every 5 seconds while processing
+            if (Date.now() - lastDiagnosticLog > 5000) {
+                console.log(`[CLAUDE-QUEUE] Loop #${loopIterations} | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}`);
+                lastDiagnosticLog = Date.now();
+            }
             // Check circuit breaker
             if (Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil) {
+                console.log('[CLAUDE-QUEUE] Circuit breaker active, sleeping 1000ms');
                 await ClaudeClient.sleep(1000);
                 continue;
             }
             // Check if we can start new request
-            if (ClaudeClient.requestQueue.length > 0 &&
-                ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS &&
-                Date.now() - ClaudeClient.lastRequestTime >=
-                    ClaudeClient.MIN_REQUEST_INTERVAL) {
+            const hasItemsInQueue = ClaudeClient.requestQueue.length > 0;
+            const hasCapacity = ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS;
+            const intervalPassed = Date.now() - ClaudeClient.lastRequestTime >= ClaudeClient.MIN_REQUEST_INTERVAL;
+            if (hasItemsInQueue && hasCapacity && intervalPassed) {
                 const queueItem = ClaudeClient.requestQueue.shift();
                 ClaudeClient.activeRequests++;
                 ClaudeClient.lastRequestTime = Date.now();
+                console.log(`[CLAUDE-QUEUE] Starting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
                 // Process request asynchronously
                 ClaudeClient.processRequest(queueItem);
             }
             else {
+                // Log why we can't start a new request (only if there are items in queue)
+                if (hasItemsInQueue && loopIterations % 100 === 0) { // Log every 100 iterations (5 seconds)
+                    console.log(`[CLAUDE-QUEUE] Waiting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, reason: ${!hasCapacity ? 'capacity' : !intervalPassed ? 'interval' : 'unknown'}`);
+                }
                 // Wait briefly before checking again
                 await ClaudeClient.sleep(50);
             }
         }
+        console.log(`[CLAUDE-QUEUE] Complete all | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, iterations: ${loopIterations}`);
         ClaudeClient.isProcessing = false;
         ClaudeClient.processingPromise = null;
     }
@@ -36390,6 +37974,10 @@ class ClaudeClient {
      */
     static async processRequest(queueItem) {
         const startTime = Date.now();
+        const contextKey = ClaudeClient.getCategoryKey(queueItem.context);
+        // Track active request by context
+        const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+        ClaudeClient.activeRequestsByContext.set(contextKey, currentActive + 1);
         try {
             // Create a temporary client instance for execution
             const tempClient = new ClaudeClient(process.env.ANTHROPIC_API_KEY || '');
@@ -36414,6 +38002,15 @@ class ClaudeClient {
         }
         finally {
             ClaudeClient.activeRequests--;
+            console.log(`[CLAUDE-QUEUE] Complete | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
+            // Remove from active context tracking
+            const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+            if (currentActive <= 1) {
+                ClaudeClient.activeRequestsByContext.delete(contextKey);
+            }
+            else {
+                ClaudeClient.activeRequestsByContext.set(contextKey, currentActive - 1);
+            }
         }
     }
     /**
@@ -36574,6 +38171,7 @@ class ClaudeClient {
         });
         ClaudeClient.requestQueue = [];
         ClaudeClient.activeRequests = 0;
+        ClaudeClient.activeRequestsByContext.clear();
         ClaudeClient.isProcessing = false;
         ClaudeClient.processingPromise = null;
         // Reset metrics
@@ -36625,12 +38223,71 @@ class ClaudeClient {
             },
         };
     }
+    /**
+     * Log enhanced queue status with categorization
+     */
+    static logEnhancedQueueStatus() {
+        const queueStats = ClaudeClient.getQueueCategoryStats();
+        const activeStats = ClaudeClient.getActiveCategoryStats();
+        // Build waiting queue breakdown
+        const waitingBreakdown = Object.entries(queueStats)
+            .filter(([, count]) => count > 0)
+            .map(([context, count]) => `${count}×${context}`)
+            .join(', ');
+        // Build active breakdown
+        const activeBreakdown = Object.entries(activeStats)
+            .filter(([, count]) => count > 0)
+            .map(([context, count]) => `${count}×${context}`)
+            .join(', ');
+        const waitingDesc = waitingBreakdown || '0';
+        const activeDesc = activeBreakdown || '0';
+        console.log(`[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`);
+    }
+    /**
+     * Get category statistics for waiting queue items
+     */
+    static getQueueCategoryStats() {
+        const stats = {};
+        for (const item of ClaudeClient.requestQueue) {
+            const key = ClaudeClient.getCategoryKey(item.context);
+            stats[key] = (stats[key] || 0) + 1;
+        }
+        return stats;
+    }
+    /**
+     * Get category statistics for active requests
+     */
+    static getActiveCategoryStats() {
+        const stats = {};
+        for (const [context, count] of ClaudeClient.activeRequestsByContext) {
+            stats[context] = count;
+        }
+        return stats;
+    }
+    /**
+     * Simplify context names for display
+     */
+    static getCategoryKey(context) {
+        // Simplify common context names for readability
+        const contextMap = {
+            'similarity-analysis': 'similarity',
+            'batch-similarity': 'batch-sim',
+            'domain-classification': 'domain',
+            'multi-domain-analysis': 'multi-domain',
+            'theme-expansion': 'expansion',
+            'theme-analysis': 'theme',
+            'code-analysis': 'code',
+            'hierarchical-analysis': 'hierarchy'
+        };
+        return contextMap[context] || context;
+    }
 }
 exports.ClaudeClient = ClaudeClient;
 // Static shared rate limiting components
 ClaudeClient.requestQueue = [];
 ClaudeClient.activeRequests = 0;
-ClaudeClient.MAX_CONCURRENT_REQUESTS = 5;
+ClaudeClient.activeRequestsByContext = new Map();
+ClaudeClient.MAX_CONCURRENT_REQUESTS = 10;
 ClaudeClient.MIN_REQUEST_INTERVAL = 200; // ms between requests
 ClaudeClient.isProcessing = false;
 ClaudeClient.lastRequestTime = 0;
@@ -36649,651 +38306,7 @@ ClaudeClient.queueMetrics = {
 
 /***/ }),
 
-/***/ 8940:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CodeAnalysisCache = void 0;
-const crypto = __importStar(__nccwpck_require__(6982));
-const generic_cache_1 = __nccwpck_require__(9267);
-const logger_1 = __nccwpck_require__(7893);
-const performance_tracker_1 = __nccwpck_require__(9766);
-/**
- * Specialized cache for AI-based code analysis results
- * Uses content-based hashing for cache keys to ensure cache hits on identical diffs
- */
-class CodeAnalysisCache extends generic_cache_1.GenericCache {
-    constructor(ttlMs = 86400000) {
-        // 24 hour default TTL
-        super(ttlMs);
-    }
-    /**
-     * Generate a cache key based on filename and diff content
-     * Uses SHA-256 hash for deterministic, collision-resistant keys
-     */
-    generateCacheKey(filename, diffContent) {
-        const content = `${filename}:${diffContent}`;
-        return crypto
-            .createHash('sha256')
-            .update(content)
-            .digest('hex')
-            .substring(0, 16); // Use first 16 chars for memory efficiency
-    }
-    /**
-     * Get cached analysis result or execute the processor function
-     * Provides transparent caching for AI code analysis
-     */
-    async getOrAnalyze(filename, diffContent, processor) {
-        const key = this.generateCacheKey(filename, diffContent);
-        const cached = this.get(key);
-        if (cached) {
-            logger_1.logger.trace('CACHE', `Hit: ${filename}`);
-            performance_tracker_1.performanceTracker.trackCache(true);
-            return cached;
-        }
-        logger_1.logger.trace('CACHE', `Miss: ${filename}`);
-        performance_tracker_1.performanceTracker.trackCache(false);
-        const result = await processor();
-        // Store in cache with default TTL
-        this.set(key, result);
-        logger_1.logger.trace('CACHE', `Cached: ${filename}`);
-        return result;
-    }
-    /**
-     * Get cache statistics for monitoring
-     */
-    getStats() {
-        return {
-            size: this.size(),
-            ttlMs: this['defaultTtlMs'], // Access private property for stats
-        };
-    }
-    /**
-     * Pre-warm cache with known results (useful for testing)
-     */
-    preWarm(filename, diffContent, result) {
-        const key = this.generateCacheKey(filename, diffContent);
-        this.set(key, result);
-        console.log(`[CODE-ANALYSIS-CACHE] Pre-warmed cache for ${filename} (key: ${key})`);
-    }
-}
-exports.CodeAnalysisCache = CodeAnalysisCache;
-
-
-/***/ }),
-
-/***/ 8692:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-/**
- * Concurrency management utility for processing items with controlled parallelism,
- * retry logic, and progress tracking with dynamic resource-based optimization.
- */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ConcurrencyManager = void 0;
-const os = __importStar(__nccwpck_require__(857));
-const DEFAULT_OPTIONS = {
-    concurrencyLimit: 0, // Will be calculated dynamically
-    dynamicConcurrency: true,
-    maxRetries: 3,
-    retryDelay: 1000,
-    retryBackoffMultiplier: 2,
-    enableJitter: true,
-    context: 'general',
-    enableLogging: false,
-};
-class ConcurrencyManager {
-    /**
-     * Get current system metrics for dynamic concurrency calculation
-     */
-    static getSystemMetrics() {
-        const memUsage = process.memoryUsage();
-        const totalMemory = os.totalmem();
-        const freeMemory = os.freemem();
-        const heapUsedMB = memUsage.heapUsed / (1024 * 1024);
-        const memoryUsagePercent = (totalMemory - freeMemory) / totalMemory;
-        return {
-            cpuCount: os.cpus().length,
-            availableMemory: freeMemory,
-            currentHeapUsed: memUsage.heapUsed,
-            isUnderMemoryPressure: memoryUsagePercent > 0.85 || heapUsedMB > 512,
-        };
-    }
-    /**
-     * Calculate optimal concurrency limit based on system resources
-     */
-    static calculateOptimalConcurrency(metrics, context = 'general') {
-        // Base concurrency from CPU count
-        let baseConcurrency = Math.max(3, Math.ceil(metrics.cpuCount * 0.8));
-        // Adjust for memory pressure
-        if (metrics.isUnderMemoryPressure) {
-            baseConcurrency = Math.max(2, Math.floor(baseConcurrency * 0.6));
-        }
-        // Context-specific adjustments
-        switch (context) {
-            case 'theme_processing':
-                // Theme processing is memory intensive
-                baseConcurrency = Math.min(baseConcurrency, 8);
-                break;
-            case 'ai_batch':
-                // AI batch processing has API limits
-                baseConcurrency = Math.min(baseConcurrency, 10);
-                break;
-            default:
-                baseConcurrency = Math.min(baseConcurrency, 12);
-        }
-        return Math.max(2, baseConcurrency); // Minimum of 2
-    }
-    /**
-     * Get context-aware retry configuration
-     */
-    static getRetryConfig(context, error) {
-        const isRateLimit = error?.message?.includes('rate limit') || error?.message?.includes('429');
-        switch (context) {
-            case 'theme_processing':
-                return {
-                    maxRetries: isRateLimit ? 5 : 3,
-                    baseDelay: isRateLimit ? 2000 : 1000,
-                    multiplier: 1.8,
-                };
-            case 'ai_batch':
-                return {
-                    maxRetries: isRateLimit ? 6 : 2,
-                    baseDelay: isRateLimit ? 3000 : 800,
-                    multiplier: 2.2,
-                };
-            default:
-                return {
-                    maxRetries: isRateLimit ? 4 : 3,
-                    baseDelay: 1000,
-                    multiplier: 2.0,
-                };
-        }
-    }
-    /**
-     * Process items concurrently with controlled parallelism and retry logic.
-     *
-     * When an item finishes processing, the next item immediately starts - no waiting for batches.
-     * Failed items are retried with exponential backoff up to maxRetries times.
-     *
-     * @param items Array of items to process
-     * @param processor Function that processes each item
-     * @param options Configuration options
-     * @returns Array of results in the same order as input items
-     */
-    static async processConcurrentlyWithLimit(items, processor, options) {
-        const config = { ...DEFAULT_OPTIONS, ...options };
-        // Calculate dynamic concurrency if enabled and not explicitly set
-        if (config.dynamicConcurrency && config.concurrencyLimit === 0) {
-            const metrics = ConcurrencyManager.getSystemMetrics();
-            config.concurrencyLimit = ConcurrencyManager.calculateOptimalConcurrency(metrics, config.context || 'general');
-            if (config.enableLogging) {
-                console.log(`[CONCURRENCY-MANAGER] Dynamic concurrency: ${config.concurrencyLimit} (CPUs: ${metrics.cpuCount}, Memory pressure: ${metrics.isUnderMemoryPressure})`);
-            }
-        }
-        else if (config.concurrencyLimit <= 0) {
-            // Fallback to safe default
-            config.concurrencyLimit = 5;
-        }
-        const results = new Array(items.length);
-        const active = new Set();
-        let completed = 0;
-        let index = 0;
-        const log = (message) => {
-            if (config.enableLogging) {
-                console.log(`[CONCURRENCY-MANAGER] ${message}`);
-            }
-        };
-        const processItem = async (item, itemIndex) => {
-            log(`Processing item ${itemIndex + 1}/${items.length}: starting`);
-            try {
-                const result = await ConcurrencyManager.processWithRetry(item, processor, config.maxRetries, config.retryDelay, config.onError, config.enableJitter, config.context);
-                log(`Processing item ${itemIndex + 1}/${items.length}: success`);
-                results[itemIndex] = result;
-            }
-            catch (error) {
-                log(`Processing item ${itemIndex + 1}/${items.length}: error - ${error}`);
-                results[itemIndex] = { error: error, item };
-            }
-            finally {
-                completed++;
-                log(`Processing item ${itemIndex + 1}/${items.length}: completed (${completed}/${items.length})`);
-                if (config.onProgress) {
-                    config.onProgress(completed, items.length);
-                }
-            }
-        };
-        return new Promise((resolve) => {
-            // Handle empty array case
-            if (items.length === 0) {
-                log('Empty items array, resolving immediately');
-                resolve(results);
-                return;
-            }
-            log(`Starting processing of ${items.length} items with limit ${config.concurrencyLimit}`);
-            const startNext = () => {
-                // Start new items while under concurrency limit and items remain
-                while (active.size < config.concurrencyLimit && index < items.length) {
-                    const currentIndex = index++;
-                    log(`Starting item ${currentIndex + 1}/${items.length}, active: ${active.size}`);
-                    const promise = processItem(items[currentIndex], currentIndex);
-                    active.add(promise);
-                    promise.finally(() => {
-                        active.delete(promise);
-                        log(`Completed item, total completed: ${completed}/${items.length}, active: ${active.size}`);
-                        if (completed === items.length) {
-                            log('All items completed, resolving');
-                            resolve(results);
-                        }
-                        else {
-                            startNext(); // Try to start next item immediately
-                        }
-                    });
-                }
-                // Log waiting status if all items started but some still processing
-                if (index >= items.length && active.size > 0) {
-                    log(`No more items to start, waiting for ${active.size} active promises`);
-                }
-            };
-            startNext();
-        });
-    }
-    /**
-     * Process a single item with retry logic and exponential backoff.
-     *
-     * @param item Item to process
-     * @param processor Processing function
-     * @param maxRetries Maximum number of retry attempts
-     * @param baseDelay Base delay between retries in milliseconds
-     * @param onError Optional error callback
-     * @returns Processed result
-     * @throws Error if all retry attempts fail
-     */
-    static async processWithRetry(item, processor, maxRetries = 3, baseDelay = 1000, onError, enableJitter = true, context = 'general') {
-        let lastError;
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            try {
-                return await processor(item);
-            }
-            catch (error) {
-                lastError = error;
-                if (attempt < maxRetries) {
-                    // Get context-aware retry config
-                    const retryConfig = ConcurrencyManager.getRetryConfig(context, lastError);
-                    // Use context-specific settings or fall back to provided values
-                    const effectiveMaxRetries = Math.max(maxRetries, retryConfig.maxRetries);
-                    const effectiveBaseDelay = Math.max(baseDelay, retryConfig.baseDelay);
-                    const effectiveMultiplier = retryConfig.multiplier;
-                    if (attempt < effectiveMaxRetries) {
-                        const delay = ConcurrencyManager.calculateBackoffDelay(attempt, effectiveBaseDelay, effectiveMultiplier, enableJitter);
-                        if (onError) {
-                            onError(lastError, item, attempt + 1);
-                        }
-                        console.log(`[CONCURRENCY-MANAGER] Retry ${attempt + 1}/${effectiveMaxRetries} after ${delay}ms delay (context: ${context})`);
-                        await ConcurrencyManager.sleep(delay);
-                    }
-                    else {
-                        break; // Exceeded max retries for this context
-                    }
-                }
-            }
-        }
-        throw lastError;
-    }
-    /**
-     * Calculate exponential backoff delay with jitter and maximum cap.
-     *
-     * @param attempt Current attempt number (0-based)
-     * @param baseDelay Base delay in milliseconds
-     * @param multiplier Backoff multiplier
-     * @returns Delay in milliseconds
-     */
-    static calculateBackoffDelay(attempt, baseDelay, multiplier = 2, enableJitter = true) {
-        const exponentialDelay = baseDelay * Math.pow(multiplier, attempt);
-        let finalDelay = exponentialDelay;
-        if (enableJitter) {
-            // Add jitter: 10% random variation
-            const jitterRange = exponentialDelay * 0.1;
-            const jitter = (Math.random() - 0.5) * 2 * jitterRange;
-            finalDelay = exponentialDelay + jitter;
-        }
-        // Cap at 30 seconds maximum, minimum 100ms
-        return Math.max(100, Math.min(finalDelay, 30000));
-    }
-    /**
-     * Sleep utility function.
-     *
-     * @param ms Milliseconds to sleep
-     * @returns Promise that resolves after the specified time
-     */
-    static sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-    /**
-     * Helper to separate successful results from errors.
-     *
-     * @param results Mixed array of results and errors
-     * @returns Object with separate successful and failed arrays
-     */
-    static separateResults(results) {
-        const successful = [];
-        const failed = [];
-        for (const result of results) {
-            if (result && typeof result === 'object' && 'error' in result) {
-                failed.push(result);
-            }
-            else {
-                successful.push(result);
-            }
-        }
-        return { successful, failed };
-    }
-    /**
-     * Enhanced processing with dynamic concurrency adjustment based on API performance
-     * PRD: "Adaptive concurrency: Start with 5 concurrent operations, adjust based on API response times"
-     */
-    static async processConcurrentlyWithAdaptiveLimit(items, processor, options) {
-        const config = {
-            ...DEFAULT_OPTIONS,
-            initialConcurrency: 5, // PRD requirement
-            targetResponseTime: 2000, // 2 seconds target
-            adjustmentInterval: 10,
-            ...options,
-        };
-        let currentConcurrency = config.initialConcurrency;
-        const results = [];
-        const responseTimes = [];
-        const errorCounts = [];
-        console.log(`[ADAPTIVE-CONCURRENCY] Starting with ${currentConcurrency} concurrent operations`);
-        // Process items in chunks to allow for concurrency adjustment
-        const chunkSize = config.adjustmentInterval;
-        for (let i = 0; i < items.length; i += chunkSize) {
-            const chunk = items.slice(i, i + chunkSize);
-            // Process chunk with current concurrency limit
-            const chunkResults = await ConcurrencyManager.processConcurrentlyWithLimit(chunk, async (item) => {
-                const itemStartTime = Date.now();
-                try {
-                    const result = await processor(item);
-                    responseTimes.push(Date.now() - itemStartTime);
-                    return result;
-                }
-                catch (error) {
-                    responseTimes.push(Date.now() - itemStartTime);
-                    throw error;
-                }
-            }, {
-                ...config,
-                concurrencyLimit: currentConcurrency,
-                dynamicConcurrency: false, // We're handling adjustment manually
-            });
-            results.push(...chunkResults);
-            // Calculate metrics for this chunk
-            const chunkErrors = chunkResults.filter((r) => r && typeof r === 'object' && 'error' in r).length;
-            const errorRate = chunkErrors / chunk.length;
-            errorCounts.push(chunkErrors);
-            // Adjust concurrency based on performance
-            const newConcurrency = this.calculateAdjustedConcurrency(currentConcurrency, responseTimes.slice(-chunkSize), // Recent response times
-            errorRate, config.targetResponseTime);
-            if (newConcurrency !== currentConcurrency) {
-                console.log(`[ADAPTIVE-CONCURRENCY] Adjusting concurrency: ${currentConcurrency} → ${newConcurrency} ` +
-                    `(avg response time: ${this.calculateAverageResponseTime(responseTimes.slice(-chunkSize))}ms, ` +
-                    `error rate: ${(errorRate * 100).toFixed(1)}%)`);
-                currentConcurrency = newConcurrency;
-            }
-            // Progress reporting
-            if (config.onProgress) {
-                config.onProgress(Math.min(i + chunkSize, items.length), items.length);
-            }
-        }
-        console.log(`[ADAPTIVE-CONCURRENCY] Completed with final concurrency: ${currentConcurrency}, ` +
-            `avg response time: ${this.calculateAverageResponseTime(responseTimes)}ms`);
-        return results;
-    }
-    /**
-     * Calculate adjusted concurrency based on performance metrics
-     * PRD: "Increase by 1 if avg response < 500ms, Decrease by 2 if error rate > 5%"
-     */
-    static calculateAdjustedConcurrency(currentConcurrency, recentResponseTimes, errorRate, targetResponseTime) {
-        if (recentResponseTimes.length === 0) {
-            return currentConcurrency;
-        }
-        const avgResponseTime = this.calculateAverageResponseTime(recentResponseTimes);
-        // PRD: Decrease by 2 if error rate > 5%
-        if (errorRate > 0.05) {
-            return Math.max(2, currentConcurrency - 2);
-        }
-        // PRD: Increase by 1 if avg response < 500ms (fast responses)
-        if (avgResponseTime < 500) {
-            return Math.min(10, currentConcurrency + 1); // Max limit of 10 as per PRD
-        }
-        // Decrease if responses are much slower than target
-        if (avgResponseTime > targetResponseTime * 1.5) {
-            return Math.max(2, currentConcurrency - 1);
-        }
-        // Stay the same if performance is acceptable
-        return currentConcurrency;
-    }
-    /**
-     * Calculate average response time from array of times
-     */
-    static calculateAverageResponseTime(responseTimes) {
-        if (responseTimes.length === 0)
-            return 0;
-        return (responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length);
-    }
-    /**
-     * Enhanced processing with circuit breaker pattern
-     * PRD: "Never fail completely: Always provide meaningful output"
-     */
-    static async processConcurrentlyWithCircuitBreaker(items, processor, options) {
-        const config = {
-            failureThreshold: 0.5,
-            circuitBreakerTimeout: 30000,
-            ...options,
-        };
-        let circuitOpen = false;
-        let circuitOpenTime = 0;
-        let totalRequests = 0;
-        let failedRequests = 0;
-        const wrappedProcessor = async (item) => {
-            totalRequests++;
-            // Check if circuit should be closed again
-            if (circuitOpen &&
-                Date.now() - circuitOpenTime > config.circuitBreakerTimeout) {
-                console.log('[CIRCUIT-BREAKER] Attempting to close circuit');
-                circuitOpen = false;
-                failedRequests = 0;
-                totalRequests = 0;
-            }
-            // If circuit is open, use fallback or throw
-            if (circuitOpen) {
-                if (config.fallbackProcessor) {
-                    console.log('[CIRCUIT-BREAKER] Using fallback processor');
-                    return await config.fallbackProcessor(item);
-                }
-                else {
-                    throw new Error('Circuit breaker is open - too many failures');
-                }
-            }
-            try {
-                const result = await processor(item);
-                return result;
-            }
-            catch (error) {
-                failedRequests++;
-                // Check if we should open the circuit
-                const failureRate = failedRequests / totalRequests;
-                if (totalRequests >= 10 && failureRate >= config.failureThreshold) {
-                    console.warn(`[CIRCUIT-BREAKER] Opening circuit due to high failure rate: ${(failureRate * 100).toFixed(1)}%`);
-                    circuitOpen = true;
-                    circuitOpenTime = Date.now();
-                }
-                throw error;
-            }
-        };
-        // Use adaptive concurrency with circuit breaker
-        return await ConcurrencyManager.processConcurrentlyWithAdaptiveLimit(items, wrappedProcessor, config);
-    }
-}
-exports.ConcurrencyManager = ConcurrencyManager;
-
-
-/***/ }),
-
-/***/ 9267:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GenericCache = void 0;
-/**
- * Generic cache utility for storing any type of data with expiration
- */
-class GenericCache {
-    constructor(defaultTtlMs = 3600000) {
-        this.cache = new Map();
-        // Default 1 hour TTL
-        this.defaultTtlMs = defaultTtlMs;
-    }
-    get(key) {
-        const cached = this.cache.get(key);
-        if (!cached)
-            return null;
-        // Check if cache has expired
-        const ageMs = Date.now() - cached.timestamp.getTime();
-        if (ageMs > this.defaultTtlMs) {
-            this.cache.delete(key);
-            return null;
-        }
-        return cached.data;
-    }
-    set(key, data, ttlMs) {
-        this.cache.set(key, {
-            data,
-            timestamp: new Date(),
-        });
-        // If custom TTL is provided, set a timeout to clear this specific entry
-        if (ttlMs && ttlMs !== this.defaultTtlMs) {
-            setTimeout(() => {
-                this.cache.delete(key);
-            }, ttlMs);
-        }
-    }
-    delete(key) {
-        return this.cache.delete(key);
-    }
-    clear() {
-        this.cache.clear();
-    }
-    size() {
-        return this.cache.size;
-    }
-    has(key) {
-        const cached = this.cache.get(key);
-        if (!cached)
-            return false;
-        // Check if cache has expired
-        const ageMs = Date.now() - cached.timestamp.getTime();
-        if (ageMs > this.defaultTtlMs) {
-            this.cache.delete(key);
-            return false;
-        }
-        return true;
-    }
-    /**
-     * Get all keys with a specific prefix
-     * Used for semantic cache operations
-     */
-    getKeysWithPrefix(prefix) {
-        const keys = [];
-        for (const key of this.cache.keys()) {
-            if (key.startsWith(prefix)) {
-                // Check if entry is still valid (not expired)
-                if (this.has(key)) {
-                    keys.push(key);
-                }
-            }
-        }
-        return keys;
-    }
-}
-exports.GenericCache = GenericCache;
-
-
-/***/ }),
-
-/***/ 2642:
+/***/ 8168:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -37519,101 +38532,14 @@ exports.JsonExtractor = JsonExtractor;
 
 /***/ }),
 
-/***/ 7893:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-/**
- * Logging utility with configurable levels
- */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.logger = exports.Logger = exports.LogLevel = void 0;
-var LogLevel;
-(function (LogLevel) {
-    LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
-    LogLevel[LogLevel["WARN"] = 1] = "WARN";
-    LogLevel[LogLevel["INFO"] = 2] = "INFO";
-    LogLevel[LogLevel["DEBUG"] = 3] = "DEBUG";
-    LogLevel[LogLevel["TRACE"] = 4] = "TRACE";
-})(LogLevel || (exports.LogLevel = LogLevel = {}));
-class Logger {
-    static parseLogLevel(level) {
-        switch (level.toUpperCase()) {
-            case 'ERROR':
-                return LogLevel.ERROR;
-            case 'WARN':
-                return LogLevel.WARN;
-            case 'INFO':
-                return LogLevel.INFO;
-            case 'DEBUG':
-                return LogLevel.DEBUG;
-            case 'TRACE':
-                return LogLevel.TRACE;
-            default:
-                return LogLevel.INFO;
-        }
-    }
-    static formatMessage(level, service, message) {
-        const timestamp = process.env.LOG_TIMESTAMPS === 'true'
-            ? `[${new Date().toISOString()}] `
-            : '';
-        return `${timestamp}[${level}] [${service}] ${message}`;
-    }
-    static error(service, message) {
-        if (Logger.level >= LogLevel.ERROR) {
-            console.error(Logger.formatMessage('ERROR', service, message));
-        }
-    }
-    static warn(service, message) {
-        if (Logger.level >= LogLevel.WARN) {
-            console.warn(Logger.formatMessage('WARN', service, message));
-        }
-    }
-    static info(service, message) {
-        if (Logger.level >= LogLevel.INFO) {
-            console.log(Logger.formatMessage('INFO', service, message));
-        }
-    }
-    static debug(service, message) {
-        if (Logger.level >= LogLevel.DEBUG) {
-            console.log(Logger.formatMessage('DEBUG', service, message));
-        }
-    }
-    static trace(service, message) {
-        if (Logger.level >= LogLevel.TRACE) {
-            console.log(Logger.formatMessage('TRACE', service, message));
-        }
-    }
-    static setLevel(level) {
-        Logger.level = level;
-    }
-    static getLevel() {
-        return Logger.level;
-    }
-}
-exports.Logger = Logger;
-Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
-// Export convenience functions
-exports.logger = {
-    error: (service, message) => Logger.error(service, message),
-    warn: (service, message) => Logger.warn(service, message),
-    info: (service, message) => Logger.info(service, message),
-    debug: (service, message) => Logger.debug(service, message),
-    trace: (service, message) => Logger.trace(service, message),
-};
-
-
-/***/ }),
-
-/***/ 9766:
+/***/ 9600:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.performanceTracker = exports.PerformanceTracker = void 0;
-const logger_1 = __nccwpck_require__(7893);
+const logger_1 = __nccwpck_require__(9000);
 class PerformanceTracker {
     constructor() {
         this.timingStack = [];
@@ -37890,226 +38816,7 @@ exports.performanceTracker = PerformanceTracker.getInstance();
 
 /***/ }),
 
-/***/ 1661:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SecureFileNamer = void 0;
-const crypto = __importStar(__nccwpck_require__(6982));
-const os = __importStar(__nccwpck_require__(857));
-const path = __importStar(__nccwpck_require__(6928));
-const fs = __importStar(__nccwpck_require__(9896));
-/**
- * Secure file naming utility that prevents collisions in parallel execution
- * by using UUIDs, process IDs, and crypto-grade randomness
- */
-class SecureFileNamer {
-    /**
-     * Generate a collision-resistant file name for temporary files
-     */
-    static generateSecureFileName(prefix, extension = 'txt') {
-        const uuid = crypto.randomUUID().substring(0, 8);
-        const pid = this.processId;
-        const random = crypto.randomBytes(4).toString('hex');
-        const timestamp = Date.now();
-        return `${prefix}-${pid}-${uuid}-${random}-${timestamp}.${extension}`;
-    }
-    /**
-     * Generate a collision-resistant ID for entities (themes, batches, etc.)
-     */
-    static generateSecureId(prefix) {
-        const uuid = crypto.randomUUID();
-        return `${prefix}-${uuid}`;
-    }
-    /**
-     * Generate a short collision-resistant ID for performance-critical operations
-     */
-    static generateShortSecureId(prefix) {
-        const shortUuid = crypto.randomUUID().substring(0, 8);
-        const random = crypto.randomBytes(2).toString('hex');
-        return `${prefix}-${shortUuid}-${random}`;
-    }
-    /**
-     * Create a process-isolated temporary file path
-     */
-    static createSecureTempFilePath(prefix, extension = 'txt') {
-        const fileName = this.generateSecureFileName(prefix, extension);
-        const processDir = this.getProcessTempDir();
-        return path.join(processDir, fileName);
-    }
-    /**
-     * Get or create a process-specific temporary directory
-     */
-    static getProcessTempDir() {
-        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
-        try {
-            if (!fs.existsSync(processDir)) {
-                fs.mkdirSync(processDir, { recursive: true });
-            }
-        }
-        catch (error) {
-            // Fallback to system temp dir if process dir creation fails
-            console.warn(`Failed to create process temp dir: ${error}`);
-            return os.tmpdir();
-        }
-        return processDir;
-    }
-    /**
-     * Create a temporary file with secure naming and optional content
-     */
-    static createSecureTempFile(prefix, content = '', extension = 'txt') {
-        const filePath = this.createSecureTempFilePath(prefix, extension);
-        try {
-            fs.writeFileSync(filePath, content, 'utf8');
-        }
-        catch (error) {
-            throw new Error(`Failed to create secure temp file: ${error}`);
-        }
-        const cleanup = () => {
-            try {
-                if (fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
-                }
-            }
-            catch (error) {
-                console.warn(`Failed to cleanup temp file ${filePath}: ${error}`);
-            }
-        };
-        return { filePath, cleanup };
-    }
-    /**
-     * Clean up process-specific temporary directory
-     */
-    static cleanupProcessTempDir() {
-        const processDir = path.join(os.tmpdir(), `ai-code-review-${this.processId}-${this.processStartTime}`);
-        try {
-            if (fs.existsSync(processDir)) {
-                // Remove all files in the directory
-                const files = fs.readdirSync(processDir);
-                for (const file of files) {
-                    fs.unlinkSync(path.join(processDir, file));
-                }
-                // Remove the directory
-                fs.rmdirSync(processDir);
-            }
-        }
-        catch (error) {
-            console.warn(`Failed to cleanup process temp dir: ${error}`);
-        }
-    }
-    /**
-     * Generate batch ID with collision resistance for concurrent operations
-     */
-    static generateBatchId(batchType, promptType) {
-        const uuid = crypto.randomUUID().substring(0, 12);
-        const pid = this.processId;
-        const random = crypto.randomBytes(3).toString('hex');
-        if (promptType) {
-            return `${batchType}-${promptType}-${pid}-${uuid}-${random}`;
-        }
-        return `${batchType}-${pid}-${uuid}-${random}`;
-    }
-    /**
-     * Generate expansion/request ID with hierarchy support
-     */
-    static generateHierarchicalId(type, parentId, index) {
-        const uuid = crypto.randomUUID().substring(0, 8);
-        const random = crypto.randomBytes(2).toString('hex');
-        if (parentId && typeof index === 'number') {
-            return `${parentId}_${type}_${index}_${uuid}_${random}`;
-        }
-        if (parentId) {
-            return `${parentId}_${type}_${uuid}_${random}`;
-        }
-        return `${type}_${uuid}_${random}`;
-    }
-    /**
-     * Validate that a generated ID/filename is collision-resistant
-     */
-    static validateSecureNaming(name) {
-        // Check for minimum entropy (process ID + UUID parts + random)
-        const parts = name.split('-');
-        if (parts.length < 4)
-            return false;
-        // Check for presence of process ID (numeric)
-        if (!parts.some((part) => /^\d+$/.test(part)))
-            return false;
-        // Check for presence of hex random data
-        if (!parts.some((part) => /^[a-f0-9]{4,}$/i.test(part)))
-            return false;
-        return true;
-    }
-    /**
-     * Get statistics about the naming system
-     */
-    static getStats() {
-        return {
-            processId: this.processId,
-            processStartTime: this.processStartTime,
-            tempDir: this.getProcessTempDir(),
-            entropyBits: 128 + 32 + 16, // UUID + random bytes + timestamp
-        };
-    }
-}
-exports.SecureFileNamer = SecureFileNamer;
-SecureFileNamer.processId = process.pid;
-SecureFileNamer.processStartTime = Date.now();
-/**
- * Setup process cleanup handlers
- */
-function setupCleanupHandlers() {
-    const cleanup = () => SecureFileNamer.cleanupProcessTempDir();
-    process.on('exit', cleanup);
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
-    process.on('uncaughtException', (error) => {
-        console.error('Uncaught exception:', error);
-        cleanup();
-        process.exit(1);
-    });
-}
-// Initialize cleanup handlers
-setupCleanupHandlers();
-
-
-/***/ }),
-
-/***/ 7831:
+/***/ 241:
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -38266,220 +38973,93 @@ exports.SimilarityCalculator = SimilarityCalculator;
 
 /***/ }),
 
-/***/ 6583:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ 1798:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.handleError = handleError;
+exports.logInfo = logInfo;
+exports.setOutput = setOutput;
+const core = __importStar(__nccwpck_require__(7484));
+function handleError(error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    core.error(`Action failed: ${errorMessage}`);
+    core.setFailed(errorMessage);
+}
+function logInfo(message) {
+    core.info(message);
+}
+function setOutput(name, value) {
+    core.setOutput(name, value);
+}
+
+
+/***/ }),
+
+/***/ 8541:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ThemeFormatter = void 0;
-/**
- * Utility for formatting theme hierarchies for output
- */
-class ThemeFormatter {
-    /**
-     * Format themes for GitHub Actions output with deep hierarchy support
-     */
-    static formatThemesForOutput(themes) {
-        const themeCount = this.countTotalThemes(themes);
-        let output = `Found ${themeCount} themes:\\n`;
-        themes.forEach((theme, index) => {
-            output += this.formatThemeRecursively(theme, index + 1, 0);
-        });
-        return output;
-    }
-    /**
-     * Format a single theme recursively with proper indentation
-     */
-    static formatThemeRecursively(theme, number, depth, parentNumber) {
-        const indent = '   '.repeat(depth);
-        const confidence = (theme.confidence * 100).toFixed(0);
-        // Create theme number (e.g., "1", "1.1", "1.1.1")
-        const themeNumber = parentNumber
-            ? `${parentNumber}.${number}`
-            : `${number}`;
-        // Truncate description if too long
-        const description = this.truncateText(theme.description.replace(/[\r\n]/g, ' ').trim(), this.MAX_DESCRIPTION_LENGTH);
-        let output = `\\n${indent}${themeNumber}. **${theme.name}** (${confidence}%)`;
-        // Files on the same line or next line depending on length
-        const files = theme.affectedFiles.slice(0, this.MAX_FILES_SHOWN).join(', ');
-        const fileList = theme.affectedFiles.length > this.MAX_FILES_SHOWN
-            ? `${files} (+${theme.affectedFiles.length - this.MAX_FILES_SHOWN} more)`
-            : files;
-        output += `\\n${indent}   ${fileList}`;
-        // Main description
-        output += `\\n${indent}   ${description}`;
-        // Show detailed description only if significantly different and adds value
-        if (theme.detailedDescription &&
-            theme.detailedDescription.length > 20 &&
-            !theme.description
-                .toLowerCase()
-                .includes(theme.detailedDescription.toLowerCase().substring(0, 10))) {
-            output += ` ${theme.detailedDescription}`;
-        }
-        // No merge indicators, no emoji, just content
-        // Show child themes recursively without announcement
-        if (theme.childThemes && theme.childThemes.length > 0) {
-            output += '\\n'; // Add blank line before sub-themes
-            theme.childThemes.forEach((childTheme, childIndex) => {
-                output += this.formatThemeRecursively(childTheme, childIndex + 1, depth + 1, themeNumber);
-            });
-        }
-        return output;
-    }
-    /**
-     * Create a concise summary of the theme analysis
-     */
-    static createThemeSummary(themes) {
-        const totalThemes = this.countTotalThemes(themes);
-        const maxDepth = this.calculateMaxDepth(themes);
-        const avgConfidence = this.calculateAverageConfidence(themes);
-        const rootThemes = themes.length;
-        const expandedThemes = this.countExpandedThemes(themes);
-        const mergedThemes = this.countMergedThemes(themes);
-        let summary = `Analyzed code changes and identified ${totalThemes} themes across ${maxDepth + 1} hierarchy levels. `;
-        summary += `Root themes: ${rootThemes}, Average confidence: ${(avgConfidence * 100).toFixed(0)}%. `;
-        if (expandedThemes > 0) {
-            summary += `${expandedThemes} themes expanded for detailed analysis. `;
-        }
-        if (mergedThemes > 0) {
-            summary += `${mergedThemes} themes consolidated from similar patterns.`;
-        }
-        return summary;
-    }
-    /**
-     * Format themes for JSON output (useful for integrations)
-     */
-    static formatThemesAsJson(themes) {
-        const formatted = themes.map((theme) => this.themeToJsonObject(theme));
-        return JSON.stringify(formatted, null, 2);
-    }
-    /**
-     * Create a flat list of all themes with hierarchy indicators
-     */
-    static createFlatThemeList(themes) {
-        const flatThemes = [];
-        const collectThemes = (themeList, parentPath = '') => {
-            themeList.forEach((theme, index) => {
-                const currentPath = parentPath
-                    ? `${parentPath}.${index + 1}`
-                    : `${index + 1}`;
-                flatThemes.push({ theme, path: currentPath });
-                if (theme.childThemes.length > 0) {
-                    collectThemes(theme.childThemes, currentPath);
-                }
-            });
-        };
-        collectThemes(themes);
-        let output = `Theme hierarchy (${flatThemes.length} total themes):\\n`;
-        flatThemes.forEach(({ theme, path }) => {
-            const confidence = (theme.confidence * 100).toFixed(0);
-            const level = path.split('.').length;
-            const indent = '  '.repeat(level - 1);
-            output += `\\n${indent}${path}. ${theme.name} (${confidence}%, ${theme.affectedFiles.length} files)`;
-        });
-        return output;
-    }
-    // Private helper methods
-    static countTotalThemes(themes) {
-        let count = 0;
-        const countRecursively = (themeList) => {
-            count += themeList.length;
-            themeList.forEach((theme) => {
-                if (theme.childThemes.length > 0) {
-                    countRecursively(theme.childThemes);
-                }
-            });
-        };
-        countRecursively(themes);
-        return count;
-    }
-    static calculateMaxDepth(themes) {
-        let maxDepth = 0;
-        const findMaxDepth = (themeList, currentDepth) => {
-            maxDepth = Math.max(maxDepth, currentDepth);
-            themeList.forEach((theme) => {
-                if (theme.childThemes.length > 0) {
-                    findMaxDepth(theme.childThemes, currentDepth + 1);
-                }
-            });
-        };
-        findMaxDepth(themes, 0);
-        return maxDepth;
-    }
-    static calculateAverageConfidence(themes) {
-        const allThemes = [];
-        const collectAllThemes = (themeList) => {
-            themeList.forEach((theme) => {
-                allThemes.push(theme);
-                if (theme.childThemes.length > 0) {
-                    collectAllThemes(theme.childThemes);
-                }
-            });
-        };
-        collectAllThemes(themes);
-        if (allThemes.length === 0)
-            return 0;
-        const totalConfidence = allThemes.reduce((sum, theme) => sum + theme.confidence, 0);
-        return totalConfidence / allThemes.length;
-    }
-    static countExpandedThemes(themes) {
-        let count = 0;
-        const countRecursively = (themeList) => {
-            themeList.forEach((theme) => {
-                if (theme.isExpanded || theme.consolidationMethod === 'expansion') {
-                    count++;
-                }
-                if (theme.childThemes.length > 0) {
-                    countRecursively(theme.childThemes);
-                }
-            });
-        };
-        countRecursively(themes);
-        return count;
-    }
-    static countMergedThemes(themes) {
-        let count = 0;
-        const countRecursively = (themeList) => {
-            themeList.forEach((theme) => {
-                if (theme.consolidationMethod === 'merge' &&
-                    theme.sourceThemes.length > 1) {
-                    count++;
-                }
-                if (theme.childThemes.length > 0) {
-                    countRecursively(theme.childThemes);
-                }
-            });
-        };
-        countRecursively(themes);
-        return count;
-    }
-    static truncateText(text, maxLength) {
-        if (text.length <= maxLength) {
-            return text;
-        }
-        return text.substring(0, maxLength - 3) + '...';
-    }
-    static themeToJsonObject(theme) {
-        return {
-            id: theme.id,
-            name: theme.name,
-            description: theme.description,
-            level: theme.level,
-            confidence: theme.confidence,
-            businessImpact: theme.businessImpact,
-            affectedFiles: theme.affectedFiles,
-            consolidationMethod: theme.consolidationMethod,
-            isExpanded: theme.isExpanded,
-            businessLogicPatterns: theme.businessLogicPatterns,
-            userFlowPatterns: theme.userFlowPatterns,
-            childThemes: theme.childThemes.map((child) => this.themeToJsonObject(child)),
-        };
-    }
-}
-exports.ThemeFormatter = ThemeFormatter;
-ThemeFormatter.MAX_FILES_SHOWN = 3;
-ThemeFormatter.MAX_DESCRIPTION_LENGTH = 200;
+exports.logTrace = exports.logDebug = exports.logInfo = exports.logWarning = exports.logError = void 0;
+const logger_1 = __nccwpck_require__(9000);
+// Export logging functions with consistent interface
+const logError = (message) => {
+    logger_1.Logger.error('ai-code-review', message);
+};
+exports.logError = logError;
+const logWarning = (message) => {
+    logger_1.Logger.warn('ai-code-review', message);
+};
+exports.logWarning = logWarning;
+const logInfo = (message) => {
+    logger_1.Logger.info('ai-code-review', message);
+};
+exports.logInfo = logInfo;
+const logDebug = (message) => {
+    logger_1.Logger.debug('ai-code-review', message);
+};
+exports.logDebug = logDebug;
+const logTrace = (message) => {
+    logger_1.Logger.trace('ai-code-review', message);
+};
+exports.logTrace = logTrace;
 
 
 /***/ }),
@@ -38551,7 +39131,6 @@ function setDeduplicationEnvironmentVariables() {
         'min-themes-for-cross-level-dedup': 'MIN_THEMES_FOR_CROSS_LEVEL_DEDUP',
         'verbose-dedup-logging': 'VERBOSE_DEDUP_LOGGING',
         // PRD Compliance Controls
-        'max-atomic-size': 'MAX_ATOMIC_SIZE',
         're-evaluate-after-merge': 'RE_EVALUATE_AFTER_MERGE',
         'strict-atomic-limits': 'STRICT_ATOMIC_LIMITS'
     };
