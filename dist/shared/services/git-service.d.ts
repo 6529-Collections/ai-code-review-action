@@ -26,4 +26,24 @@ export declare class GitService implements IGitService {
     getChangedFiles(): Promise<ChangedFile[]>;
     private getChangedFilesFromGitHub;
     getDiffContent(baseSha: string, headSha: string): Promise<string>;
+    /**
+     * Get current git branch name
+     */
+    private getCurrentBranch;
+    /**
+     * Check if a branch exists
+     */
+    private branchExists;
+    /**
+     * Detect PR context from current branch using GitHub API
+     */
+    private detectCurrentBranchPR;
+    /**
+     * Get changed files using git diff commands
+     */
+    private getChangedFilesFromGit;
+    /**
+     * Map git status characters to ChangedFile status
+     */
+    private mapGitStatusToChangeStatus;
 }

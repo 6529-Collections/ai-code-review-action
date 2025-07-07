@@ -37269,7 +37269,7 @@ class GitService {
         return codeChanges;
     }
     async getPullRequestContext() {
-        // Production mode: Only handle GitHub Actions PR context
+        // Production mode: Handle GitHub Actions PR context
         if (github.context.eventName === 'pull_request') {
             const pr = github.context.payload.pull_request;
             if (pr) {
@@ -37285,22 +37285,41 @@ class GitService {
                 };
             }
         }
-        console.log('[GIT-SERVICE] No PR context found in GitHub Actions');
-        return null;
+        // Fallback for manual runs: Try to detect PR from current branch
+        console.log(`[GIT-SERVICE] Event: ${github.context.eventName}, attempting PR detection for current branch`);
+        return await this.detectCurrentBranchPR();
     }
     async getChangedFiles() {
         const prContext = await this.getPullRequestContext();
-        if (!prContext) {
-            console.log('[GIT-SERVICE] No PR context available, returning empty file list');
-            return [];
-        }
-        console.log(`[GIT-SERVICE] PR Context: #${prContext.number}, event=${github.context.eventName}`);
-        // Production mode: Use GitHub API for PR files
-        if (prContext.number > 0 && this.octokit) {
+        // Try GitHub API first if we have PR context
+        if (prContext && prContext.number > 0 && this.octokit) {
+            console.log(`[GIT-SERVICE] PR Context: #${prContext.number}, event=${github.context.eventName}`);
             console.log(`[GIT-SERVICE] Using GitHub API for PR #${prContext.number}`);
             return await this.getChangedFilesFromGitHub(prContext.number);
         }
-        console.log('[GIT-SERVICE] No GitHub API access or invalid PR context');
+        // Fallback to git-based diff if we have PR context but no GitHub API access
+        if (prContext) {
+            console.log('[GIT-SERVICE] PR context found but no GitHub API access, using git diff');
+            return await this.getChangedFilesFromGit(prContext.baseBranch, prContext.headBranch);
+        }
+        // Last resort: try to compare current branch against common base branches
+        console.log('[GIT-SERVICE] No PR context available, attempting git-based detection');
+        const currentBranch = await this.getCurrentBranch();
+        if (currentBranch) {
+            console.log(`[GIT-SERVICE] Current branch: ${currentBranch}`);
+            // Try common base branches
+            const baseBranches = ['main', 'master', 'develop'];
+            for (const baseBranch of baseBranches) {
+                if (await this.branchExists(baseBranch) && currentBranch !== baseBranch) {
+                    console.log(`[GIT-SERVICE] Comparing ${currentBranch} against ${baseBranch}`);
+                    const files = await this.getChangedFilesFromGit(baseBranch, currentBranch);
+                    if (files.length > 0) {
+                        return files;
+                    }
+                }
+            }
+        }
+        console.log('[GIT-SERVICE] No changed files found using any method');
         return [];
     }
     async getChangedFilesFromGitHub(prNumber) {
@@ -37361,6 +37380,168 @@ class GitService {
             console.error('Failed to get diff content:', error);
         }
         return diffOutput;
+    }
+    /**
+     * Get current git branch name
+     */
+    async getCurrentBranch() {
+        let branchOutput = '';
+        try {
+            await exec.exec('git', ['branch', '--show-current'], {
+                listeners: {
+                    stdout: (data) => {
+                        branchOutput += data.toString();
+                    },
+                },
+            });
+            const branch = branchOutput.trim();
+            console.log(`[GIT-SERVICE] Current branch: ${branch}`);
+            return branch || null;
+        }
+        catch (error) {
+            console.error('[GIT-SERVICE] Failed to get current branch:', error);
+            return null;
+        }
+    }
+    /**
+     * Check if a branch exists
+     */
+    async branchExists(branchName) {
+        try {
+            await exec.exec('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
+            return true;
+        }
+        catch (error) {
+            // Try remote branch
+            try {
+                await exec.exec('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branchName}`]);
+                return true;
+            }
+            catch (remoteError) {
+                return false;
+            }
+        }
+    }
+    /**
+     * Detect PR context from current branch using GitHub API
+     */
+    async detectCurrentBranchPR() {
+        if (!this.octokit) {
+            console.log('[GIT-SERVICE] No GitHub API client available for PR detection');
+            return null;
+        }
+        const currentBranch = await this.getCurrentBranch();
+        if (!currentBranch) {
+            console.log('[GIT-SERVICE] Could not determine current branch');
+            return null;
+        }
+        try {
+            console.log(`[GIT-SERVICE] Searching for open PRs from branch: ${currentBranch}`);
+            // Search for open PRs from current branch
+            const { data: pullRequests } = await this.octokit.rest.pulls.list({
+                ...github.context.repo,
+                state: 'open',
+                head: `${github.context.repo.owner}:${currentBranch}`,
+            });
+            if (pullRequests.length > 0) {
+                const pr = pullRequests[0]; // Use the first matching PR
+                console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${currentBranch}`);
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+            console.log(`[GIT-SERVICE] No open PR found for branch: ${currentBranch}`);
+            return null;
+        }
+        catch (error) {
+            console.error('[GIT-SERVICE] Failed to search for PRs:', error);
+            return null;
+        }
+    }
+    /**
+     * Get changed files using git diff commands
+     */
+    async getChangedFilesFromGit(baseBranch, headBranch) {
+        try {
+            console.log(`[GIT-SERVICE] Getting changed files via git diff: ${baseBranch}...${headBranch}`);
+            // Get list of changed files with status
+            let filesOutput = '';
+            await exec.exec('git', ['diff', '--name-status', `${baseBranch}...${headBranch}`], {
+                listeners: {
+                    stdout: (data) => {
+                        filesOutput += data.toString();
+                    },
+                },
+            });
+            if (!filesOutput.trim()) {
+                console.log('[GIT-SERVICE] No files changed according to git diff');
+                return [];
+            }
+            // Parse the output
+            const lines = filesOutput.trim().split('\n');
+            const changedFiles = [];
+            for (const line of lines) {
+                const match = line.match(/^([AMDRT])\s+(.+)$/);
+                if (match) {
+                    const [, statusChar, filename] = match;
+                    // Skip excluded files
+                    if (!this.shouldIncludeFile(filename)) {
+                        continue;
+                    }
+                    const status = this.mapGitStatusToChangeStatus(statusChar);
+                    // Get the patch for this file
+                    let patch = '';
+                    try {
+                        await exec.exec('git', ['diff', `${baseBranch}...${headBranch}`, '--', filename], {
+                            listeners: {
+                                stdout: (data) => {
+                                    patch += data.toString();
+                                },
+                            },
+                        });
+                    }
+                    catch (patchError) {
+                        console.warn(`[GIT-SERVICE] Failed to get patch for ${filename}:`, patchError);
+                    }
+                    changedFiles.push({
+                        filename,
+                        status,
+                        patch: patch || undefined,
+                    });
+                }
+            }
+            console.log(`[GIT-SERVICE] Git diff: Found ${changedFiles.length} changed files`);
+            return changedFiles;
+        }
+        catch (error) {
+            console.error('[GIT-SERVICE] Failed to get changed files from git:', error);
+            return [];
+        }
+    }
+    /**
+     * Map git status characters to ChangedFile status
+     */
+    mapGitStatusToChangeStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'M':
+                return 'modified';
+            case 'D':
+                return 'removed';
+            case 'R':
+                return 'renamed';
+            case 'T': // Type change (rare)
+                return 'modified';
+            default:
+                return 'modified';
+        }
     }
 }
 exports.GitService = GitService;
