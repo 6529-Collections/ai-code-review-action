@@ -29,8 +29,8 @@ export class DirectCodeAssignmentService {
       assignments
     );
     if (!validation.isComplete) {
-      logInfo(
-        `Warning: Incomplete code coverage - ${validation.issues.join(', ')}`
+      throw new Error(
+        `Code assignment validation failed: ${validation.issues.join('; ')}`
       );
     }
 
@@ -83,6 +83,9 @@ export class DirectCodeAssignmentService {
     parentCode: CodeDiff[],
     assignments: DirectChildAssignment[]
   ): CodeAssignmentValidation {
+    // First validate AI didn't fabricate lines
+    this.validateAIAssignedLinesExist(parentCode, assignments);
+
     const parentLines = this.extractAllLines(parentCode);
     const assignedLines = new Set<string>();
     const duplicatedLines: string[] = [];
@@ -118,16 +121,39 @@ export class DirectCodeAssignmentService {
   }
 
   /**
+   * Validate that all AI-assigned lines actually exist in parent code
+   * Throws error immediately if any assigned line doesn't exist in parent
+   */
+  private validateAIAssignedLinesExist(
+    parentCode: CodeDiff[],
+    assignments: DirectChildAssignment[]
+  ): void {
+    const parentLines = new Set(this.extractAllLines(parentCode));
+
+    for (const assignment of assignments) {
+      for (const assignedLine of this.extractAllLines(assignment.assignedCode)) {
+        if (!parentLines.has(assignedLine)) {
+          throw new Error(
+            `AI assigned non-existent line: ${assignedLine.substring(0, 100)}`
+          );
+        }
+      }
+    }
+  }
+
+  /**
    * Extract all line content from code diffs for comparison
    */
   private extractAllLines(codeDiffs: CodeDiff[]): string[] {
     const lines: string[] = [];
 
     for (const diff of codeDiffs) {
-      for (const hunk of diff.hunks) {
-        for (const change of hunk.changes) {
+      for (let hunkIndex = 0; hunkIndex < diff.hunks.length; hunkIndex++) {
+        const hunk = diff.hunks[hunkIndex];
+        for (let changeIndex = 0; changeIndex < hunk.changes.length; changeIndex++) {
+          const change = hunk.changes[changeIndex];
           if (change.type !== 'context') {
-            lines.push(`${diff.file}:${change.lineNumber}:${change.content}`);
+            lines.push(`${diff.file}:${hunkIndex}:${changeIndex}:${change.content}`);
           }
         }
       }

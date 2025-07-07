@@ -30511,6 +30511,8 @@ UncommittedMode.EXCLUDED_PATTERNS = [
     /mindmap-prd\.txt$/, // Exclude PRD files
     /review-prd\.md$/, // Exclude PRD files
     /\.md$/, // Exclude all markdown files
+    /\.txt$/, // Exclude all text files
+    /\.json$/, // Exclude all json files
 ];
 
 
@@ -32235,30 +32237,28 @@ Current depth: ${currentDepth} (no limits - let complexity guide)
 Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.length} code snippets
 Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
 
-EXPANSION DECISION FRAMEWORK (from PRD):
+DEPTH-AWARE EXPANSION STRATEGY:
 
+${this.getDepthSpecificGuidance(currentDepth)}
+
+UNIVERSAL TEST BOUNDARY THINKING:
+Ask yourself: "Would a developer write ONE focused unit test for this theme?"
+- If YES → Likely atomic (especially at depth 8+)
+- If NO, needs multiple tests → Consider expansion (especially at depth <8)
+- If unsure → Default to expansion at shallow depths, atomic at deep depths
+
+EXPANSION DECISION FRAMEWORK:
 Create child nodes when:
-1. Multiple concerns present
-2. Not independently testable at this level
-3. Too complex for atomic understanding
-4. Mixed audiences (technical vs business)
+1. Multiple distinct responsibilities present
+2. Different test scenarios would be needed
+3. Natural code boundaries suggest separation
+4. Would improve reviewability and understanding
 
-Stop expansion only when ALL true:
-1. Atomic: Single testable responsibility
-2. Unit-testable as-is
-3. Single responsibility
-4. Natural code boundary
-
-CRITICAL: Multi-file changes are RARELY atomic. Consider:
-- If changing multiple files, each file likely represents a separate concern
-- Configuration + implementation = 2 separate atomic changes
-- Test + implementation = 2 separate atomic changes
-- Documentation + code = 2 separate atomic changes
-
-Multi-file themes should expand unless they are:
-1. Simple renames across files (atomic rename operation)
-2. Coordinated single-line changes (like version bumps)
-3. Pure refactoring with identical logic changes
+Stay atomic when:
+1. Single cohesive algorithm or process
+2. Tightly coupled logic that shouldn't be separated
+3. Would be covered by one focused unit test
+4. Further splitting would create artificial boundaries
 
 CONSIDER THESE QUESTIONS:
 ${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
@@ -32296,6 +32296,121 @@ RESPOND WITH PRD-COMPLIANT JSON:
   ] or null
 }`;
         return section;
+    }
+    /**
+     * Get depth-specific expansion guidance
+     */
+    getDepthSpecificGuidance(currentDepth) {
+        if (currentDepth <= 2) {
+            return `DEPTH ${currentDepth} - BUSINESS LEVEL:
+You're examining high-level business themes.
+STRONGLY FAVOR EXPANSION unless trivially simple.
+
+Examples needing expansion:
+- "User Authentication" (has login, logout, session management)
+- "Payment Processing" (has validation, processing, confirmation)
+- "Data Migration" (has extraction, transformation, loading)
+
+Rarely atomic at this level:
+- "Fix typo in README" (single atomic change)
+- "Update version number" (single coordinated change)
+
+DEFAULT: Expand with high confidence (0.8-1.0)`;
+        }
+        if (currentDepth <= 5) {
+            return `DEPTH ${currentDepth} - COMPONENT LEVEL:
+You're examining technical components and major features.
+FAVOR EXPANSION for multi-faceted components.
+
+Examples needing expansion:
+- "OAuth Token Validation" with multiple providers
+- "Data transformation pipeline" with multiple steps
+- "Form validation" with multiple field types
+- "API error handling" with different error types
+
+Potentially atomic:
+- "JWT token signature verification" (single algorithm)
+- "Email format validation" (single regex check)
+- "Calculate tax amount" (single formula)
+
+DEFAULT: Expand if multiple responsibilities visible (0.6-0.8 confidence)`;
+        }
+        if (currentDepth <= 8) {
+            return `DEPTH ${currentDepth} - FEATURE IMPLEMENTATION (Sweet Spot):
+You're examining specific feature implementations.
+BALANCE expansion with cohesion - look for natural test boundaries.
+
+Consider atomic if:
+- Would be covered by ONE focused unit test
+- Splitting would separate algorithm from its error handling
+- Further division would create artificial boundaries
+
+Examples likely atomic:
+- "Validate and format phone number" (cohesive validation)
+- "Calculate discount with business rules" (complete algorithm)
+- "Extract and transform user data" (single transformation)
+- "Line-by-line assignment validation" (single process)
+
+Still expand if:
+- Multiple distinct algorithms present
+- Different test scenarios needed
+- Unrelated responsibilities combined
+
+DEFAULT: Expand only with clear evidence of multiple concerns (0.4-0.7 confidence)`;
+        }
+        if (currentDepth <= 12) {
+            return `DEPTH ${currentDepth} - IMPLEMENTATION DETAILS (Target Atomic Zone):
+You're examining implementation details and specific algorithms.
+RESIST EXPANSION unless clearly beneficial.
+
+Strong signals for atomic:
+- Complete algorithm implementation
+- Single responsibility with error handling
+- Would need just one unit test
+- Further split would separate tightly coupled logic
+
+Examples of atomic themes:
+- "Duplicate detection using Set operations"
+- "Confidence score calculation with bounds"
+- "Format error message with truncation"
+- "Extract unique file paths from diffs"
+
+Only expand for:
+- Genuinely independent algorithms
+- Clearly separable test cases
+- Mixed concerns that don't belong together
+
+DEFAULT: Stay atomic unless compelling reason (0.2-0.5 confidence for expansion)`;
+        }
+        if (currentDepth <= 16) {
+            return `DEPTH ${currentDepth} - FINE DETAILS (Avoid Over-Expansion):
+You're at implementation detail level.
+STRONGLY RESIST EXPANSION - you're likely seeing atomic operations.
+
+Almost always atomic:
+- Individual validation rules
+- Single calculations or formulas
+- Property assignments and mappings
+- Loop operations and iterations
+- Error formatting and messages
+
+Anti-patterns (DO NOT create themes for):
+- Variable assignments: "confidence = 0.5"
+- Simple conditionals: "if (x) y += 0.1"
+- Return statements: "return { result }"
+- Math operations: "Math.max(0, Math.min(1, x))"
+- Single method calls: "Set.add(item)"
+
+Only expand if code literally does unrelated things.
+
+DEFAULT: Stay atomic (0.1-0.3 confidence for expansion)`;
+        }
+        return `DEPTH ${currentDepth} - MAXIMUM DEPTH WARNING:
+You've reached extreme granularity.
+DO NOT EXPAND FURTHER unless critical error in analysis.
+Everything at this level should be atomic.
+
+DEFAULT: Stay atomic (0.0-0.1 confidence for expansion)`;
     }
     /**
      * Format complexity indicators for display

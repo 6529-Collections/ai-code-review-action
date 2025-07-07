@@ -31,6 +31,10 @@ export declare class DynamicPromptBuilder {
      */
     private buildDecisionSection;
     /**
+     * Get depth-specific expansion guidance
+     */
+    private getDepthSpecificGuidance;
+    /**
      * Format complexity indicators for display
      */
     private formatComplexityIndicators;

@@ -17,6 +17,8 @@ export class UncommittedMode extends BaseDiffMode {
     /mindmap-prd\.txt$/, // Exclude PRD files
     /review-prd\.md$/, // Exclude PRD files
     /\.md$/, // Exclude all markdown files
+    /\.txt$/, // Exclude all text files
+    /\.json$/, // Exclude all json files
   ];
 
   getName(): string {
