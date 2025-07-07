@@ -91,8 +91,9 @@ export class BusinessDomainService {
   }
 
   /**
-   * Fallback domain extraction for when AI fails
+   * Fallback business capability extraction for when AI fails
    * PRD: "Graceful degradation - never fail completely"
+   * Maps technical changes to user-centric business capabilities
    */
   private extractBusinessDomainFallback(
     name: string,
@@ -100,51 +101,115 @@ export class BusinessDomainService {
   ): string {
     const text = (name + ' ' + description).toLowerCase();
 
-    // Simple heuristics for common domains
-    if (text.includes('test') || text.includes('spec')) {
-      return 'Quality Assurance';
+    // Business capability heuristics focused on user value
+    if (text.includes('test') || text.includes('spec') || text.includes('quality')) {
+      return 'Development Workflow Optimization';
     }
-    if (text.includes('config') || text.includes('setting')) {
-      return 'System Configuration';
+    if (text.includes('config') || text.includes('setting') || text.includes('deploy')) {
+      return 'Development Workflow Optimization';
     }
     if (
       text.includes('auth') ||
       text.includes('login') ||
-      text.includes('user')
+      text.includes('password') ||
+      text.includes('security') ||
+      text.includes('account')
     ) {
-      return 'User Management';
+      return 'User Account Management';
     }
     if (
-      text.includes('api') ||
-      text.includes('endpoint') ||
-      text.includes('service')
+      text.includes('payment') ||
+      text.includes('purchase') ||
+      text.includes('order') ||
+      text.includes('transaction') ||
+      text.includes('billing')
     ) {
-      return 'API Services';
+      return 'Transaction Processing';
+    }
+    if (
+      text.includes('search') ||
+      text.includes('discover') ||
+      text.includes('browse') ||
+      text.includes('filter') ||
+      text.includes('recommend')
+    ) {
+      return 'Content Discovery';
+    }
+    if (
+      text.includes('message') ||
+      text.includes('notification') ||
+      text.includes('email') ||
+      text.includes('alert') ||
+      text.includes('communication')
+    ) {
+      return 'Communication & Collaboration';
     }
     if (
       text.includes('ui') ||
       text.includes('component') ||
-      text.includes('interface')
+      text.includes('interface') ||
+      text.includes('design') ||
+      text.includes('layout')
     ) {
-      return 'User Interface';
+      return 'User Experience Enhancement';
     }
     if (
       text.includes('data') ||
       text.includes('database') ||
-      text.includes('storage')
+      text.includes('storage') ||
+      text.includes('backup') ||
+      text.includes('export')
     ) {
       return 'Data Management';
     }
     if (
+      text.includes('api') ||
+      text.includes('endpoint') ||
+      text.includes('service') ||
+      text.includes('integration') ||
+      text.includes('connect')
+    ) {
+      return 'Integration & Connectivity';
+    }
+    if (
+      text.includes('report') ||
+      text.includes('analytics') ||
+      text.includes('dashboard') ||
+      text.includes('metrics') ||
+      text.includes('insights')
+    ) {
+      return 'Analytics & Insights';
+    }
+    if (
+      text.includes('workflow') ||
+      text.includes('automation') ||
+      text.includes('process') ||
+      text.includes('efficiency') ||
+      text.includes('streamline')
+    ) {
+      return 'Workflow Automation';
+    }
+    if (
+      text.includes('create') ||
+      text.includes('author') ||
+      text.includes('edit') ||
+      text.includes('publish') ||
+      text.includes('content')
+    ) {
+      return 'Content Creation & Publishing';
+    }
+    if (
       text.includes('error') ||
       text.includes('fix') ||
-      text.includes('bug')
+      text.includes('bug') ||
+      text.includes('debug') ||
+      text.includes('log')
     ) {
-      return 'Error Resolution';
+      return 'Development Workflow Optimization';
     }
 
-    // Default domain
-    return 'System Enhancement';
+    // Default to user experience enhancement
+    return 'User Experience Enhancement';
   }
 
   async extractBusinessDomainWithContext(

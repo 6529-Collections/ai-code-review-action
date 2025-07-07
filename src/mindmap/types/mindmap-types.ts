@@ -342,6 +342,8 @@ export interface AIDomainClassification {
   reasoning: string; // Why this domain (max 20 words)
   subDomains?: string[]; // Specific user flows within capability
   crossCuttingConcerns?: string[]; // Domains this also affects
+  userJourney?: string; // Step in user workflow this improves
+  businessMetrics?: string[]; // Metrics this improvement could affect
 }
 
 /**

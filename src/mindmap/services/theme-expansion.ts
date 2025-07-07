@@ -7,6 +7,7 @@ import { AIMindmapService } from './ai/ai-mindmap-service';
 import { ThemeMindmapConverter } from './theme-mindmap-converter';
 import { ExpansionDecision as AIMindmapExpansionDecision } from '../types/mindmap-types';
 import { logger } from '@/shared/logger/logger';
+import { LoggerServices } from '@/shared/logger/constants';
 
 // Configuration for theme expansion
 export interface ExpansionConfig {
@@ -125,13 +126,13 @@ export class ThemeExpansionService {
     this.resetEffectiveness();
 
     // Process all themes concurrently - let ClaudeClient handle rate limiting
-    console.log(`[THEME-EXPANSION] Processing all ${consolidatedThemes.length} themes concurrently`);
+    logger.info(LoggerServices.EXPANSION, `Processing all ${consolidatedThemes.length} themes concurrently`);
     
     const themePromises = consolidatedThemes.map(async (theme) => {
       try {
         return await this.expandThemeRecursively(theme, 0);
       } catch (error) {
-        console.warn(`[THEME-EXPANSION] Failed to expand theme "${theme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+        logger.warn(LoggerServices.EXPANSION, `Failed to expand theme "${theme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
         return { error: error instanceof Error ? error : new Error(String(error)), item: theme };
       }
     });
@@ -151,11 +152,12 @@ export class ThemeExpansionService {
     }
 
     if (failedThemes.length > 0) {
-      console.warn(
-        `[THEME-EXPANSION] Failed to expand ${failedThemes.length} themes after retries:`
+      logger.warn(
+        LoggerServices.EXPANSION,
+        `Failed to expand ${failedThemes.length} themes after retries:`
       );
       for (const failed of failedThemes) {
-        console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
+        logger.warn(LoggerServices.EXPANSION, `  - ${failed.theme.name}: ${failed.error.message}`);
       }
     }
 
@@ -184,9 +186,10 @@ export class ThemeExpansionService {
     );
 
     // Log expansion stop reasons for analysis
-    console.log(`[EXPANSION-ANALYSIS] Expansion stop reasons summary:`);
-    console.log(
-      `[EXPANSION-ANALYSIS] Total themes that stopped expanding: ${this.expansionStopReasons.length}`
+    logger.info(LoggerServices.EXPANSION, `Expansion stop reasons summary:`);
+    logger.info(
+      LoggerServices.EXPANSION,
+      `Total themes that stopped expanding: ${this.expansionStopReasons.length}`
     );
 
     const reasonCounts = this.expansionStopReasons.reduce(
@@ -198,7 +201,7 @@ export class ThemeExpansionService {
     );
 
     Object.entries(reasonCounts).forEach(([reason, count]) => {
-      console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
+      logger.info(LoggerServices.EXPANSION, `${reason}: ${count} themes`);
     });
 
     // Log themes that exceeded PRD limits but were marked atomic
@@ -207,11 +210,13 @@ export class ThemeExpansionService {
     );
 
     if (oversizedAtomic.length > 0) {
-      console.log(
-        `[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`
+      logger.warn(
+        LoggerServices.EXPANSION,
+        `${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`
       );
       oversizedAtomic.forEach((r) => {
-        console.log(
+        logger.warn(
+          LoggerServices.EXPANSION,
           `  - "${r.themeName}" (${r.fileCount} files) at depth ${r.depth}`
         );
       });
@@ -255,7 +260,7 @@ export class ThemeExpansionService {
         try {
           return await this.expandThemeRecursively(child, currentDepth + 1, theme);
         } catch (error) {
-          console.warn(`[THEME-EXPANSION] Failed to expand child theme "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+          logger.warn(LoggerServices.EXPANSION, `Failed to expand child theme "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
           return { error: error instanceof Error ? error : new Error(String(error)), item: child };
         }
       });
@@ -266,8 +271,9 @@ export class ThemeExpansionService {
       const expandedChildren: ConsolidatedTheme[] = [];
       for (const result of childResults) {
         if ('error' in result) {
-          console.warn(
-            `[THEME-EXPANSION] Failed to expand child theme: ${result.error.message}`
+          logger.warn(
+            LoggerServices.EXPANSION,
+            `Failed to expand child theme: ${result.error.message}`
           );
           expandedChildren.push(result.item); // Keep original theme if expansion fails
         } else {
@@ -292,19 +298,23 @@ export class ThemeExpansionService {
 
     if (!result.success || !result.expandedTheme) {
       // Log expansion request context on failure
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Theme: "${theme.name}" (ID: ${theme.id})`
+      logger.error(
+        LoggerServices.EXPANSION,
+        `Theme: "${theme.name}" (ID: ${theme.id})`
       );
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Request ID: ${expansionRequest.id}`
+      logger.error(
+        LoggerServices.EXPANSION,
+        `Request ID: ${expansionRequest.id}`
       );
-      console.error(`[EXPANSION-REQUEST-FAILED] Depth: ${currentDepth}`);
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Parent: ${parentTheme?.name || 'none'}`
+      logger.error(LoggerServices.EXPANSION, `Depth: ${currentDepth}`);
+      logger.error(
+        LoggerServices.EXPANSION,
+        `Parent: ${parentTheme?.name || 'none'}`
       );
-      console.error(`[EXPANSION-REQUEST-FAILED] Error: ${result.error}`);
-      console.error(
-        `[EXPANSION-REQUEST-FAILED] Processing time: ${result.processingTime}ms`
+      logger.error(LoggerServices.EXPANSION, `Error: ${result.error}`);
+      logger.error(
+        LoggerServices.EXPANSION,
+        `Processing time: ${result.processingTime}ms`
       );
 
       logger.info(
@@ -326,7 +336,7 @@ export class ThemeExpansionService {
           result.expandedTheme
         );
       } catch (error) {
-        console.warn(`[THEME-EXPANSION] Failed to expand sub-theme "${subTheme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+        logger.warn(LoggerServices.EXPANSION, `Failed to expand sub-theme "${subTheme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
         return { error: error instanceof Error ? error : new Error(String(error)), item: subTheme };
       }
     });
@@ -337,8 +347,9 @@ export class ThemeExpansionService {
     const expandedSubThemes: ConsolidatedTheme[] = [];
     for (const subResult of subThemeResults) {
       if ('error' in subResult) {
-        console.warn(
-          `[THEME-EXPANSION] Failed to expand sub-theme: ${subResult.error.message}`
+        logger.warn(
+          LoggerServices.EXPANSION,
+          `Failed to expand sub-theme: ${subResult.error.message}`
         );
         expandedSubThemes.push(subResult.item); // Keep original if expansion fails
       } else {
@@ -359,7 +370,7 @@ export class ThemeExpansionService {
             result.expandedTheme
           );
         } catch (error) {
-          console.warn(`[THEME-EXPANSION] Failed to expand existing child "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+          logger.warn(LoggerServices.EXPANSION, `Failed to expand existing child "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
           return { error: error instanceof Error ? error : new Error(String(error)), item: child };
         }
       });
@@ -369,8 +380,9 @@ export class ThemeExpansionService {
       // Extract successful existing children
       for (const childResult of existingChildResults) {
         if ('error' in childResult) {
-          console.warn(
-            `[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`
+          logger.warn(
+            LoggerServices.EXPANSION,
+            `Failed to expand existing child: ${childResult.error.message}`
           );
           expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
         } else {
@@ -379,8 +391,9 @@ export class ThemeExpansionService {
       }
     } else {
       // We created new sub-themes, so skip existing children to avoid duplicates
-      console.log(
-        `[EXPANSION-FLOW] Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`
+      logger.debug(
+        LoggerServices.EXPANSION,
+        `Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`
       );
     }
 
@@ -483,8 +496,9 @@ export class ThemeExpansionService {
     const reEvaluateAfterMerge =
       process.env.RE_EVALUATE_AFTER_MERGE !== 'false';
     if (!reEvaluateAfterMerge) {
-      console.log(
-        `[RE-EVALUATION] Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`
+      logger.debug(
+        LoggerServices.EXPANSION,
+        `Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`
       );
       return themes;
     }
@@ -495,8 +509,9 @@ export class ThemeExpansionService {
     for (const theme of themes) {
       // Check if this was a merged theme (has multiple source themes)
       if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-        console.log(
-          `[RE-EVALUATION] Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`
+        logger.debug(
+          LoggerServices.EXPANSION,
+          `Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`
         );
 
         // PRD: If merged theme has complexity indicators, it should be re-evaluated
@@ -505,8 +520,9 @@ export class ThemeExpansionService {
         const hasMultipleSources = theme.sourceThemes.length > 2;
 
         if (exceedsFileLimit || hasMultipleSources) {
-          console.log(
-            `[RE-EVALUATION] Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`
+          logger.debug(
+            LoggerServices.EXPANSION,
+            `Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`
           );
 
           // Re-evaluate if it should expand
@@ -517,8 +533,9 @@ export class ThemeExpansionService {
           );
 
           if (expansionCandidate) {
-            console.log(
-              `[RE-EVALUATION] Merged theme "${theme.name}" needs expansion after deduplication`
+            logger.info(
+              LoggerServices.EXPANSION,
+              `Merged theme "${theme.name}" needs expansion after deduplication`
             );
             // Recursively expand the merged theme
             const expanded = await this.expandThemeRecursively(
@@ -528,14 +545,16 @@ export class ThemeExpansionService {
             );
             reEvaluatedThemes.push(expanded);
           } else {
-            console.log(
-              `[RE-EVALUATION] Merged theme "${theme.name}" remains atomic despite complexity`
+            logger.debug(
+              LoggerServices.EXPANSION,
+              `Merged theme "${theme.name}" remains atomic despite complexity`
             );
             reEvaluatedThemes.push(theme);
           }
         } else {
-          console.log(
-            `[RE-EVALUATION] Merged theme "${theme.name}" within atomic limits -> keeping as-is`
+          logger.debug(
+            LoggerServices.EXPANSION,
+            `Merged theme "${theme.name}" within atomic limits -> keeping as-is`
           );
           reEvaluatedThemes.push(theme);
         }
@@ -556,8 +575,9 @@ export class ThemeExpansionService {
   ): Promise<ConsolidatedTheme[]> {
 
     if (subThemes.length <= 1) {
-      console.log(
-        `[DEDUP-OUT] Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`
+      logger.debug(
+        LoggerServices.EXPANSION,
+        `Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`
       );
       return subThemes;
     }
@@ -585,9 +605,10 @@ export class ThemeExpansionService {
     }
 
     // Pre-deduplication state logging
-    console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
+    logger.debug(LoggerServices.EXPANSION, `Themes before deduplication:`);
     subThemes.forEach((t) => {
-      console.log(
+      logger.debug(
+        LoggerServices.EXPANSION,
         `  - "${t.name}" (${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`
       );
     });
@@ -616,13 +637,15 @@ export class ThemeExpansionService {
         successfulResults.push(result);
         
         if (this.config.enableProgressLogging && batches.length > 1) {
-          console.log(
-            `[THEME-EXPANSION] Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`
+          logger.info(
+            LoggerServices.EXPANSION,
+            `Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`
           );
         }
       } catch (error) {
-        console.warn(
-          `[THEME-EXPANSION] Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        logger.warn(
+          LoggerServices.EXPANSION,
+          `Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`
         );
       }
     }
@@ -682,16 +705,19 @@ export class ThemeExpansionService {
       );
 
       // Post-deduplication state logging (after second pass)
-      console.log(
-        `[DEDUP-AFTER] Final themes after second pass deduplication:`
+      logger.debug(
+        LoggerServices.EXPANSION,
+        `Final themes after second pass deduplication:`
       );
       secondPassResult.forEach((t) => {
         if (t.sourceThemes && t.sourceThemes.length > 1) {
-          console.log(
+          logger.debug(
+            LoggerServices.EXPANSION,
             `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`
           );
         } else {
-          console.log(
+          logger.debug(
+            LoggerServices.EXPANSION,
             `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`
           );
         }
@@ -711,23 +737,25 @@ export class ThemeExpansionService {
     }
 
     // Post-deduplication state logging (no second pass)
-    console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
+    logger.debug(LoggerServices.EXPANSION, `Final themes after first pass deduplication:`);
     finalThemes.forEach((t) => {
       if (t.sourceThemes && t.sourceThemes.length > 1) {
-        console.log(
+        logger.debug(
+          LoggerServices.EXPANSION,
           `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`
         );
       } else {
-        console.log(
+        logger.debug(
+          LoggerServices.EXPANSION,
           `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`
         );
       }
     });
 
     // DEBUG: Log deduplication output
-    console.log(`[DEDUP-OUT] Returning ${finalThemes.length} sub-themes:`);
+    logger.debug(LoggerServices.EXPANSION, `Returning ${finalThemes.length} sub-themes:`);
     finalThemes.forEach((theme, i) =>
-      console.log(`  [DEDUP-OUT-${i}] "${theme.name}" (ID: ${theme.id})`)
+      logger.debug(LoggerServices.EXPANSION, `  [${i}] "${theme.name}" (ID: ${theme.id})`)
     );
 
     return finalThemes;
@@ -945,26 +973,27 @@ CRITICAL: Respond with ONLY valid JSON.
       const mergedCount = groups.filter((g) => g.length > 1).length;
       const keptSeparate = groups.filter((g) => g.length === 1).length;
 
-      if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
-        console.log(
-          `[BATCH-DEDUP] Processed ${themes.length} themes into ${groups.length} groups`
-        );
-        console.log(
-          `[BATCH-DEDUP] ${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`
-        );
-        groups.forEach((group, idx) => {
-          if (group.length > 1) {
-            console.log(
-              `[BATCH-DEDUP] Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`
-            );
-          }
-        });
-      } else {
-        logger.info(
-          'EXPANSION',
-          `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`
-        );
-      }
+      logger.debug(
+        LoggerServices.EXPANSION,
+        `Processed ${themes.length} themes into ${groups.length} groups`
+      );
+      logger.debug(
+        LoggerServices.EXPANSION,
+        `${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`
+      );
+      groups.forEach((group, idx) => {
+        if (group.length > 1) {
+          logger.debug(
+            LoggerServices.EXPANSION,
+            `Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`
+          );
+        }
+      });
+      
+      logger.info(
+        LoggerServices.EXPANSION,
+        `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`
+      );
 
       return groups;
     } catch (error) {
@@ -1191,11 +1220,13 @@ CRITICAL: Respond with ONLY valid JSON.
 
       // Validate that AI provided files
       if (relevantFiles.length === 0) {
-        console.error(
-          `[ERROR] AI did not provide files for sub-theme "${suggested.name}"`
+        logger.error(
+          LoggerServices.EXPANSION,
+          `AI did not provide files for sub-theme "${suggested.name}"`
         );
-        console.error(
-          `[ERROR] Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`
+        logger.error(
+          LoggerServices.EXPANSION,
+          `Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`
         );
         throw new Error(
           `AI failed to provide files for sub-theme "${suggested.name}". ` +
@@ -1210,12 +1241,14 @@ CRITICAL: Respond with ONLY valid JSON.
 
       // Validate that provided files are valid
       if (validFiles.length === 0) {
-        console.error(
-          `[ERROR] AI provided invalid files for sub-theme "${suggested.name}"`
+        logger.error(
+          LoggerServices.EXPANSION,
+          `AI provided invalid files for sub-theme "${suggested.name}"`
         );
-        console.error(`[ERROR] AI suggested: ${JSON.stringify(relevantFiles)}`);
-        console.error(
-          `[ERROR] Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`
+        logger.error(LoggerServices.EXPANSION, `AI suggested: ${JSON.stringify(relevantFiles)}`);
+        logger.error(
+          LoggerServices.EXPANSION,
+          `Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`
         );
         throw new Error(
           `AI provided invalid files for sub-theme "${suggested.name}". ` +

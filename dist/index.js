@@ -30892,6 +30892,7 @@ exports.AIDomainAnalyzer = void 0;
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
+const business_prompt_templates_1 = __nccwpck_require__(2813);
 /**
  * AI-driven business domain analyzer
  * Replaces mechanical keyword matching with semantic understanding
@@ -30902,82 +30903,49 @@ class AIDomainAnalyzer {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
     }
     /**
-     * Classify business domain using AI semantic understanding
+     * Classify business capability using AI semantic understanding
      * PRD: Root level represents "distinct user flow, story, or business capability"
      */
     async classifyBusinessDomain(context, semanticDiff) {
         const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
         try {
-            const response = await this.claudeClient.callClaude(prompt, 'domain-classification');
+            const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
-                'domain',
+                'primaryCapability',
                 'userValue',
-                'businessCapability',
+                'businessImpact',
                 'confidence',
                 'reasoning',
             ]);
             if (result.success) {
                 const data = result.data;
-                return this.validateDomainClassification(data);
+                return this.transformToAIDomainClassification(data);
             }
         }
         catch (error) {
-            (0, utils_1.logInfo)(`AI domain classification failed: ${error}`);
+            (0, utils_1.logInfo)(`AI business capability classification failed: ${error}`);
         }
         // Graceful degradation: return generic domain with low confidence
         return this.createFallbackDomain(context);
     }
     /**
-     * Build AI prompt for business domain classification
+     * Build AI prompt for business capability classification
      * PRD: "Structure emerges from code, not forced into preset levels"
      */
     buildDomainClassificationPrompt(context, semanticDiff) {
         const additionalContext = semanticDiff
             ? this.formatSemanticDiffContext(semanticDiff)
             : '';
-        return `You are a product manager analyzing code changes for business impact.
-
-CONTEXT:
-File: ${context.filePath}
-${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
-${context.prDescription ? `PR Description: ${context.prDescription}` : ''}
-
-COMPLETE CODE CHANGES:
-${context.completeDiff}
-
-SURROUNDING CODE CONTEXT:
+        // Use business-first prompt template
+        const functionalContext = `
 ${context.surroundingContext}
 
 ${additionalContext}
 
-TASK: Identify the PRIMARY business domain this change affects.
-
-PERSPECTIVE: Focus on end-user value and business capability, not technical implementation.
-
-CONSIDER:
-1. What user problem does this solve or improve?
-2. What business process does it enable or enhance?
-3. What user journey or workflow does it affect?
-4. Is this creating new capability or improving existing?
-
-EXAMPLES:
-✅ Good domains: "User Account Management", "Payment Processing", "Content Discovery"
-✅ Good user value: "Users can reset passwords securely"
-✅ Good capability: "Enable secure self-service account recovery"
-
-❌ Avoid technical terms: "Database Migration", "Refactor Utils"
-❌ Avoid generic: "Fix Issues", "Update Code"
-
-RESPOND WITH ONLY VALID JSON:
-{
-  "domain": "Clear business domain (max 5 words)",
-  "userValue": "End user benefit (max 12 words)", 
-  "businessCapability": "What this enables users to do (max 15 words)",
-  "confidence": 0.0-1.0,
-  "reasoning": "Why this domain classification (max 20 words)",
-  "subDomains": ["Optional specific user flows within capability"],
-  "crossCuttingConcerns": ["Optional other domains this also affects"]
-}`;
+COMMIT CONTEXT:
+${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
+${context.prDescription ? `PR Description: ${context.prDescription}` : ''}`;
+        return business_prompt_templates_1.BusinessPromptTemplates.createBusinessCapabilityPrompt(context.filePath, context.completeDiff, functionalContext);
     }
     /**
      * Format semantic diff context for additional insight
@@ -31001,7 +30969,23 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
 `;
     }
     /**
-     * Validate and normalize AI domain classification response
+     * Transform business capability response to AIDomainClassification format
+     */
+    transformToAIDomainClassification(data) {
+        return {
+            domain: this.trimToWordLimit(data.primaryCapability || 'Code Changes', 5),
+            userValue: this.trimToWordLimit(data.userValue || 'Improve system functionality', 15),
+            businessCapability: this.trimToWordLimit(data.businessImpact || 'Enable users to accomplish tasks', 15),
+            confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
+            reasoning: this.trimToWordLimit(data.reasoning || 'Standard code modification', 20),
+            subDomains: data.affectedUserTypes || [],
+            crossCuttingConcerns: data.businessMetrics || [],
+            userJourney: data.userJourney,
+            businessMetrics: data.businessMetrics,
+        };
+    }
+    /**
+     * Validate and normalize AI domain classification response (legacy support)
      */
     validateDomainClassification(data) {
         return {
@@ -31010,12 +30994,12 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
             businessCapability: this.trimToWordLimit(data.businessCapability || 'Enable users to accomplish tasks', 15),
             confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
             reasoning: this.trimToWordLimit(data.reasoning || 'Standard code modification', 20),
-            subDomains: data.subDomains || [], // Include all sub-domains
-            crossCuttingConcerns: data.crossCuttingConcerns || [], // Include all concerns
+            subDomains: data.subDomains || [],
+            crossCuttingConcerns: data.crossCuttingConcerns || [],
         };
     }
     /**
-     * Create fallback domain when AI analysis fails
+     * Create fallback business capability when AI analysis fails
      * PRD: "Graceful degradation - never fail completely"
      */
     createFallbackDomain(context) {
@@ -31023,43 +31007,72 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         const isTest = context.filePath.includes('test') || context.filePath.includes('spec');
         const isConfig = context.filePath.includes('config') || fileName.endsWith('.json');
         const isUI = context.filePath.includes('component') || context.filePath.includes('ui');
+        const isAuth = context.filePath.includes('auth') || context.filePath.includes('login');
+        const isLogger = context.filePath.includes('log') || context.filePath.includes('debug');
         if (isTest) {
             return {
-                domain: 'Test Coverage',
-                userValue: 'Ensure system reliability and quality',
-                businessCapability: 'Maintain high-quality user experience through testing',
+                domain: 'Development Workflow Optimization',
+                userValue: 'Developers catch issues before users experience them',
+                businessCapability: 'Maintain high-quality user experience through automated testing',
                 confidence: 0.4,
-                reasoning: 'Test file detected - quality assurance domain',
-                subDomains: ['Unit Testing'],
+                reasoning: 'Test file detected - quality assurance capability',
+                subDomains: ['Software developers'],
+                userJourney: 'Quality assurance and testing workflow',
+            };
+        }
+        if (isAuth) {
+            return {
+                domain: 'User Account Management',
+                userValue: 'Users access their accounts securely and efficiently',
+                businessCapability: 'Enable secure user authentication and access control',
+                confidence: 0.5,
+                reasoning: 'Authentication file detected - user security capability',
+                subDomains: ['End users', 'Account holders'],
+                userJourney: 'User login and authentication process',
+            };
+        }
+        if (isLogger) {
+            return {
+                domain: 'Development Workflow Optimization',
+                userValue: 'Developers diagnose and resolve issues faster',
+                businessCapability: 'Enable efficient troubleshooting and system monitoring',
+                confidence: 0.5,
+                reasoning: 'Logging file detected - debugging and monitoring capability',
+                subDomains: ['Software developers', 'DevOps engineers'],
+                userJourney: 'Error investigation and system monitoring workflow',
             };
         }
         if (isConfig) {
             return {
-                domain: 'System Configuration',
-                userValue: 'Maintain system operational stability',
-                businessCapability: 'Configure system behavior and settings',
+                domain: 'Development Workflow Optimization',
+                userValue: 'Developers deploy and maintain systems reliably',
+                businessCapability: 'Configure system behavior for optimal user experience',
                 confidence: 0.4,
-                reasoning: 'Configuration file detected - infrastructure domain',
-                subDomains: ['Infrastructure Management'],
+                reasoning: 'Configuration file detected - system management capability',
+                subDomains: ['DevOps engineers', 'System administrators'],
+                userJourney: 'System deployment and configuration workflow',
             };
         }
         if (isUI) {
             return {
-                domain: 'User Interface',
-                userValue: 'Improve user interaction experience',
-                businessCapability: 'Enable intuitive user interactions and workflows',
+                domain: 'User Experience Enhancement',
+                userValue: 'Users accomplish tasks intuitively and efficiently',
+                businessCapability: 'Enable smooth and intuitive user interactions',
                 confidence: 0.4,
-                reasoning: 'UI component detected - user experience domain',
-                subDomains: ['User Experience'],
+                reasoning: 'UI component detected - user interface capability',
+                subDomains: ['End users', 'All user types'],
+                userJourney: 'User interface interaction and navigation',
             };
         }
         // Generic fallback
         return {
-            domain: 'System Enhancement',
-            userValue: 'Improve overall system functionality',
-            businessCapability: 'Enhance system capabilities for users',
+            domain: 'User Experience Enhancement',
+            userValue: 'Users benefit from improved system functionality',
+            businessCapability: 'Enhance overall system capabilities for better user outcomes',
             confidence: 0.3,
-            reasoning: 'AI analysis unavailable - generic enhancement domain',
+            reasoning: 'AI analysis unavailable - generic user experience capability',
+            subDomains: ['All users'],
+            userJourney: 'General system usage and interaction',
         };
     }
     /**
@@ -32006,45 +32019,98 @@ class BusinessDomainService {
         }
     }
     /**
-     * Fallback domain extraction for when AI fails
+     * Fallback business capability extraction for when AI fails
      * PRD: "Graceful degradation - never fail completely"
+     * Maps technical changes to user-centric business capabilities
      */
     extractBusinessDomainFallback(name, description) {
         const text = (name + ' ' + description).toLowerCase();
-        // Simple heuristics for common domains
-        if (text.includes('test') || text.includes('spec')) {
-            return 'Quality Assurance';
+        // Business capability heuristics focused on user value
+        if (text.includes('test') || text.includes('spec') || text.includes('quality')) {
+            return 'Development Workflow Optimization';
         }
-        if (text.includes('config') || text.includes('setting')) {
-            return 'System Configuration';
+        if (text.includes('config') || text.includes('setting') || text.includes('deploy')) {
+            return 'Development Workflow Optimization';
         }
         if (text.includes('auth') ||
             text.includes('login') ||
-            text.includes('user')) {
-            return 'User Management';
+            text.includes('password') ||
+            text.includes('security') ||
+            text.includes('account')) {
+            return 'User Account Management';
         }
-        if (text.includes('api') ||
-            text.includes('endpoint') ||
-            text.includes('service')) {
-            return 'API Services';
+        if (text.includes('payment') ||
+            text.includes('purchase') ||
+            text.includes('order') ||
+            text.includes('transaction') ||
+            text.includes('billing')) {
+            return 'Transaction Processing';
+        }
+        if (text.includes('search') ||
+            text.includes('discover') ||
+            text.includes('browse') ||
+            text.includes('filter') ||
+            text.includes('recommend')) {
+            return 'Content Discovery';
+        }
+        if (text.includes('message') ||
+            text.includes('notification') ||
+            text.includes('email') ||
+            text.includes('alert') ||
+            text.includes('communication')) {
+            return 'Communication & Collaboration';
         }
         if (text.includes('ui') ||
             text.includes('component') ||
-            text.includes('interface')) {
-            return 'User Interface';
+            text.includes('interface') ||
+            text.includes('design') ||
+            text.includes('layout')) {
+            return 'User Experience Enhancement';
         }
         if (text.includes('data') ||
             text.includes('database') ||
-            text.includes('storage')) {
+            text.includes('storage') ||
+            text.includes('backup') ||
+            text.includes('export')) {
             return 'Data Management';
+        }
+        if (text.includes('api') ||
+            text.includes('endpoint') ||
+            text.includes('service') ||
+            text.includes('integration') ||
+            text.includes('connect')) {
+            return 'Integration & Connectivity';
+        }
+        if (text.includes('report') ||
+            text.includes('analytics') ||
+            text.includes('dashboard') ||
+            text.includes('metrics') ||
+            text.includes('insights')) {
+            return 'Analytics & Insights';
+        }
+        if (text.includes('workflow') ||
+            text.includes('automation') ||
+            text.includes('process') ||
+            text.includes('efficiency') ||
+            text.includes('streamline')) {
+            return 'Workflow Automation';
+        }
+        if (text.includes('create') ||
+            text.includes('author') ||
+            text.includes('edit') ||
+            text.includes('publish') ||
+            text.includes('content')) {
+            return 'Content Creation & Publishing';
         }
         if (text.includes('error') ||
             text.includes('fix') ||
-            text.includes('bug')) {
-            return 'Error Resolution';
+            text.includes('bug') ||
+            text.includes('debug') ||
+            text.includes('log')) {
+            return 'Development Workflow Optimization';
         }
-        // Default domain
-        return 'System Enhancement';
+        // Default to user experience enhancement
+        return 'User Experience Enhancement';
     }
     async extractBusinessDomainWithContext(name, description, enhancedContext) {
         // Build code context summary if available
@@ -33019,6 +33085,7 @@ const secure_file_namer_1 = __nccwpck_require__(5584);
 const ai_mindmap_service_1 = __nccwpck_require__(3555);
 const theme_mindmap_converter_1 = __nccwpck_require__(3936);
 const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
     enableProgressLogging: false,
@@ -33056,13 +33123,13 @@ class ThemeExpansionService {
         // Reset effectiveness tracking
         this.resetEffectiveness();
         // Process all themes concurrently - let ClaudeClient handle rate limiting
-        console.log(`[THEME-EXPANSION] Processing all ${consolidatedThemes.length} themes concurrently`);
+        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Processing all ${consolidatedThemes.length} themes concurrently`);
         const themePromises = consolidatedThemes.map(async (theme) => {
             try {
                 return await this.expandThemeRecursively(theme, 0);
             }
             catch (error) {
-                console.warn(`[THEME-EXPANSION] Failed to expand theme "${theme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand theme "${theme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
                 return { error: error instanceof Error ? error : new Error(String(error)), item: theme };
             }
         });
@@ -33079,9 +33146,9 @@ class ThemeExpansionService {
             }
         }
         if (failedThemes.length > 0) {
-            console.warn(`[THEME-EXPANSION] Failed to expand ${failedThemes.length} themes after retries:`);
+            logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand ${failedThemes.length} themes after retries:`);
             for (const failed of failedThemes) {
-                console.warn(`  - ${failed.theme.name}: ${failed.error.message}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `  - ${failed.theme.name}: ${failed.error.message}`);
             }
         }
         // Update effectiveness metrics
@@ -33098,21 +33165,21 @@ class ThemeExpansionService {
         logger_1.logger.debug('EXPANSION', `Expanded theme names: ${expandedThemes.map((t) => t.name).join(', ')}`);
         logger_1.logger.info('EXPANSION', `Max depth reached: ${this.effectiveness.maxDepthReached}, Atomic themes: ${this.effectiveness.atomicThemesIdentified}`);
         // Log expansion stop reasons for analysis
-        console.log(`[EXPANSION-ANALYSIS] Expansion stop reasons summary:`);
-        console.log(`[EXPANSION-ANALYSIS] Total themes that stopped expanding: ${this.expansionStopReasons.length}`);
+        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Expansion stop reasons summary:`);
+        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Total themes that stopped expanding: ${this.expansionStopReasons.length}`);
         const reasonCounts = this.expansionStopReasons.reduce((acc, reason) => {
             acc[reason.reason] = (acc[reason.reason] || 0) + 1;
             return acc;
         }, {});
         Object.entries(reasonCounts).forEach(([reason, count]) => {
-            console.log(`[EXPANSION-ANALYSIS] ${reason}: ${count} themes`);
+            logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `${reason}: ${count} themes`);
         });
         // Log themes that exceeded PRD limits but were marked atomic
         const oversizedAtomic = this.expansionStopReasons.filter((r) => r.reason === 'atomic' && r.fileCount > 1);
         if (oversizedAtomic.length > 0) {
-            console.log(`[EXPANSION-ANALYSIS] ⚠️  ${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
+            logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `${oversizedAtomic.length} themes marked atomic but exceed PRD limits:`);
             oversizedAtomic.forEach((r) => {
-                console.log(`  - "${r.themeName}" (${r.fileCount} files) at depth ${r.depth}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `  - "${r.themeName}" (${r.fileCount} files) at depth ${r.depth}`);
             });
         }
         return expandedThemes;
@@ -33137,7 +33204,7 @@ class ThemeExpansionService {
                     return await this.expandThemeRecursively(child, currentDepth + 1, theme);
                 }
                 catch (error) {
-                    console.warn(`[THEME-EXPANSION] Failed to expand child theme "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand child theme "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
                     return { error: error instanceof Error ? error : new Error(String(error)), item: child };
                 }
             });
@@ -33146,7 +33213,7 @@ class ThemeExpansionService {
             const expandedChildren = [];
             for (const result of childResults) {
                 if ('error' in result) {
-                    console.warn(`[THEME-EXPANSION] Failed to expand child theme: ${result.error.message}`);
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand child theme: ${result.error.message}`);
                     expandedChildren.push(result.item); // Keep original theme if expansion fails
                 }
                 else {
@@ -33167,12 +33234,12 @@ class ThemeExpansionService {
         const result = await this.processExpansionRequest(expansionRequest);
         if (!result.success || !result.expandedTheme) {
             // Log expansion request context on failure
-            console.error(`[EXPANSION-REQUEST-FAILED] Theme: "${theme.name}" (ID: ${theme.id})`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Request ID: ${expansionRequest.id}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Depth: ${currentDepth}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Parent: ${parentTheme?.name || 'none'}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Error: ${result.error}`);
-            console.error(`[EXPANSION-REQUEST-FAILED] Processing time: ${result.processingTime}ms`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Theme: "${theme.name}" (ID: ${theme.id})`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Request ID: ${expansionRequest.id}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Depth: ${currentDepth}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Parent: ${parentTheme?.name || 'none'}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Error: ${result.error}`);
+            logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Processing time: ${result.processingTime}ms`);
             logger_1.logger.info('EXPANSION', `Expansion failed for theme ${theme.name}: ${result.error}`);
             return theme;
         }
@@ -33184,7 +33251,7 @@ class ThemeExpansionService {
                 return await this.expandThemeRecursively(subTheme, currentDepth + 1, result.expandedTheme);
             }
             catch (error) {
-                console.warn(`[THEME-EXPANSION] Failed to expand sub-theme "${subTheme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand sub-theme "${subTheme.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
                 return { error: error instanceof Error ? error : new Error(String(error)), item: subTheme };
             }
         });
@@ -33193,7 +33260,7 @@ class ThemeExpansionService {
         const expandedSubThemes = [];
         for (const subResult of subThemeResults) {
             if ('error' in subResult) {
-                console.warn(`[THEME-EXPANSION] Failed to expand sub-theme: ${subResult.error.message}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand sub-theme: ${subResult.error.message}`);
                 expandedSubThemes.push(subResult.item); // Keep original if expansion fails
             }
             else {
@@ -33209,7 +33276,7 @@ class ThemeExpansionService {
                     return await this.expandThemeRecursively(child, currentDepth + 1, result.expandedTheme);
                 }
                 catch (error) {
-                    console.warn(`[THEME-EXPANSION] Failed to expand existing child "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand existing child "${child.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
                     return { error: error instanceof Error ? error : new Error(String(error)), item: child };
                 }
             });
@@ -33217,7 +33284,7 @@ class ThemeExpansionService {
             // Extract successful existing children
             for (const childResult of existingChildResults) {
                 if ('error' in childResult) {
-                    console.warn(`[THEME-EXPANSION] Failed to expand existing child: ${childResult.error.message}`);
+                    logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Failed to expand existing child: ${childResult.error.message}`);
                     expandedExistingChildren.push(childResult.item); // Keep original if expansion fails
                 }
                 else {
@@ -33227,7 +33294,7 @@ class ThemeExpansionService {
         }
         else {
             // We created new sub-themes, so skip existing children to avoid duplicates
-            console.log(`[EXPANSION-FLOW] Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Skipping existing children processing - ${result.subThemes.length} new sub-themes were created`);
         }
         // Combine all child themes
         const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
@@ -33287,7 +33354,7 @@ class ThemeExpansionService {
         // Check if re-evaluation is disabled
         const reEvaluateAfterMerge = process.env.RE_EVALUATE_AFTER_MERGE !== 'false';
         if (!reEvaluateAfterMerge) {
-            console.log(`[RE-EVALUATION] Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`);
             return themes;
         }
         const reEvaluatedThemes = [];
@@ -33295,27 +33362,27 @@ class ThemeExpansionService {
         for (const theme of themes) {
             // Check if this was a merged theme (has multiple source themes)
             if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-                console.log(`[RE-EVALUATION] Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`);
+                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`);
                 // PRD: If merged theme has complexity indicators, it should be re-evaluated
                 const exceedsFileLimit = strictAtomicLimits && theme.affectedFiles.length > 1;
                 const hasMultipleSources = theme.sourceThemes.length > 2;
                 if (exceedsFileLimit || hasMultipleSources) {
-                    console.log(`[RE-EVALUATION] Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`);
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`);
                     // Re-evaluate if it should expand
                     const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
                     if (expansionCandidate) {
-                        console.log(`[RE-EVALUATION] Merged theme "${theme.name}" needs expansion after deduplication`);
+                        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" needs expansion after deduplication`);
                         // Recursively expand the merged theme
                         const expanded = await this.expandThemeRecursively(theme, currentDepth, parentTheme);
                         reEvaluatedThemes.push(expanded);
                     }
                     else {
-                        console.log(`[RE-EVALUATION] Merged theme "${theme.name}" remains atomic despite complexity`);
+                        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" remains atomic despite complexity`);
                         reEvaluatedThemes.push(theme);
                     }
                 }
                 else {
-                    console.log(`[RE-EVALUATION] Merged theme "${theme.name}" within atomic limits -> keeping as-is`);
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" within atomic limits -> keeping as-is`);
                     reEvaluatedThemes.push(theme);
                 }
             }
@@ -33331,7 +33398,7 @@ class ThemeExpansionService {
      */
     async deduplicateSubThemes(subThemes) {
         if (subThemes.length <= 1) {
-            console.log(`[DEDUP-OUT] Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
             return subThemes;
         }
         // Check if batch deduplication is disabled
@@ -33346,9 +33413,9 @@ class ThemeExpansionService {
             return subThemes;
         }
         // Pre-deduplication state logging
-        console.log(`[DEDUP-BEFORE] Themes before deduplication:`);
+        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Themes before deduplication:`);
         subThemes.forEach((t) => {
-            console.log(`  - "${t.name}" (${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
         });
         logger_1.logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
         // Calculate optimal batch size based on theme count
@@ -33366,11 +33433,11 @@ class ThemeExpansionService {
                 const result = await this.deduplicateBatch(batch);
                 successfulResults.push(result);
                 if (this.config.enableProgressLogging && batches.length > 1) {
-                    console.log(`[THEME-EXPANSION] Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`);
+                    logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`);
                 }
             }
             catch (error) {
-                console.warn(`[THEME-EXPANSION] Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
         }
         // Flatten and combine results
@@ -33409,13 +33476,13 @@ class ThemeExpansionService {
             const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
             // Post-deduplication state logging (after second pass)
-            console.log(`[DEDUP-AFTER] Final themes after second pass deduplication:`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after second pass deduplication:`);
             secondPassResult.forEach((t) => {
                 if (t.sourceThemes && t.sourceThemes.length > 1) {
-                    console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
                 }
                 else {
-                    console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
                 }
             });
             return secondPassResult;
@@ -33427,18 +33494,18 @@ class ThemeExpansionService {
             logger_1.logger.info('EXPANSION', `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`);
         }
         // Post-deduplication state logging (no second pass)
-        console.log(`[DEDUP-AFTER] Final themes after first pass deduplication:`);
+        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after first pass deduplication:`);
         finalThemes.forEach((t) => {
             if (t.sourceThemes && t.sourceThemes.length > 1) {
-                console.log(`  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
+                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
             }
             else {
-                console.log(`  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
+                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
             }
         });
         // DEBUG: Log deduplication output
-        console.log(`[DEDUP-OUT] Returning ${finalThemes.length} sub-themes:`);
-        finalThemes.forEach((theme, i) => console.log(`  [DEDUP-OUT-${i}] "${theme.name}" (ID: ${theme.id})`));
+        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${finalThemes.length} sub-themes:`);
+        finalThemes.forEach((theme, i) => logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  [${i}] "${theme.name}" (ID: ${theme.id})`));
         return finalThemes;
     }
     /**
@@ -33603,18 +33670,14 @@ CRITICAL: Respond with ONLY valid JSON.
             // Log batch deduplication results
             const mergedCount = groups.filter((g) => g.length > 1).length;
             const keptSeparate = groups.filter((g) => g.length === 1).length;
-            if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
-                console.log(`[BATCH-DEDUP] Processed ${themes.length} themes into ${groups.length} groups`);
-                console.log(`[BATCH-DEDUP] ${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
-                groups.forEach((group, idx) => {
-                    if (group.length > 1) {
-                        console.log(`[BATCH-DEDUP] Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`);
-                    }
-                });
-            }
-            else {
-                logger_1.logger.info('EXPANSION', `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`);
-            }
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Processed ${themes.length} themes into ${groups.length} groups`);
+            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
+            groups.forEach((group, idx) => {
+                if (group.length > 1) {
+                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`);
+                }
+            });
+            logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`);
             return groups;
         }
         catch (error) {
@@ -33789,8 +33852,8 @@ CRITICAL: Respond with ONLY valid JSON.
             const relevantFiles = suggested.files || suggested.relevantFiles || [];
             // Validate that AI provided files
             if (relevantFiles.length === 0) {
-                console.error(`[ERROR] AI did not provide files for sub-theme "${suggested.name}"`);
-                console.error(`[ERROR] Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `AI did not provide files for sub-theme "${suggested.name}"`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Parent theme "${parentTheme.name}" has files: ${JSON.stringify(parentTheme.affectedFiles)}`);
                 throw new Error(`AI failed to provide files for sub-theme "${suggested.name}". ` +
                     `Parent theme has ${parentTheme.affectedFiles.length} files. ` +
                     `AI must specify which files each sub-theme affects.`);
@@ -33798,9 +33861,9 @@ CRITICAL: Respond with ONLY valid JSON.
             const validFiles = relevantFiles.filter((file) => parentTheme.affectedFiles.includes(file));
             // Validate that provided files are valid
             if (validFiles.length === 0) {
-                console.error(`[ERROR] AI provided invalid files for sub-theme "${suggested.name}"`);
-                console.error(`[ERROR] AI suggested: ${JSON.stringify(relevantFiles)}`);
-                console.error(`[ERROR] Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `AI provided invalid files for sub-theme "${suggested.name}"`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `AI suggested: ${JSON.stringify(relevantFiles)}`);
+                logger_1.logger.error(constants_1.LoggerServices.EXPANSION, `Valid parent files: ${JSON.stringify(parentTheme.affectedFiles)}`);
                 throw new Error(`AI provided invalid files for sub-theme "${suggested.name}". ` +
                     `Suggested files ${JSON.stringify(relevantFiles)} are not in parent's files: ${JSON.stringify(parentTheme.affectedFiles)}`);
             }
@@ -34377,6 +34440,7 @@ const hierarchical_similarity_1 = __nccwpck_require__(4200);
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const json_extractor_1 = __nccwpck_require__(8168);
 const performance_tracker_1 = __nccwpck_require__(9600);
+const business_prompt_templates_1 = __nccwpck_require__(2813);
 // Processing configuration
 const PROCESSING_CONFIG = {
     CHUNK_TIMEOUT: 120000, // 2 minutes
@@ -34439,44 +34503,33 @@ class ClaudeService {
                 enhancedContext += `\nThis is a CONFIG file`;
             }
         }
-        return `${enhancedContext}
-
-Analyze this code change. Be specific but concise.
-
-File: ${chunk.filename}
-Code changes:
-${truncatedContent}
-
-Focus on WHAT changed with exact details:
-- Exact values changed (before → after)
-- Business purpose of the changes
-- User impact
-
-Examples:
-✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
-✅ "Added detailedDescription field to ConsolidatedTheme interface"
-❌ "Enhanced workflow configuration for improved flexibility"
-❌ "Expanded theme structure with comprehensive analysis capabilities"
-
-CRITICAL: Respond with ONLY valid JSON:
-
-{
-  "themeName": "what this accomplishes (max 10 words)",
-  "description": "one specific sentence with exact names/values (max 20 words)",
-  "detailedDescription": "additional context if needed (max 15 words, or null)",
-  "businessImpact": "user benefit in one sentence (max 15 words)",
-  "technicalSummary": "exact technical change (max 12 words)",
-  "keyChanges": ["max 3 changes, each max 10 words"],
-  "userScenario": null,
-  "suggestedParent": null,
-  "confidence": 0.8,
-  "codePattern": "change type (max 3 words)"
-}`;
+        // Use business-first prompt template for theme analysis
+        return business_prompt_templates_1.BusinessPromptTemplates.createBusinessImpactPrompt(chunk.filename, truncatedContent, enhancedContext);
     }
     parseClaudeResponse(output, chunk, codeChange) {
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
-        if (extractionResult.success) {
-            const data = extractionResult.data;
+        // Try new business capability format first
+        const businessCapabilityResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['businessCapability', 'userValue', 'businessProcess', 'confidence']);
+        if (businessCapabilityResult.success) {
+            const data = businessCapabilityResult.data;
+            return {
+                themeName: data.businessCapability || 'Unknown Business Capability',
+                description: data.userValue || 'No user value identified',
+                businessImpact: data.businessProcess || 'Unknown business process',
+                confidence: data.confidence || 0.5,
+                codePattern: data.businessDomain || 'General Enhancement',
+                suggestedParent: undefined,
+                detailedDescription: data.executiveSummary,
+                technicalSummary: data.technicalImplementation,
+                keyChanges: data.userScenarios,
+                userScenario: data.userScenarios?.[0],
+                mainFunctionsChanged: codeChange?.functionsChanged || [],
+                mainClassesChanged: codeChange?.classesChanged || [],
+            };
+        }
+        // Fallback to legacy format for backward compatibility
+        const legacyResult = json_extractor_1.JsonExtractor.extractAndValidateJson(output, 'object', ['themeName', 'description', 'businessImpact', 'confidence']);
+        if (legacyResult.success) {
+            const data = legacyResult.data;
             return {
                 themeName: data.themeName || 'Unknown Theme',
                 description: data.description || 'No description provided',
@@ -34496,13 +34549,40 @@ CRITICAL: Respond with ONLY valid JSON:
         return this.createFallbackAnalysis(chunk);
     }
     createFallbackAnalysis(chunk) {
+        // Try to infer business capability from filename
+        const fileName = chunk.filename.toLowerCase();
+        let businessCapability = 'User Experience Enhancement';
+        let userValue = 'Users benefit from improved system functionality';
+        let businessProcess = 'General system improvement and optimization';
+        if (fileName.includes('auth') || fileName.includes('login')) {
+            businessCapability = 'User Account Management';
+            userValue = 'Users access their accounts securely and efficiently';
+            businessProcess = 'Secure user authentication and access control';
+        }
+        else if (fileName.includes('test') || fileName.includes('spec')) {
+            businessCapability = 'Development Workflow Optimization';
+            userValue = 'Developers catch issues before users experience them';
+            businessProcess = 'Quality assurance and automated testing';
+        }
+        else if (fileName.includes('config') || fileName.includes('setting')) {
+            businessCapability = 'Development Workflow Optimization';
+            userValue = 'Developers deploy and maintain systems reliably';
+            businessProcess = 'System configuration and deployment management';
+        }
+        else if (fileName.includes('ui') || fileName.includes('component')) {
+            businessCapability = 'User Experience Enhancement';
+            userValue = 'Users accomplish tasks intuitively and efficiently';
+            businessProcess = 'Intuitive user interface and interaction design';
+        }
         return {
-            themeName: `Changes in ${chunk.filename}`,
-            description: 'Analysis unavailable - using fallback',
-            businessImpact: 'Unknown impact',
-            confidence: 0.3,
-            codePattern: 'File modification',
+            themeName: businessCapability,
+            description: userValue,
+            businessImpact: businessProcess,
+            confidence: 0.4,
+            codePattern: 'User Experience Enhancement',
             suggestedParent: undefined,
+            detailedDescription: `Business analysis unavailable - inferred from file: ${chunk.filename}`,
+            technicalSummary: `Modifications in ${chunk.filename}`,
         };
     }
 }
@@ -35546,6 +35626,696 @@ exports.ThemeSimilarityService = ThemeSimilarityService;
 
 /***/ }),
 
+/***/ 2813:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+/**
+ * Business-first prompt templates for transforming technical code analysis
+ * into business-oriented themes aligned with PRD requirements
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BusinessPromptTemplates = void 0;
+const prompt_templates_1 = __nccwpck_require__(1958);
+class BusinessPromptTemplates extends prompt_templates_1.PromptTemplates {
+    /**
+     * Business capability identification prompt - transforms technical changes to user value
+     */
+    static createBusinessImpactPrompt(filePath, codeChanges, technicalContext) {
+        return this.createJsonPrompt({
+            instruction: `You are a product manager analyzing code changes for business impact and user value.
+
+PERSPECTIVE: Focus on USER VALUE and BUSINESS CAPABILITY, not technical implementation.
+
+CONTEXT:
+File: ${filePath}
+Code Changes: ${codeChanges}
+Technical Context: ${technicalContext}
+
+CRITICAL QUESTIONS TO ANSWER:
+1. What user problem does this solve or improve?
+2. What business process does this enable or enhance?
+3. What user journey or workflow does this affect?
+4. How does this create value for end users?
+5. What can users now DO that they couldn't before (or do BETTER)?
+
+BUSINESS-FIRST ANALYSIS:
+Think like a product manager explaining this change to an executive board.
+Focus on user outcomes, business processes, and customer value.
+Avoid technical jargon - use business language.`,
+            jsonSchema: `{
+  "businessCapability": "What user capability this creates (max 8 words)",
+  "userValue": "Direct benefit to end users (max 12 words)",
+  "businessProcess": "Business workflow this improves (max 15 words)",
+  "userScenarios": ["When users will experience this benefit"],
+  "businessDomain": "Primary business area affected",
+  "executiveSummary": "One-sentence business value for executives",
+  "technicalImplementation": "How it's implemented (max 10 words)",
+  "confidence": 0.0-1.0
+}`,
+            examples: [
+                `{
+  "businessCapability": "Streamline User Password Recovery",
+  "userValue": "Users reset passwords without contacting support",
+  "businessProcess": "Self-service account recovery reduces support burden",
+  "userScenarios": ["User forgets password", "Account locked situations"],
+  "businessDomain": "User Account Management",
+  "executiveSummary": "Reduces support costs while improving user experience through automated password recovery.",
+  "technicalImplementation": "Email verification and reset token system",
+  "confidence": 0.9
+}`,
+                `{
+  "businessCapability": "Accelerate Developer Productivity",
+  "userValue": "Developers find and fix issues 50% faster",
+  "businessProcess": "Streamlined debugging and error diagnosis workflow",
+  "userScenarios": ["Production issue investigation", "Code quality analysis"],
+  "businessDomain": "Development Workflow Optimization", 
+  "executiveSummary": "Improves development velocity and reduces time-to-resolution for customer issues.",
+  "technicalImplementation": "Centralized logging and monitoring system",
+  "confidence": 0.85
+}`
+            ],
+            constraints: [
+                'Business capability must be user-facing or directly support user value',
+                'User value must be measurable and specific',
+                'Business process must connect to actual business workflows',
+                'Executive summary must be compelling to non-technical stakeholders',
+                'Avoid technical terms in business fields',
+                'Confidence reflects certainty of business impact assessment'
+            ]
+        });
+    }
+    /**
+     * Business domain classification - maps code to business capabilities
+     */
+    static createBusinessCapabilityPrompt(filePath, codeChanges, functionalContext) {
+        return this.createJsonPrompt({
+            instruction: `You are a business analyst identifying the PRIMARY USER CAPABILITY affected by code changes.
+
+USER-CENTRIC ANALYSIS:
+File: ${filePath}
+Changes: ${codeChanges}
+Context: ${functionalContext}
+
+BUSINESS CAPABILITY FRAMEWORK:
+Ask: "What can users now DO that they couldn't before, or do BETTER than before?"
+
+PRIMARY CAPABILITY CATEGORIES (Choose ONE):
+- "User Account Management" - Registration, login, profile, preferences, security
+- "Content Discovery" - Search, browse, recommendations, navigation, filtering
+- "Transaction Processing" - Payments, orders, purchases, bookings, financial operations
+- "Communication & Collaboration" - Messaging, notifications, sharing, team features
+- "Data Management" - Upload, organize, analyze, export, backup user data
+- "Workflow Automation" - Process simplification, task automation, efficiency tools
+- "User Experience Enhancement" - Interface improvements, accessibility, performance
+- "Content Creation & Publishing" - Authoring, editing, publishing, content management
+- "Security & Privacy" - Data protection, access control, compliance, privacy controls
+- "Integration & Connectivity" - Third-party connections, API access, data synchronization
+- "Analytics & Insights" - Reporting, dashboards, data visualization, metrics
+- "Development Workflow Optimization" - Developer tools, debugging, monitoring, deployment`,
+            jsonSchema: `{
+  "primaryCapability": "Main user capability (from categories above)",
+  "userValue": "What users can now accomplish (max 15 words)",
+  "businessImpact": "Business outcome this enables (max 12 words)",
+  "userJourney": "Step in user workflow this improves",
+  "affectedUserTypes": ["Primary users who benefit"],
+  "businessMetrics": ["Metrics this improvement could affect"],
+  "confidence": 0.0-1.0,
+  "reasoning": "Why this capability classification (max 20 words)"
+}`,
+            examples: [
+                `{
+  "primaryCapability": "User Account Management",
+  "userValue": "Users create accounts and access personalized features securely",
+  "businessImpact": "Increased user engagement and retention through personalization",
+  "userJourney": "Account creation and initial setup",
+  "affectedUserTypes": ["New users", "Returning users"],
+  "businessMetrics": ["User registration rate", "Time to first value", "Account security incidents"],
+  "confidence": 0.9,
+  "reasoning": "Changes directly affect user registration and authentication flows"
+}`,
+                `{
+  "primaryCapability": "Development Workflow Optimization", 
+  "userValue": "Developers diagnose and resolve issues faster and more effectively",
+  "businessImpact": "Reduced development costs and faster feature delivery",
+  "userJourney": "Error investigation and debugging process",
+  "affectedUserTypes": ["Software developers", "DevOps engineers"],
+  "businessMetrics": ["Time to resolution", "Developer productivity", "Bug fix cycle time"],
+  "confidence": 0.85,
+  "reasoning": "Improves developer tools and debugging capabilities for faster issue resolution"
+}`
+            ],
+            constraints: [
+                'Must choose from predefined capability categories',
+                'User value must be specific and measurable',
+                'Business impact must connect to actual business outcomes',
+                'User journey must be a recognizable workflow step',
+                'Affected user types must be specific roles or personas',
+                'Business metrics must be trackable and relevant'
+            ]
+        });
+    }
+    /**
+     * Business hierarchy expansion - determines if capability needs sub-capabilities
+     */
+    static createBusinessHierarchyPrompt(capability, userValue, businessProcess, currentDepth, technicalScope) {
+        return this.createJsonPrompt({
+            instruction: `You are a product manager organizing user capabilities into business hierarchy.
+
+CURRENT BUSINESS CAPABILITY: "${capability}"
+User Value: ${userValue}
+Business Process: ${businessProcess}
+Current Depth: ${currentDepth}
+Technical Scope: ${technicalScope}
+
+BUSINESS DECOMPOSITION CRITERIA:
+- EXPAND if this capability serves MULTIPLE distinct user needs
+- EXPAND if users accomplish this through MULTIPLE distinct workflows
+- EXPAND if this affects MULTIPLE business processes  
+- EXPAND if this capability is too broad for users to understand easily
+- ATOMIC if this serves ONE specific user need completely
+- ATOMIC if this represents a single, cohesive user workflow
+
+BUSINESS HIERARCHY RULES:
+Level 0: User-facing capabilities ("Enable Secure User Login")
+Level 1: Business processes ("Account Verification", "Profile Setup") 
+Level 2: User workflows ("Email Confirmation", "Welcome Onboarding")
+Level 3+: Technical implementations (only if absolutely necessary for user understanding)
+
+AUDIENCE PROGRESSIVE LANGUAGE:
+- Level 0: Executive language - business outcomes and user value
+- Level 1: Product manager language - business processes and user workflows
+- Level 2: Technical product language - system behaviors and user interactions
+- Level 3+: Developer language - implementation details (avoid if possible)`,
+            jsonSchema: `{
+  "shouldExpand": boolean,
+  "businessReasoning": "User-centric reason for expansion/atomic decision",
+  "atomicReason": "If atomic, why this is a complete user capability",
+  "userCapabilities": [
+    {
+      "name": "Specific user capability (max 8 words)",
+      "userValue": "What users accomplish (max 12 words)", 
+      "businessProcess": "Business workflow supported (max 10 words)",
+      "userScenarios": ["When users need this capability"],
+      "audienceLevel": "executive|product-manager|technical-product|developer",
+      "technicalScope": "Implementation details (max 8 words)"
+    }
+  ],
+  "confidence": 0.0-1.0
+}`,
+            examples: [
+                `{
+  "shouldExpand": true,
+  "businessReasoning": "User account management involves distinct workflows: creation, verification, and maintenance",
+  "atomicReason": null,
+  "userCapabilities": [
+    {
+      "name": "Account Creation Workflow",
+      "userValue": "New users join platform with guided registration",
+      "businessProcess": "User onboarding and initial setup",
+      "userScenarios": ["First-time visitor wants to sign up", "User needs account for premium features"],
+      "audienceLevel": "product-manager",
+      "technicalScope": "Registration form and validation logic"
+    },
+    {
+      "name": "Account Verification Process", 
+      "userValue": "Users confirm identity for account security",
+      "businessProcess": "Identity verification and fraud prevention",
+      "userScenarios": ["Email verification required", "Two-factor authentication setup"],
+      "audienceLevel": "product-manager", 
+      "technicalScope": "Email verification and 2FA systems"
+    }
+  ],
+  "confidence": 0.9
+}`,
+                `{
+  "shouldExpand": false,
+  "businessReasoning": "Password reset is a single, cohesive user workflow with one clear outcome",
+  "atomicReason": "Users have one specific need: regain access to their account when password is forgotten",
+  "userCapabilities": [],
+  "confidence": 0.95
+}`
+            ],
+            constraints: [
+                'Maximum 4 sub-capabilities per expansion',
+                'Each sub-capability must serve distinct user needs',
+                'Sub-capabilities must not overlap in user value',
+                'Audience level must progress logically with depth',
+                'Business reasoning must focus on user needs, not technical complexity',
+                'Atomic decisions must justify why further expansion serves no user value'
+            ]
+        });
+    }
+    /**
+     * Progressive language enforcement - ensures appropriate language for hierarchy level
+     */
+    static createProgressiveLanguagePrompt(currentName, currentDescription, targetLevel, targetAudience) {
+        const audienceConfig = this.getAudienceConfig(targetAudience);
+        return this.createJsonPrompt({
+            instruction: `Transform this theme to use appropriate language for ${targetAudience} audience at hierarchy level ${targetLevel}.
+
+CURRENT THEME:
+Name: ${currentName}
+Description: ${currentDescription}
+
+TARGET AUDIENCE: ${targetAudience.toUpperCase()}
+${audienceConfig.description}
+
+LANGUAGE REQUIREMENTS:
+- Maximum ${audienceConfig.maxWords} words
+- Focus: ${audienceConfig.focus}
+- Use these terms: ${audienceConfig.allowedTerms.join(', ')}
+- Avoid these terms: ${audienceConfig.forbiddenTerms.join(', ')}
+- Tone: ${audienceConfig.tone}
+
+TRANSFORMATION GOALS:
+1. Make the theme understandable to the target audience
+2. Focus on value that matters to this audience 
+3. Use appropriate level of technical detail
+4. Maintain business accuracy while adjusting language`,
+            jsonSchema: `{
+  "transformedName": "Theme name for ${targetAudience} (max ${audienceConfig.nameWords} words)",
+  "transformedDescription": "Description for ${targetAudience} (max ${audienceConfig.maxWords} words)",
+  "audienceValue": "Why this matters to ${targetAudience} specifically",
+  "confidence": 0.0-1.0
+}`,
+            examples: audienceConfig.examples,
+            constraints: [
+                `Name must be ${audienceConfig.nameWords} words or less`,
+                `Description must be ${audienceConfig.maxWords} words or less`,
+                `Must use ${targetAudience} appropriate language`,
+                'Must maintain factual accuracy',
+                'Must focus on value relevant to target audience'
+            ]
+        });
+    }
+    /**
+     * Business value consolidation - merges themes by user value rather than technical similarity
+     */
+    static createBusinessValueConsolidationPrompt(themes) {
+        const themesList = themes.map((theme, index) => `Theme ${index + 1}: "${theme.name}"
+User Value: ${theme.userValue}
+Business Process: ${theme.businessProcess}
+Technical Scope: ${theme.technicalScope}`).join('\n\n');
+        return this.createJsonPrompt({
+            instruction: `Analyze these themes for business value consolidation opportunities.
+
+THEMES TO ANALYZE:
+${themesList}
+
+BUSINESS CONSOLIDATION CRITERIA:
+- Themes serve the SAME user need (even if technical implementation differs)
+- Themes support the SAME business process workflow
+- Themes provide similar user value propositions
+- Users would perceive these as the same capability
+
+IMPORTANT: Only consolidate themes that users would see as the same capability.
+Do NOT consolidate based on technical similarity alone.
+
+CONSOLIDATION RULES:
+1. User value must be nearly identical
+2. Business process must be the same or complementary
+3. Combined theme must be clearer to users than separate themes
+4. Consolidation must simplify user understanding, not complicate it`,
+            jsonSchema: `{
+  "consolidationGroups": [
+    {
+      "themeIndices": [1, 3],
+      "consolidatedName": "Single capability name (max 8 words)",
+      "consolidatedUserValue": "Combined user value (max 15 words)",
+      "consolidatedBusinessProcess": "Unified business process (max 12 words)",
+      "userBenefit": "Why consolidation improves user understanding",
+      "reasoning": "Business justification for consolidation"
+    }
+  ],
+  "standaloneThemes": [2, 4],
+  "confidence": 0.0-1.0
+}`,
+            examples: [
+                `{
+  "consolidationGroups": [
+    {
+      "themeIndices": [1, 3],
+      "consolidatedName": "Streamline User Password Management",
+      "consolidatedUserValue": "Users manage passwords securely without support contact",
+      "consolidatedBusinessProcess": "Self-service account security management",
+      "userBenefit": "Users see one coherent password management capability instead of fragmented features",
+      "reasoning": "Both themes serve the same user need: secure password management independence"
+    }
+  ],
+  "standaloneThemes": [2],
+  "confidence": 0.9
+}`
+            ],
+            constraints: [
+                'Only consolidate themes with truly similar user value',
+                'Consolidated themes must be clearer than separate themes',
+                'User benefit must explain improved user understanding',
+                'Reasoning must justify from user perspective, not technical perspective'
+            ]
+        });
+    }
+    /**
+     * Get audience-specific configuration for progressive language
+     */
+    static getAudienceConfig(audience) {
+        const configs = {
+            executive: {
+                description: 'Senior leadership focused on business outcomes, ROI, and strategic value',
+                maxWords: 12,
+                nameWords: 6,
+                focus: 'Business outcomes and strategic value',
+                allowedTerms: ['revenue', 'efficiency', 'growth', 'value', 'competitive advantage', 'user satisfaction'],
+                forbiddenTerms: ['API', 'function', 'class', 'method', 'implementation', 'refactor', 'technical debt'],
+                tone: 'Strategic and outcome-focused',
+                examples: [
+                    `{
+  "transformedName": "Accelerate Customer Onboarding",
+  "transformedDescription": "Streamline new customer signup process to increase conversion rates and reduce support burden",
+  "audienceValue": "Drives revenue growth through improved customer acquisition efficiency",
+  "confidence": 0.9
+}`
+                ]
+            },
+            'product-manager': {
+                description: 'Product managers focused on user workflows, business processes, and feature value',
+                maxWords: 18,
+                nameWords: 8,
+                focus: 'User workflows and business processes',
+                allowedTerms: ['workflow', 'process', 'user experience', 'feature', 'integration', 'automation'],
+                forbiddenTerms: ['class', 'method', 'function', 'code', 'implementation details'],
+                tone: 'Process-oriented and user-focused',
+                examples: [
+                    `{
+  "transformedName": "Improve User Authentication Workflow",
+  "transformedDescription": "Enhance login process with streamlined verification steps and improved user experience across multiple touchpoints",
+  "audienceValue": "Reduces user friction and improves conversion rates through better authentication flow",
+  "confidence": 0.85
+}`
+                ]
+            },
+            'technical-product': {
+                description: 'Technical product managers focused on system behavior and integration points',
+                maxWords: 25,
+                nameWords: 10,
+                focus: 'System behavior and technical capabilities',
+                allowedTerms: ['service', 'component', 'integration', 'validation', 'processing', 'system'],
+                forbiddenTerms: ['specific function names', 'variable names', 'detailed implementation'],
+                tone: 'System-focused with business context',
+                examples: [
+                    `{
+  "transformedName": "Authentication Service Integration and Validation",
+  "transformedDescription": "Implement robust user authentication service with multi-factor validation and secure session management for improved system security",
+  "audienceValue": "Provides technical foundation for secure user access while maintaining development flexibility",
+  "confidence": 0.8
+}`
+                ]
+            },
+            developer: {
+                description: 'Software developers focused on implementation details and technical specifications',
+                maxWords: 35,
+                nameWords: 15,
+                focus: 'Implementation details and technical specifications',
+                allowedTerms: ['function', 'class', 'method', 'API', 'component', 'service', 'implementation'],
+                forbiddenTerms: [],
+                tone: 'Technical and implementation-focused',
+                examples: [
+                    `{
+  "transformedName": "Implement authenticateUser() and validateSession() methods",
+  "transformedDescription": "Create user authentication functions with JWT token generation, session validation middleware, and database integration for secure user access control",
+  "audienceValue": "Provides clear implementation guidelines and technical specifications for secure authentication features",
+  "confidence": 0.95
+}`
+                ]
+            }
+        };
+        return configs[audience] || configs.developer;
+    }
+}
+exports.BusinessPromptTemplates = BusinessPromptTemplates;
+
+
+/***/ }),
+
+/***/ 1958:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Standardized prompt templates for consistent Claude AI responses
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PromptTemplates = void 0;
+class PromptTemplates {
+    /**
+     * Create a standardized JSON-only prompt
+     */
+    static createJsonPrompt(config) {
+        const { instruction, jsonSchema, examples = [], constraints = [] } = config;
+        let prompt = `${instruction}\n\n`;
+        // Add strict JSON formatting requirements
+        prompt += `CRITICAL RESPONSE FORMAT:\n`;
+        prompt += `- Return ONLY valid JSON matching this exact schema: ${jsonSchema}\n`;
+        prompt += `- No explanatory text, no markdown formatting, no code blocks\n`;
+        prompt += `- Response must start with { or [ character\n`;
+        prompt += `- Response must end with } or ] character\n`;
+        prompt += `- No text before or after the JSON\n\n`;
+        // Add examples if provided
+        if (examples.length > 0) {
+            prompt += `VALID RESPONSE EXAMPLES:\n`;
+            examples.forEach((example, index) => {
+                prompt += `Example ${index + 1}: ${example}\n`;
+            });
+            prompt += `\n`;
+        }
+        // Add constraints if provided
+        if (constraints.length > 0) {
+            prompt += `CONSTRAINTS:\n`;
+            constraints.forEach((constraint) => {
+                prompt += `- ${constraint}\n`;
+            });
+            prompt += `\n`;
+        }
+        prompt += `TASK: ${instruction}`;
+        return prompt;
+    }
+    /**
+     * Template for business pattern identification
+     */
+    static createBusinessPatternPrompt(themeName, themeDescription, businessImpact, affectedFiles) {
+        return this.createJsonPrompt({
+            instruction: `Analyze this code theme for distinct business logic patterns and user flows:
+
+Theme: ${themeName}
+Description: ${themeDescription}
+Business Impact: ${businessImpact}
+Affected Files: ${affectedFiles.join(', ')}
+
+Identify distinct business patterns within this theme. Look for:
+1. Different user interaction flows
+2. Separate business logic concerns
+3. Distinct functional areas
+4. Different data processing patterns
+5. Separate integration points
+
+Focus on business value, not technical implementation details.`,
+            jsonSchema: '["pattern1", "pattern2", "pattern3"]',
+            examples: [
+                '["User Authentication Flow", "Data Validation Logic", "API Integration"]',
+                '["Payment Processing", "Order Management", "Customer Notifications"]',
+                '["Configuration Management", "Error Handling", "Monitoring Integration"]',
+            ],
+            constraints: [
+                'Maximum 6 patterns',
+                'Focus on business/user value',
+                'Use descriptive pattern names',
+                'Avoid technical implementation details',
+            ],
+        });
+    }
+    /**
+     * Template for sub-theme analysis
+     */
+    static createSubThemeAnalysisPrompt(themeName, themeDescription, businessImpact, level, affectedFiles, parentContext) {
+        const contextSection = parentContext
+            ? `\nPARENT THEME CONTEXT:\n${parentContext}\n`
+            : '';
+        return this.createJsonPrompt({
+            instruction: `Analyze this code theme for potential sub-theme expansion:
+
+THEME TO ANALYZE:
+Name: ${themeName}
+Description: ${themeDescription}
+Business Impact: ${businessImpact}
+Current Level: ${level}
+Files: ${affectedFiles.join(', ')}${contextSection}
+
+Determine if this theme contains distinct sub-patterns that warrant separate sub-themes.
+Focus on:
+1. Business logic separation (different business rules/processes)
+2. User flow distinction (different user interaction patterns)
+3. Functional area separation (different system responsibilities)
+4. Data processing patterns (different data handling approaches)
+
+EXPANSION CRITERIA:
+- Sub-themes must have distinct business value
+- Each sub-theme should represent a coherent business concept
+- Avoid technical implementation splitting
+- Maintain file scope relevance
+- Ensure no duplication with parent or sibling themes
+
+Only create sub-themes if there are genuinely distinct business concerns.`,
+            jsonSchema: `{
+  "shouldExpand": boolean,
+  "confidence": number,
+  "reasoning": "explanation",
+  "businessLogicPatterns": ["pattern1", "pattern2"],
+  "userFlowPatterns": ["flow1", "flow2"],
+  "subThemes": [
+    {
+      "name": "Sub-theme name",
+      "description": "Business-focused description",
+      "businessImpact": "User/business value",
+      "relevantFiles": ["file1.ts", "file2.ts"],
+      "confidence": number
+    }
+  ]
+}`,
+            examples: [
+                `{
+  "shouldExpand": true,
+  "confidence": 0.85,
+  "reasoning": "Theme contains distinct authentication and authorization patterns",
+  "businessLogicPatterns": ["User Authentication", "Permission Management"],
+  "userFlowPatterns": ["Login Flow", "Access Control"],
+  "subThemes": [
+    {
+      "name": "User Authentication System",
+      "description": "Handles user login and session management",
+      "businessImpact": "Secure user access to the application",
+      "relevantFiles": ["auth.ts", "session.ts"],
+      "confidence": 0.9
+    }
+  ]
+}`,
+            ],
+            constraints: [
+                'Maximum 4 sub-themes per expansion',
+                'Each sub-theme must have confidence >= 0.6',
+                'Sub-themes must be distinct from each other',
+                'Maintain business focus over technical details',
+            ],
+        });
+    }
+    /**
+     * Template for cross-level similarity analysis
+     */
+    static createCrossLevelSimilarityPrompt(theme1Name, theme1Description, theme1Level, theme1Files, theme2Name, theme2Description, theme2Level, theme2Files, levelDifference) {
+        return this.createJsonPrompt({
+            instruction: `Analyze these two themes from different hierarchy levels for similarity and relationship:
+
+THEME 1:
+Level: ${theme1Level}
+Name: ${theme1Name}
+Description: ${theme1Description}
+Files: ${theme1Files.join(', ')}
+
+THEME 2:
+Level: ${theme2Level}
+Name: ${theme2Name}
+Description: ${theme2Description}
+Files: ${theme2Files.join(', ')}
+
+Level Difference: ${levelDifference}
+
+Determine the relationship between these themes across hierarchy levels:
+
+1. SIMILARITY SCORE (0-1): How similar are these themes in business purpose?
+2. RELATIONSHIP TYPE: 
+   - "duplicate": Essentially the same theme (should be merged)
+   - "overlap": Significant overlap in scope (should be consolidated)
+   - "related": Related but distinct (keep separate)
+   - "distinct": Completely different themes
+
+3. MERGE ACTION:
+   - "merge_up": Merge into higher-level theme
+   - "merge_down": Merge into lower-level theme
+   - "merge_sibling": Merge at same level under common parent
+   - "keep_separate": Keep as separate themes
+
+Focus on business value and avoid merging themes with distinct business purposes.`,
+            jsonSchema: `{
+  "similarityScore": number,
+  "relationshipType": "duplicate|overlap|related|distinct",
+  "action": "merge_up|merge_down|merge_sibling|keep_separate",
+  "confidence": number,
+  "reasoning": "detailed explanation"
+}`,
+            examples: [
+                `{
+  "similarityScore": 0.85,
+  "relationshipType": "duplicate",
+  "action": "merge_up",
+  "confidence": 0.9,
+  "reasoning": "Both themes handle user authentication with nearly identical scope and files"
+}`,
+                `{
+  "similarityScore": 0.3,
+  "relationshipType": "distinct",
+  "action": "keep_separate",
+  "confidence": 0.95,
+  "reasoning": "Themes address completely different business concerns - authentication vs data processing"
+}`,
+            ],
+            constraints: [
+                'Similarity score must be between 0 and 1',
+                'Confidence must be between 0 and 1',
+                'Reasoning must explain the decision clearly',
+                'Consider file overlap and business purpose',
+            ],
+        });
+    }
+    /**
+     * Template for theme naming
+     */
+    static createThemeNamingPrompt(description, businessImpact, codeSnippets) {
+        return this.createJsonPrompt({
+            instruction: `Generate a concise, business-focused name for this code theme:
+
+Description: ${description}
+Business Impact: ${businessImpact}
+Code Context: ${codeSnippets.join('\n---\n')}
+
+Create a theme name that:
+1. Focuses on business value, not technical implementation
+2. Is clear and understandable to non-technical stakeholders
+3. Captures the primary business purpose
+4. Is concise (2-6 words)
+
+The name should answer "what business value does this provide?"`,
+            jsonSchema: '{"name": "Business-focused theme name"}',
+            examples: [
+                '{"name": "Improve User Authentication"}',
+                '{"name": "Streamline Payment Processing"}',
+                '{"name": "Enhance Data Validation"}',
+                '{"name": "Automate Report Generation"}',
+            ],
+            constraints: [
+                'Name must be 2-6 words',
+                'Focus on business value',
+                'Avoid technical jargon',
+                'Use action verbs when possible',
+            ],
+        });
+    }
+}
+exports.PromptTemplates = PromptTemplates;
+
+
+/***/ }),
+
 /***/ 5584:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -36026,6 +36796,7 @@ exports.CodeAnalysisCache = void 0;
 const crypto = __importStar(__nccwpck_require__(6982));
 const generic_cache_1 = __nccwpck_require__(282);
 const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
 const performance_tracker_1 = __nccwpck_require__(9600);
 /**
  * Specialized cache for AI-based code analysis results
@@ -36083,7 +36854,7 @@ class CodeAnalysisCache extends generic_cache_1.GenericCache {
     preWarm(filename, diffContent, result) {
         const key = this.generateCacheKey(filename, diffContent);
         this.set(key, result);
-        console.log(`[CODE-ANALYSIS-CACHE] Pre-warmed cache for ${filename} (key: ${key})`);
+        logger_1.logger.debug(constants_1.LoggerServices.CACHE_ANALYSIS, `Pre-warmed cache for ${filename} (key: ${key})`);
     }
 }
 exports.CodeAnalysisCache = CodeAnalysisCache;
@@ -36170,6 +36941,63 @@ class GenericCache {
     }
 }
 exports.GenericCache = GenericCache;
+
+
+/***/ }),
+
+/***/ 6895:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Logger Constants
+ *
+ * Centralized constants for logging configuration and service naming
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LogMessages = exports.LogLevels = exports.LoggerServices = void 0;
+// Standard service names - use UPPERCASE_UNDERSCORE format
+exports.LoggerServices = {
+    // Core application services
+    MAIN: 'MAIN',
+    PERF: 'PERF',
+    PERFORMANCE: 'PERFORMANCE',
+    // AI and analysis services
+    CODE_ANALYSIS: 'CODE_ANALYSIS',
+    AI_ANALYZER: 'AI_ANALYZER',
+    // Theme services
+    EXPANSION: 'EXPANSION',
+    CONSOLIDATION: 'CONSOLIDATION',
+    SIMILARITY: 'SIMILARITY',
+    SIMILARITY_HIERARCHICAL: 'SIMILARITY_HIERARCHICAL',
+    // Cache services
+    CACHE_SEMANTIC: 'CACHE_SEMANTIC',
+    CACHE_ANALYSIS: 'CACHE_ANALYSIS',
+    // Claude client services
+    CLAUDE_CLIENT: 'CLAUDE_CLIENT',
+    // Business domain services
+    BUSINESS_DOMAIN: 'BUSINESS_DOMAIN',
+    // Git services
+    GIT_SERVICE: 'GIT_SERVICE',
+};
+// Log level priorities (from logger.ts LogLevel enum)
+exports.LogLevels = {
+    ERROR: 0,
+    WARN: 1,
+    INFO: 2,
+    DEBUG: 3,
+    TRACE: 4,
+};
+// Common message patterns to avoid duplication
+exports.LogMessages = {
+    STARTING_ANALYSIS: 'Starting analysis',
+    ANALYSIS_COMPLETE: 'Analysis complete',
+    PROCESSING_ITEMS: (count, type) => `Processing ${count} ${type}`,
+    FAILED_OPERATION: (operation, error) => `${operation} failed: ${error}`,
+    CACHE_HIT: (context) => `Cache hit for ${context}`,
+    CACHE_MISS: (context) => `Cache miss for ${context}`,
+};
 
 
 /***/ }),

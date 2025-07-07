@@ -24,6 +24,7 @@ import {
   ChunkAnalysisResult,
   ThemeAnalysisResult
 } from '@/shared/types/theme-types';
+import { BusinessPromptTemplates } from '../utils/business-prompt-templates';
 
 // Processing configuration
 const PROCESSING_CONFIG = {
@@ -109,39 +110,12 @@ class ClaudeService {
       }
     }
 
-    return `${enhancedContext}
-
-Analyze this code change. Be specific but concise.
-
-File: ${chunk.filename}
-Code changes:
-${truncatedContent}
-
-Focus on WHAT changed with exact details:
-- Exact values changed (before → after)
-- Business purpose of the changes
-- User impact
-
-Examples:
-✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
-✅ "Added detailedDescription field to ConsolidatedTheme interface"
-❌ "Enhanced workflow configuration for improved flexibility"
-❌ "Expanded theme structure with comprehensive analysis capabilities"
-
-CRITICAL: Respond with ONLY valid JSON:
-
-{
-  "themeName": "what this accomplishes (max 10 words)",
-  "description": "one specific sentence with exact names/values (max 20 words)",
-  "detailedDescription": "additional context if needed (max 15 words, or null)",
-  "businessImpact": "user benefit in one sentence (max 15 words)",
-  "technicalSummary": "exact technical change (max 12 words)",
-  "keyChanges": ["max 3 changes, each max 10 words"],
-  "userScenario": null,
-  "suggestedParent": null,
-  "confidence": 0.8,
-  "codePattern": "change type (max 3 words)"
-}`;
+    // Use business-first prompt template for theme analysis
+    return BusinessPromptTemplates.createBusinessImpactPrompt(
+      chunk.filename,
+      truncatedContent,
+      enhancedContext
+    );
   }
 
   private parseClaudeResponse(
@@ -149,14 +123,50 @@ CRITICAL: Respond with ONLY valid JSON:
     chunk: CodeChunk,
     codeChange?: CodeChange
   ): ChunkAnalysis {
-    const extractionResult = JsonExtractor.extractAndValidateJson(
+    // Try new business capability format first
+    const businessCapabilityResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'object',
+      ['businessCapability', 'userValue', 'businessProcess', 'confidence']
+    );
+
+    if (businessCapabilityResult.success) {
+      const data = businessCapabilityResult.data as {
+        businessCapability?: string;
+        userValue?: string;
+        businessProcess?: string;
+        userScenarios?: string[];
+        businessDomain?: string;
+        executiveSummary?: string;
+        technicalImplementation?: string;
+        confidence?: number;
+      };
+      
+      return {
+        themeName: data.businessCapability || 'Unknown Business Capability',
+        description: data.userValue || 'No user value identified',
+        businessImpact: data.businessProcess || 'Unknown business process',
+        confidence: data.confidence || 0.5,
+        codePattern: data.businessDomain || 'General Enhancement',
+        suggestedParent: undefined,
+        detailedDescription: data.executiveSummary,
+        technicalSummary: data.technicalImplementation,
+        keyChanges: data.userScenarios,
+        userScenario: data.userScenarios?.[0],
+        mainFunctionsChanged: codeChange?.functionsChanged || [],
+        mainClassesChanged: codeChange?.classesChanged || [],
+      };
+    }
+
+    // Fallback to legacy format for backward compatibility
+    const legacyResult = JsonExtractor.extractAndValidateJson(
       output,
       'object',
       ['themeName', 'description', 'businessImpact', 'confidence']
     );
 
-    if (extractionResult.success) {
-      const data = extractionResult.data as {
+    if (legacyResult.success) {
+      const data = legacyResult.data as {
         themeName?: string;
         description?: string;
         businessImpact?: string;
@@ -188,19 +198,44 @@ CRITICAL: Respond with ONLY valid JSON:
       };
     }
 
-
     // Use the better fallback that includes filename
     return this.createFallbackAnalysis(chunk);
   }
 
   private createFallbackAnalysis(chunk: CodeChunk): ChunkAnalysis {
+    // Try to infer business capability from filename
+    const fileName = chunk.filename.toLowerCase();
+    let businessCapability = 'User Experience Enhancement';
+    let userValue = 'Users benefit from improved system functionality';
+    let businessProcess = 'General system improvement and optimization';
+    
+    if (fileName.includes('auth') || fileName.includes('login')) {
+      businessCapability = 'User Account Management';
+      userValue = 'Users access their accounts securely and efficiently';
+      businessProcess = 'Secure user authentication and access control';
+    } else if (fileName.includes('test') || fileName.includes('spec')) {
+      businessCapability = 'Development Workflow Optimization';
+      userValue = 'Developers catch issues before users experience them';
+      businessProcess = 'Quality assurance and automated testing';
+    } else if (fileName.includes('config') || fileName.includes('setting')) {
+      businessCapability = 'Development Workflow Optimization';
+      userValue = 'Developers deploy and maintain systems reliably';
+      businessProcess = 'System configuration and deployment management';
+    } else if (fileName.includes('ui') || fileName.includes('component')) {
+      businessCapability = 'User Experience Enhancement';
+      userValue = 'Users accomplish tasks intuitively and efficiently';
+      businessProcess = 'Intuitive user interface and interaction design';
+    }
+    
     return {
-      themeName: `Changes in ${chunk.filename}`,
-      description: 'Analysis unavailable - using fallback',
-      businessImpact: 'Unknown impact',
-      confidence: 0.3,
-      codePattern: 'File modification',
+      themeName: businessCapability,
+      description: userValue,
+      businessImpact: businessProcess,
+      confidence: 0.4,
+      codePattern: 'User Experience Enhancement',
       suggestedParent: undefined,
+      detailedDescription: `Business analysis unavailable - inferred from file: ${chunk.filename}`,
+      technicalSummary: `Modifications in ${chunk.filename}`,
     };
   }
 }

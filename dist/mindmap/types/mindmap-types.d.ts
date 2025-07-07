@@ -270,6 +270,8 @@ export interface AIDomainClassification {
     reasoning: string;
     subDomains?: string[];
     crossCuttingConcerns?: string[];
+    userJourney?: string;
+    businessMetrics?: string[];
 }
 /**
  * AI-driven semantic change analysis result

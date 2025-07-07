@@ -6,6 +6,7 @@ import {
 import { ClaudeClient } from '@/shared/utils/claude-client';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { logInfo } from '../../../utils';
+import { BusinessPromptTemplates } from '../../utils/business-prompt-templates';
 
 /**
  * AI-driven business domain analyzer
@@ -20,7 +21,7 @@ export class AIDomainAnalyzer {
   }
 
   /**
-   * Classify business domain using AI semantic understanding
+   * Classify business capability using AI semantic understanding
    * PRD: Root level represents "distinct user flow, story, or business capability"
    */
   async classifyBusinessDomain(
@@ -30,21 +31,30 @@ export class AIDomainAnalyzer {
     const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt, 'domain-classification');
+      const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
-        'domain',
+        'primaryCapability',
         'userValue',
-        'businessCapability',
+        'businessImpact',
         'confidence',
         'reasoning',
       ]);
 
       if (result.success) {
-        const data = result.data as AIDomainClassification;
-        return this.validateDomainClassification(data);
+        const data = result.data as {
+          primaryCapability: string;
+          userValue: string;
+          businessImpact: string;
+          userJourney: string;
+          affectedUserTypes: string[];
+          businessMetrics: string[];
+          confidence: number;
+          reasoning: string;
+        };
+        return this.transformToAIDomainClassification(data);
       }
     } catch (error) {
-      logInfo(`AI domain classification failed: ${error}`);
+      logInfo(`AI business capability classification failed: ${error}`);
     }
 
     // Graceful degradation: return generic domain with low confidence
@@ -52,7 +62,7 @@ export class AIDomainAnalyzer {
   }
 
   /**
-   * Build AI prompt for business domain classification
+   * Build AI prompt for business capability classification
    * PRD: "Structure emerges from code, not forced into preset levels"
    */
   private buildDomainClassificationPrompt(
@@ -63,49 +73,21 @@ export class AIDomainAnalyzer {
       ? this.formatSemanticDiffContext(semanticDiff)
       : '';
 
-    return `You are a product manager analyzing code changes for business impact.
-
-CONTEXT:
-File: ${context.filePath}
-${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
-${context.prDescription ? `PR Description: ${context.prDescription}` : ''}
-
-COMPLETE CODE CHANGES:
-${context.completeDiff}
-
-SURROUNDING CODE CONTEXT:
+    // Use business-first prompt template
+    const functionalContext = `
 ${context.surroundingContext}
 
 ${additionalContext}
 
-TASK: Identify the PRIMARY business domain this change affects.
+COMMIT CONTEXT:
+${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
+${context.prDescription ? `PR Description: ${context.prDescription}` : ''}`;
 
-PERSPECTIVE: Focus on end-user value and business capability, not technical implementation.
-
-CONSIDER:
-1. What user problem does this solve or improve?
-2. What business process does it enable or enhance?
-3. What user journey or workflow does it affect?
-4. Is this creating new capability or improving existing?
-
-EXAMPLES:
-✅ Good domains: "User Account Management", "Payment Processing", "Content Discovery"
-✅ Good user value: "Users can reset passwords securely"
-✅ Good capability: "Enable secure self-service account recovery"
-
-❌ Avoid technical terms: "Database Migration", "Refactor Utils"
-❌ Avoid generic: "Fix Issues", "Update Code"
-
-RESPOND WITH ONLY VALID JSON:
-{
-  "domain": "Clear business domain (max 5 words)",
-  "userValue": "End user benefit (max 12 words)", 
-  "businessCapability": "What this enables users to do (max 15 words)",
-  "confidence": 0.0-1.0,
-  "reasoning": "Why this domain classification (max 20 words)",
-  "subDomains": ["Optional specific user flows within capability"],
-  "crossCuttingConcerns": ["Optional other domains this also affects"]
-}`;
+    return BusinessPromptTemplates.createBusinessCapabilityPrompt(
+      context.filePath,
+      context.completeDiff,
+      functionalContext
+    );
   }
 
   /**
@@ -133,7 +115,42 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
   }
 
   /**
-   * Validate and normalize AI domain classification response
+   * Transform business capability response to AIDomainClassification format
+   */
+  private transformToAIDomainClassification(data: {
+    primaryCapability: string;
+    userValue: string;
+    businessImpact: string;
+    userJourney?: string;
+    affectedUserTypes?: string[];
+    businessMetrics?: string[];
+    confidence: number;
+    reasoning: string;
+  }): AIDomainClassification {
+    return {
+      domain: this.trimToWordLimit(data.primaryCapability || 'Code Changes', 5),
+      userValue: this.trimToWordLimit(
+        data.userValue || 'Improve system functionality',
+        15
+      ),
+      businessCapability: this.trimToWordLimit(
+        data.businessImpact || 'Enable users to accomplish tasks',
+        15
+      ),
+      confidence: Math.max(0, Math.min(1, data.confidence || 0.5)),
+      reasoning: this.trimToWordLimit(
+        data.reasoning || 'Standard code modification',
+        20
+      ),
+      subDomains: data.affectedUserTypes || [],
+      crossCuttingConcerns: data.businessMetrics || [],
+      userJourney: data.userJourney,
+      businessMetrics: data.businessMetrics,
+    };
+  }
+
+  /**
+   * Validate and normalize AI domain classification response (legacy support)
    */
   private validateDomainClassification(
     data: AIDomainClassification
@@ -153,13 +170,13 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         data.reasoning || 'Standard code modification',
         20
       ),
-      subDomains: data.subDomains || [], // Include all sub-domains
-      crossCuttingConcerns: data.crossCuttingConcerns || [], // Include all concerns
+      subDomains: data.subDomains || [],
+      crossCuttingConcerns: data.crossCuttingConcerns || [],
     };
   }
 
   /**
-   * Create fallback domain when AI analysis fails
+   * Create fallback business capability when AI analysis fails
    * PRD: "Graceful degradation - never fail completely"
    */
   private createFallbackDomain(
@@ -172,48 +189,80 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
       context.filePath.includes('config') || fileName.endsWith('.json');
     const isUI =
       context.filePath.includes('component') || context.filePath.includes('ui');
+    const isAuth =
+      context.filePath.includes('auth') || context.filePath.includes('login');
+    const isLogger =
+      context.filePath.includes('log') || context.filePath.includes('debug');
 
     if (isTest) {
       return {
-        domain: 'Test Coverage',
-        userValue: 'Ensure system reliability and quality',
-        businessCapability:
-          'Maintain high-quality user experience through testing',
+        domain: 'Development Workflow Optimization',
+        userValue: 'Developers catch issues before users experience them',
+        businessCapability: 'Maintain high-quality user experience through automated testing',
         confidence: 0.4,
-        reasoning: 'Test file detected - quality assurance domain',
-        subDomains: ['Unit Testing'],
+        reasoning: 'Test file detected - quality assurance capability',
+        subDomains: ['Software developers'],
+        userJourney: 'Quality assurance and testing workflow',
+      };
+    }
+
+    if (isAuth) {
+      return {
+        domain: 'User Account Management',
+        userValue: 'Users access their accounts securely and efficiently',
+        businessCapability: 'Enable secure user authentication and access control',
+        confidence: 0.5,
+        reasoning: 'Authentication file detected - user security capability',
+        subDomains: ['End users', 'Account holders'],
+        userJourney: 'User login and authentication process',
+      };
+    }
+
+    if (isLogger) {
+      return {
+        domain: 'Development Workflow Optimization', 
+        userValue: 'Developers diagnose and resolve issues faster',
+        businessCapability: 'Enable efficient troubleshooting and system monitoring',
+        confidence: 0.5,
+        reasoning: 'Logging file detected - debugging and monitoring capability',
+        subDomains: ['Software developers', 'DevOps engineers'],
+        userJourney: 'Error investigation and system monitoring workflow',
       };
     }
 
     if (isConfig) {
       return {
-        domain: 'System Configuration',
-        userValue: 'Maintain system operational stability',
-        businessCapability: 'Configure system behavior and settings',
+        domain: 'Development Workflow Optimization',
+        userValue: 'Developers deploy and maintain systems reliably',
+        businessCapability: 'Configure system behavior for optimal user experience',
         confidence: 0.4,
-        reasoning: 'Configuration file detected - infrastructure domain',
-        subDomains: ['Infrastructure Management'],
+        reasoning: 'Configuration file detected - system management capability',
+        subDomains: ['DevOps engineers', 'System administrators'],
+        userJourney: 'System deployment and configuration workflow',
       };
     }
 
     if (isUI) {
       return {
-        domain: 'User Interface',
-        userValue: 'Improve user interaction experience',
-        businessCapability: 'Enable intuitive user interactions and workflows',
+        domain: 'User Experience Enhancement',
+        userValue: 'Users accomplish tasks intuitively and efficiently',
+        businessCapability: 'Enable smooth and intuitive user interactions',
         confidence: 0.4,
-        reasoning: 'UI component detected - user experience domain',
-        subDomains: ['User Experience'],
+        reasoning: 'UI component detected - user interface capability',
+        subDomains: ['End users', 'All user types'],
+        userJourney: 'User interface interaction and navigation',
       };
     }
 
     // Generic fallback
     return {
-      domain: 'System Enhancement',
-      userValue: 'Improve overall system functionality',
-      businessCapability: 'Enhance system capabilities for users',
+      domain: 'User Experience Enhancement',
+      userValue: 'Users benefit from improved system functionality',
+      businessCapability: 'Enhance overall system capabilities for better user outcomes',
       confidence: 0.3,
-      reasoning: 'AI analysis unavailable - generic enhancement domain',
+      reasoning: 'AI analysis unavailable - generic user experience capability',
+      subDomains: ['All users'],
+      userJourney: 'General system usage and interaction',
     };
   }
 
