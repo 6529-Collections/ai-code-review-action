@@ -31209,16 +31209,8 @@ class AIExpansionDecisionService {
             decisionTrace.push(`Starting multi-stage analysis for theme "${theme.name}" at depth ${currentDepth}`);
             const analysis = await this.analysisService.analyzeTheme(theme);
             decisionTrace.push(`Analysis completed: ${analysis.separableConcerns.length} concerns, complexity: ${analysis.codeComplexity}`);
-            // Stage 2: Quick Decision Check (optimization)
-            if (this.config.enableQuickDecisions) {
-                const quickDecision = this.makeQuickDecision(analysis, currentDepth, decisionTrace);
-                if (quickDecision) {
-                    decisionTrace.push(`Quick decision applied: ${quickDecision.reasoning}`);
-                    this.decisionCache.set(cacheKey, quickDecision);
-                    return quickDecision;
-                }
-            }
-            // Stage 3: Validation
+            // Stage 2: AI Validation (no mechanical shortcuts)
+            // All themes now go through full AI validation for better decision quality
             decisionTrace.push('Proceeding to validation stage');
             const validation = await this.validationService.validateExpansionDecision(theme, analysis, currentDepth);
             decisionTrace.push(`Validation completed: expand=${validation.shouldExpand}, confidence=${validation.confidence}`);
@@ -31265,42 +31257,6 @@ class AIExpansionDecisionService {
         const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
         // Simple hash - in production you might want a proper hash function
         return Buffer.from(content).toString('base64').slice(0, 16);
-    }
-    /**
-     * Make quick decision for obvious cases to avoid unnecessary AI calls
-     */
-    makeQuickDecision(analysis, currentDepth, decisionTrace) {
-        // Ultra-high confidence atomic detection
-        if (currentDepth >= this.config.quickDecisionDepthThreshold ||
-            (analysis.codeMetrics.distinctOperations === 1 &&
-                analysis.separableConcerns.length === 0 &&
-                analysis.codeComplexity === 'low')) {
-            return {
-                shouldExpand: false,
-                isAtomic: true,
-                reasoning: `Quick decision: Obviously atomic (depth ${currentDepth}, single operation, no separable concerns)`,
-                businessContext: analysis.actualPurpose,
-                technicalContext: 'Atomic operation',
-                testabilityAssessment: 'Single test case sufficient',
-                suggestedSubThemes: null
-            };
-        }
-        // Ultra-high confidence expansion
-        if (currentDepth <= 2 &&
-            analysis.separableConcerns.length >= 3 &&
-            analysis.codeMetrics.hasMultipleAlgorithms &&
-            analysis.codeComplexity === 'high') {
-            return {
-                shouldExpand: true,
-                isAtomic: false,
-                reasoning: `Quick decision: Obviously needs expansion (shallow depth, ${analysis.separableConcerns.length} concerns, multiple algorithms)`,
-                businessContext: analysis.actualPurpose,
-                technicalContext: 'Multiple complex algorithms',
-                testabilityAssessment: 'Multiple test suites required',
-                suggestedSubThemes: null // Will be populated later
-            };
-        }
-        return null; // Needs full validation
     }
     /**
      * Check if validation scores are inconsistent and need consistency check
@@ -35640,11 +35596,11 @@ exports.DEFAULT_MULTI_STAGE_CONFIG = void 0;
  * Default configuration values
  */
 exports.DEFAULT_MULTI_STAGE_CONFIG = {
-    enableQuickDecisions: true,
+    enableQuickDecisions: false, // Removed mechanical quick decisions for pure AI-driven evaluation
     enableConsistencyCheck: true,
     consistencyVarianceThreshold: 0.2,
-    quickDecisionDepthThreshold: 15,
-    quickDecisionConfidenceThreshold: 0.95
+    quickDecisionDepthThreshold: 15, // Kept for backwards compatibility but unused
+    quickDecisionConfidenceThreshold: 0.95 // Kept for backwards compatibility but unused
 };
 
 

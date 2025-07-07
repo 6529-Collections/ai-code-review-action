@@ -84,17 +84,8 @@ export class AIExpansionDecisionService {
       const analysis = await this.analysisService.analyzeTheme(theme);
       decisionTrace.push(`Analysis completed: ${analysis.separableConcerns.length} concerns, complexity: ${analysis.codeComplexity}`);
       
-      // Stage 2: Quick Decision Check (optimization)
-      if (this.config.enableQuickDecisions) {
-        const quickDecision = this.makeQuickDecision(analysis, currentDepth, decisionTrace);
-        if (quickDecision) {
-          decisionTrace.push(`Quick decision applied: ${quickDecision.reasoning}`);
-          this.decisionCache.set(cacheKey, quickDecision);
-          return quickDecision;
-        }
-      }
-      
-      // Stage 3: Validation
+      // Stage 2: AI Validation (no mechanical shortcuts)
+      // All themes now go through full AI validation for better decision quality
       decisionTrace.push('Proceeding to validation stage');
       const validation = await this.validationService.validateExpansionDecision(
         theme,
@@ -153,52 +144,6 @@ export class AIExpansionDecisionService {
   }
 
 
-  /**
-   * Make quick decision for obvious cases to avoid unnecessary AI calls
-   */
-  private makeQuickDecision(
-    analysis: ThemeAnalysis,
-    currentDepth: number,
-    decisionTrace: string[]
-  ): ExpansionDecision | null {
-    // Ultra-high confidence atomic detection
-    if (
-      currentDepth >= this.config.quickDecisionDepthThreshold ||
-      (analysis.codeMetrics.distinctOperations === 1 && 
-       analysis.separableConcerns.length === 0 &&
-       analysis.codeComplexity === 'low')
-    ) {
-      return {
-        shouldExpand: false,
-        isAtomic: true,
-        reasoning: `Quick decision: Obviously atomic (depth ${currentDepth}, single operation, no separable concerns)`,
-        businessContext: analysis.actualPurpose,
-        technicalContext: 'Atomic operation',
-        testabilityAssessment: 'Single test case sufficient',
-        suggestedSubThemes: null
-      };
-    }
-    
-    // Ultra-high confidence expansion
-    if (
-      currentDepth <= 2 &&
-      analysis.separableConcerns.length >= 3 &&
-      analysis.codeMetrics.hasMultipleAlgorithms &&
-      analysis.codeComplexity === 'high'
-    ) {
-      return {
-        shouldExpand: true,
-        isAtomic: false,
-        reasoning: `Quick decision: Obviously needs expansion (shallow depth, ${analysis.separableConcerns.length} concerns, multiple algorithms)`,
-        businessContext: analysis.actualPurpose,
-        technicalContext: 'Multiple complex algorithms',
-        testabilityAssessment: 'Multiple test suites required',
-        suggestedSubThemes: null // Will be populated later
-      };
-    }
-    
-    return null; // Needs full validation
-  }
 
   /**
    * Check if validation scores are inconsistent and need consistency check

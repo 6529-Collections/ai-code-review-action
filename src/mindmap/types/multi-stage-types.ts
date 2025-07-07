@@ -98,9 +98,9 @@ export interface MultiStageConfig {
  * Default configuration values
  */
 export const DEFAULT_MULTI_STAGE_CONFIG: MultiStageConfig = {
-  enableQuickDecisions: true,
+  enableQuickDecisions: false, // Removed mechanical quick decisions for pure AI-driven evaluation
   enableConsistencyCheck: true,
   consistencyVarianceThreshold: 0.2,
-  quickDecisionDepthThreshold: 15,
-  quickDecisionConfidenceThreshold: 0.95
+  quickDecisionDepthThreshold: 15, // Kept for backwards compatibility but unused
+  quickDecisionConfidenceThreshold: 0.95 // Kept for backwards compatibility but unused
 };

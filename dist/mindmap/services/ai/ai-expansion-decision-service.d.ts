@@ -22,10 +22,6 @@ export declare class AIExpansionDecisionService {
      */
     private getAnalysisHash;
     /**
-     * Make quick decision for obvious cases to avoid unnecessary AI calls
-     */
-    private makeQuickDecision;
-    /**
      * Check if validation scores are inconsistent and need consistency check
      */
     private needsConsistencyCheck;
