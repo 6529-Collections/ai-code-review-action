@@ -14,6 +14,26 @@ import {
 } from '../../types/multi-stage-types';
 
 /**
+ * Custom error for sub-theme extraction failures
+ */
+class SubThemeExtractionError extends Error {
+  constructor(
+    message: string,
+    public themeName: string,
+    public themeId: string,
+    public aiResponse?: string,
+    public parseError?: string,
+    public expectedFormat?: string
+  ) {
+    super(message);
+    this.name = 'SubThemeExtractionError';
+    
+    // Ensure proper prototype chain for instanceof checks
+    Object.setPrototypeOf(this, SubThemeExtractionError.prototype);
+  }
+}
+
+/**
  * Multi-stage AI-driven expansion decision service
  * Uses unopinionated analysis followed by validation for better decisions
  */
@@ -100,7 +120,11 @@ export class AIExpansionDecisionService {
       
       // Stage 6: Extract Sub-themes if expanding
       if (decision.shouldExpand) {
+        logInfo(`Extracting sub-themes for "${theme.name}" - ${analysis.separableConcerns.length} concerns identified`);
         decision.suggestedSubThemes = await this.extractSubThemes(theme, analysis, validation);
+        logInfo(`Sub-themes extracted: ${decision.suggestedSubThemes?.length || 0} themes generated`);
+      } else {
+        logInfo(`Skipping sub-theme extraction for "${theme.name}" - shouldExpand=false`);
       }
       
       const processingTime = Date.now() - startTime;
@@ -257,6 +281,9 @@ Should the decision be adjusted? Respond with JSON:
     validation: ValidationResult,
     decisionTrace: string[]
   ): ExpansionDecision {
+    logInfo(`Building decision from validation: shouldExpand=${validation.shouldExpand}, confidence=${validation.confidence}`);
+    logInfo(`Validation scores: granularity=${validation.granularityScore.toFixed(2)}, depth=${validation.depthAppropriatenessScore.toFixed(2)}, business=${validation.businessValueScore.toFixed(2)}, test=${validation.testBoundaryScore.toFixed(2)}`);
+    
     return {
       shouldExpand: validation.shouldExpand,
       isAtomic: !validation.shouldExpand,
@@ -316,73 +343,116 @@ Respond with JSON:
   ]
 }`;
 
+    const expectedFormat = `{
+  "subThemes": [
+    {
+      "name": "string",
+      "description": "string", 
+      "files": ["string"],
+      "rationale": "string"
+    }
+  ]
+}`;
+
+    let response: string;
     try {
-      const response = await this.claudeClient.callClaude(prompt);
-      const extractionResult = JsonExtractor.extractAndValidateJson(
-        response,
-        'object',
-        ['subThemes']
+      response = await this.claudeClient.callClaude(prompt);
+    } catch (error) {
+      throw new SubThemeExtractionError(
+        `AI call failed for sub-theme extraction`,
+        theme.name,
+        theme.id,
+        undefined,
+        error instanceof Error ? error.message : String(error),
+        expectedFormat
+      );
+    }
+
+    // Parse AI response
+    const extractionResult = JsonExtractor.extractAndValidateJson(
+      response,
+      'object',
+      ['subThemes']
+    );
+    
+    if (!extractionResult.success) {
+      throw new SubThemeExtractionError(
+        `Failed to parse sub-themes JSON response`,
+        theme.name,
+        theme.id,
+        response.substring(0, 1000), // Include first 1000 chars of response
+        extractionResult.error,
+        expectedFormat
+      );
+    }
+    
+    const data = extractionResult.data as { subThemes: Array<{
+      name: string;
+      description: string;
+      files: string[];
+      rationale: string;
+    }> };
+    
+    // Validate sub-themes structure and files
+    const validatedSubThemes = data.subThemes.map((subTheme, index) => {
+      // Validate required fields
+      if (!subTheme.name || !subTheme.description || !Array.isArray(subTheme.files) || !subTheme.rationale) {
+        throw new SubThemeExtractionError(
+          `Sub-theme at index ${index} missing required fields`,
+          theme.name,
+          theme.id,
+          JSON.stringify(subTheme),
+          'Missing one of: name, description, files[], rationale',
+          expectedFormat
+        );
+      }
+
+      // Validate files are from parent theme
+      const invalidFiles = subTheme.files.filter(file => 
+        !theme.affectedFiles.includes(file)
       );
       
-      if (!extractionResult.success) {
-        logError(`Failed to extract sub-themes: ${extractionResult.error}`);
-        // Fallback to simple mapping
-        return this.getFallbackSubThemes(theme, analysis);
+      if (invalidFiles.length > 0) {
+        throw new SubThemeExtractionError(
+          `Sub-theme "${subTheme.name}" contains invalid files not in parent theme`,
+          theme.name,
+          theme.id,
+          JSON.stringify({ 
+            invalidFiles, 
+            parentFiles: theme.affectedFiles,
+            subThemeFiles: subTheme.files 
+          }),
+          `Invalid files: ${invalidFiles.join(', ')}`,
+          `Files must be from parent theme: ${theme.affectedFiles.join(', ')}`
+        );
       }
       
-      const data = extractionResult.data as { subThemes: Array<{
-        name: string;
-        description: string;
-        files: string[];
-        rationale: string;
-      }> };
-      
-      // Validate that all files are from parent theme
-      const validatedSubThemes = data.subThemes.map(subTheme => {
-        const validFiles = subTheme.files.filter(file => 
-          theme.affectedFiles.includes(file)
+      if (subTheme.files.length === 0) {
+        throw new SubThemeExtractionError(
+          `Sub-theme "${subTheme.name}" has no files assigned`,
+          theme.name,
+          theme.id,
+          JSON.stringify(subTheme),
+          'Sub-theme must have at least one file from parent theme',
+          `Available parent files: ${theme.affectedFiles.join(', ')}`
         );
-        
-        if (validFiles.length === 0) {
-          logError(`Sub-theme "${subTheme.name}" has no valid files, using all parent files`);
-          validFiles.push(...theme.affectedFiles);
-        }
-        
-        return {
-          ...subTheme,
-          files: validFiles
-        };
-      });
+      }
       
-      return validatedSubThemes.length > 0 ? validatedSubThemes : null;
-      
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logError(`Sub-theme extraction failed: ${errorMessage}`);
-      return this.getFallbackSubThemes(theme, analysis);
+      return subTheme;
+    });
+    
+    if (validatedSubThemes.length === 0) {
+      throw new SubThemeExtractionError(
+        'AI returned empty sub-themes array',
+        theme.name,
+        theme.id,
+        response.substring(0, 500),
+        'No sub-themes generated despite having separable concerns',
+        expectedFormat
+      );
     }
-  }
-
-  /**
-   * Fallback sub-theme generation when AI extraction fails
-   */
-  private getFallbackSubThemes(
-    theme: ConsolidatedTheme,
-    analysis: ThemeAnalysis
-  ): Array<{ name: string; description: string; files: string[]; rationale: string }> | null {
-    if (analysis.separableConcerns.length === 0) {
-      return null;
-    }
-
-    // Simple mapping as fallback
-    const subThemes = analysis.separableConcerns.map((concern, index) => ({
-      name: concern,
-      description: `Handles ${concern.toLowerCase()} functionality`,
-      files: theme.affectedFiles, // All sub-themes inherit parent files for now
-      rationale: `Separated as distinct concern identified in analysis`
-    }));
-
-    return subThemes.length > 0 ? subThemes : null;
+    
+    return validatedSubThemes;
   }
 
   /**

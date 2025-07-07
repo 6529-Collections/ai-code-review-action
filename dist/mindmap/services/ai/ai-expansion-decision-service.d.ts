@@ -42,10 +42,6 @@ export declare class AIExpansionDecisionService {
      */
     private extractSubThemes;
     /**
-     * Fallback sub-theme generation when AI extraction fails
-     */
-    private getFallbackSubThemes;
-    /**
      * Generate default decision when all stages fail
      */
     private getDefaultDecision;
