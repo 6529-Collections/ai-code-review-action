@@ -1,17 +1,20 @@
 import { ConsolidatedTheme } from '../../types/similarity-types';
+import { MultiStageConfig } from '../../types/multi-stage-types';
 /**
- * Simplified AI-driven expansion decision service
- * Implements PRD vision: "AI decides when further decomposition is needed"
+ * Multi-stage AI-driven expansion decision service
+ * Uses unopinionated analysis followed by validation for better decisions
  */
 export declare class AIExpansionDecisionService {
     private claudeClient;
     private decisionCache;
     private codeAnalyzer;
-    private promptBuilder;
-    constructor(anthropicApiKey: string);
+    private analysisService;
+    private validationService;
+    private config;
+    constructor(anthropicApiKey: string, config?: MultiStageConfig);
     /**
      * Main decision point: Should this theme be expanded?
-     * Uses intelligent code analysis and dynamic prompting for optimal decisions
+     * Uses multi-stage analysis: unopinionated analysis → validation → final decision
      */
     shouldExpandTheme(theme: ConsolidatedTheme, currentDepth: number, parentTheme?: ConsolidatedTheme, siblingThemes?: ConsolidatedTheme[]): Promise<ExpansionDecision>;
     /**
@@ -19,9 +22,33 @@ export declare class AIExpansionDecisionService {
      */
     private getAnalysisHash;
     /**
-     * Get AI decision from Claude
+     * Make quick decision for obvious cases to avoid unnecessary AI calls
      */
-    private getAIDecision;
+    private makeQuickDecision;
+    /**
+     * Check if validation scores are inconsistent and need consistency check
+     */
+    private needsConsistencyCheck;
+    /**
+     * Perform consistency check when validation scores are contradictory
+     */
+    private performConsistencyCheck;
+    /**
+     * Build final expansion decision from validation result
+     */
+    private buildDecisionFromValidation;
+    /**
+     * Extract sub-themes when expansion is decided
+     */
+    private extractSubThemes;
+    /**
+     * Fallback sub-theme generation when AI extraction fails
+     */
+    private getFallbackSubThemes;
+    /**
+     * Generate default decision when all stages fail
+     */
+    private getDefaultDecision;
     /**
      * Clear the decision cache
      */

@@ -31153,42 +31153,89 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AIExpansionDecisionService = void 0;
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
-const utils_1 = __nccwpck_require__(1798);
+const index_1 = __nccwpck_require__(8541);
 const code_structure_analyzer_1 = __nccwpck_require__(5873);
-const dynamic_prompt_builder_1 = __nccwpck_require__(4527);
+const unopinionated_analysis_service_1 = __nccwpck_require__(9062);
+const validation_service_1 = __nccwpck_require__(7425);
+const multi_stage_types_1 = __nccwpck_require__(6050);
 /**
- * Simplified AI-driven expansion decision service
- * Implements PRD vision: "AI decides when further decomposition is needed"
+ * Multi-stage AI-driven expansion decision service
+ * Uses unopinionated analysis followed by validation for better decisions
  */
 class AIExpansionDecisionService {
-    constructor(anthropicApiKey) {
+    constructor(anthropicApiKey, config = multi_stage_types_1.DEFAULT_MULTI_STAGE_CONFIG) {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
         this.decisionCache = new Map();
         this.codeAnalyzer = new code_structure_analyzer_1.CodeStructureAnalyzer();
-        this.promptBuilder = new dynamic_prompt_builder_1.DynamicPromptBuilder();
+        this.analysisService = new unopinionated_analysis_service_1.UnopinionatedAnalysisService(this.claudeClient);
+        this.validationService = new validation_service_1.ValidationService(this.claudeClient);
+        this.config = config;
     }
     /**
      * Main decision point: Should this theme be expanded?
-     * Uses intelligent code analysis and dynamic prompting for optimal decisions
+     * Uses multi-stage analysis: unopinionated analysis → validation → final decision
      */
     async shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes) {
+        const startTime = Date.now();
+        const decisionTrace = [];
         // Enhanced cache check with analysis hash
         const analysisHash = await this.getAnalysisHash(theme);
         const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
         if (this.decisionCache.has(cacheKey)) {
             const cachedDecision = this.decisionCache.get(cacheKey);
             if (cachedDecision) {
+                (0, index_1.logInfo)(`Using cached decision for theme "${theme.name}" at depth ${currentDepth}`);
                 return cachedDecision;
             }
         }
-        // PRD: Let AI make ALL expansion decisions - no programmatic filtering
-        // Analyze code structure for intelligent hints
-        const codeAnalysis = await this.codeAnalyzer.analyzeThemeStructure(theme);
-        // Build dynamic, context-aware prompt
-        const prompt = this.promptBuilder.buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes);
-        const decision = await this.getAIDecision(prompt);
-        this.decisionCache.set(cacheKey, decision);
-        return decision;
+        try {
+            // Stage 1: Unopinionated Analysis
+            decisionTrace.push(`Starting multi-stage analysis for theme "${theme.name}" at depth ${currentDepth}`);
+            const analysis = await this.analysisService.analyzeTheme(theme);
+            decisionTrace.push(`Analysis completed: ${analysis.separableConcerns.length} concerns, complexity: ${analysis.codeComplexity}`);
+            // Stage 2: Quick Decision Check (optimization)
+            if (this.config.enableQuickDecisions) {
+                const quickDecision = this.makeQuickDecision(analysis, currentDepth, decisionTrace);
+                if (quickDecision) {
+                    decisionTrace.push(`Quick decision applied: ${quickDecision.reasoning}`);
+                    this.decisionCache.set(cacheKey, quickDecision);
+                    return quickDecision;
+                }
+            }
+            // Stage 3: Validation
+            decisionTrace.push('Proceeding to validation stage');
+            const validation = await this.validationService.validateExpansionDecision(theme, analysis, currentDepth);
+            decisionTrace.push(`Validation completed: expand=${validation.shouldExpand}, confidence=${validation.confidence}`);
+            // Stage 4: Consistency Check (if enabled)
+            if (this.config.enableConsistencyCheck && this.needsConsistencyCheck(validation)) {
+                decisionTrace.push('Running consistency check due to score variance');
+                const adjusted = await this.performConsistencyCheck(theme, analysis, validation, currentDepth);
+                if (adjusted) {
+                    decisionTrace.push('Decision adjusted by consistency check');
+                    validation.shouldExpand = adjusted.shouldExpand;
+                    validation.confidence = adjusted.confidence;
+                    validation.reasoning = `Consistency-adjusted: ${adjusted.reasoning}`;
+                }
+            }
+            // Stage 5: Build Final Decision
+            const decision = this.buildDecisionFromValidation(validation, decisionTrace);
+            // Stage 6: Extract Sub-themes if expanding
+            if (decision.shouldExpand) {
+                decision.suggestedSubThemes = await this.extractSubThemes(theme, analysis, validation);
+            }
+            const processingTime = Date.now() - startTime;
+            (0, index_1.logInfo)(`Multi-stage decision completed for "${theme.name}" in ${processingTime}ms: expand=${decision.shouldExpand}`);
+            this.decisionCache.set(cacheKey, decision);
+            return decision;
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            decisionTrace.push(`Error in multi-stage analysis: ${errorMessage}`);
+            (0, index_1.logError)(`Multi-stage decision failed for theme "${theme.name}": ${errorMessage}`);
+            const fallbackDecision = this.getDefaultDecision(theme, currentDepth, decisionTrace);
+            this.decisionCache.set(cacheKey, fallbackDecision);
+            return fallbackDecision;
+        }
     }
     /**
      * Generate a simple hash for theme analysis caching
@@ -31199,48 +31246,219 @@ class AIExpansionDecisionService {
         return Buffer.from(content).toString('base64').slice(0, 16);
     }
     /**
-     * Get AI decision from Claude
+     * Make quick decision for obvious cases to avoid unnecessary AI calls
      */
-    async getAIDecision(prompt) {
+    makeQuickDecision(analysis, currentDepth, decisionTrace) {
+        // Ultra-high confidence atomic detection
+        if (currentDepth >= this.config.quickDecisionDepthThreshold ||
+            (analysis.codeMetrics.distinctOperations === 1 &&
+                analysis.separableConcerns.length === 0 &&
+                analysis.codeComplexity === 'low')) {
+            return {
+                shouldExpand: false,
+                isAtomic: true,
+                reasoning: `Quick decision: Obviously atomic (depth ${currentDepth}, single operation, no separable concerns)`,
+                businessContext: analysis.actualPurpose,
+                technicalContext: 'Atomic operation',
+                testabilityAssessment: 'Single test case sufficient',
+                suggestedSubThemes: null
+            };
+        }
+        // Ultra-high confidence expansion
+        if (currentDepth <= 2 &&
+            analysis.separableConcerns.length >= 3 &&
+            analysis.codeMetrics.hasMultipleAlgorithms &&
+            analysis.codeComplexity === 'high') {
+            return {
+                shouldExpand: true,
+                isAtomic: false,
+                reasoning: `Quick decision: Obviously needs expansion (shallow depth, ${analysis.separableConcerns.length} concerns, multiple algorithms)`,
+                businessContext: analysis.actualPurpose,
+                technicalContext: 'Multiple complex algorithms',
+                testabilityAssessment: 'Multiple test suites required',
+                suggestedSubThemes: null // Will be populated later
+            };
+        }
+        return null; // Needs full validation
+    }
+    /**
+     * Check if validation scores are inconsistent and need consistency check
+     */
+    needsConsistencyCheck(validation) {
+        const scores = [
+            validation.granularityScore,
+            validation.depthAppropriatenessScore,
+            validation.businessValueScore,
+            validation.testBoundaryScore
+        ];
+        const avg = scores.reduce((a, b) => a + b) / scores.length;
+        const variance = scores.reduce((sum, score) => sum + Math.pow(score - avg, 2), 0) / scores.length;
+        // High variance suggests inconsistent reasoning
+        return variance > this.config.consistencyVarianceThreshold;
+    }
+    /**
+     * Perform consistency check when validation scores are contradictory
+     */
+    async performConsistencyCheck(theme, analysis, validation, currentDepth) {
+        const prompt = `CONSISTENCY CHECK
+
+Theme: "${theme.name}" at depth ${currentDepth}
+
+ANALYSIS: ${analysis.actualPurpose}
+Separable concerns: ${analysis.separableConcerns.length}
+Complexity: ${analysis.codeComplexity}
+
+VALIDATION SCORES (showing inconsistency):
+- Granularity: ${validation.granularityScore}
+- Depth Appropriateness: ${validation.depthAppropriatenessScore}  
+- Business Value: ${validation.businessValueScore}
+- Test Boundary: ${validation.testBoundaryScore}
+
+CURRENT DECISION: expand=${validation.shouldExpand}, confidence=${validation.confidence}
+
+The validation scores show high variance, suggesting inconsistent reasoning.
+Re-evaluate the decision with focus on consistency.
+
+Should the decision be adjusted? Respond with JSON:
+{
+  "needsAdjustment": boolean,
+  "adjustedShouldExpand": boolean,
+  "adjustedConfidence": number,
+  "reasoning": "explanation for adjustment"
+}`;
         try {
-            const response = await this.claudeClient.callClaude(prompt, 'expansion-decision');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'reasoning']);
-            if (extractionResult.success) {
-                const data = extractionResult.data;
+            const response = await this.claudeClient.callClaude(prompt);
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['needsAdjustment']);
+            if (result.success && result.data.needsAdjustment) {
+                const data = result.data;
                 return {
-                    shouldExpand: data.shouldExpand ?? true, // PRD: Default to expand
-                    isAtomic: data.isAtomic ?? false,
-                    reasoning: data.reasoning ?? 'No reasoning provided',
-                    businessContext: data.businessContext ?? '',
-                    technicalContext: data.technicalContext ?? '',
-                    testabilityAssessment: data.testabilityAssessment ?? '',
-                    suggestedSubThemes: data.suggestedSubThemes || null,
+                    shouldExpand: data.adjustedShouldExpand,
+                    confidence: data.adjustedConfidence,
+                    reasoning: data.reasoning
                 };
             }
-            // Fallback on parsing error
-            (0, utils_1.logInfo)(`Failed to parse AI expansion decision: ${extractionResult.error}`);
-            return {
-                shouldExpand: true, // PRD: Default to expand on error
-                isAtomic: false,
-                reasoning: 'Failed to parse AI response',
-                businessContext: '',
-                technicalContext: '',
-                testabilityAssessment: '',
-                suggestedSubThemes: null,
-            };
         }
         catch (error) {
-            (0, utils_1.logInfo)(`AI expansion decision failed: ${error}`);
-            return {
-                shouldExpand: true, // PRD: Default to expand on error
-                isAtomic: false,
-                reasoning: `AI analysis failed: ${error}`,
-                businessContext: '',
-                technicalContext: '',
-                testabilityAssessment: '',
-                suggestedSubThemes: null,
-            };
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            (0, index_1.logError)(`Consistency check failed: ${errorMessage}`);
         }
+        return null; // No adjustment needed or failed
+    }
+    /**
+     * Build final expansion decision from validation result
+     */
+    buildDecisionFromValidation(validation, decisionTrace) {
+        return {
+            shouldExpand: validation.shouldExpand,
+            isAtomic: !validation.shouldExpand,
+            reasoning: validation.reasoning,
+            businessContext: `Business value score: ${validation.businessValueScore.toFixed(2)}`,
+            technicalContext: `Granularity score: ${validation.granularityScore.toFixed(2)}`,
+            testabilityAssessment: `Test boundary score: ${validation.testBoundaryScore.toFixed(2)}`,
+            suggestedSubThemes: null // Will be populated if expanding
+        };
+    }
+    /**
+     * Extract sub-themes when expansion is decided
+     */
+    async extractSubThemes(theme, analysis, validation) {
+        if (analysis.separableConcerns.length === 0) {
+            return null;
+        }
+        // Build prompt for intelligent sub-theme extraction
+        const prompt = `Based on the analysis, create specific sub-themes for this theme.
+
+THEME: "${theme.name}"
+Files: ${theme.affectedFiles.join(', ')}
+
+ANALYSIS RESULTS:
+- Purpose: ${analysis.actualPurpose}
+- Separable Concerns: ${analysis.separableConcerns.join(', ')}
+- Complexity: ${analysis.codeComplexity}
+- Test Scenarios: ${analysis.testScenarios}
+
+CODE CONTEXT:
+${theme.codeSnippets.slice(0, 3).map((snippet, i) => `Snippet ${i + 1}:\n${snippet.substring(0, 500)}...`).join('\n\n')}
+
+Create sub-themes for each separable concern. Each sub-theme should:
+1. Have a clear, specific name (not just the concern name)
+2. Include only the files it actually modifies
+3. Be independently testable and reviewable
+
+CRITICAL: Each sub-theme MUST specify which files from the parent's list it affects.
+If parent has only 1 file, all sub-themes must use that file.
+Otherwise, distribute files logically based on the concern.
+
+Respond with JSON:
+{
+  "subThemes": [
+    {
+      "name": "Clear action-oriented name (max 8 words)",
+      "description": "What this sub-theme specifically does (1-2 sentences)",
+      "files": ["list only the relevant files from parent theme"],
+      "rationale": "Why this is a separate concern (1 sentence)"
+    }
+  ]
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['subThemes']);
+            if (!extractionResult.success) {
+                (0, index_1.logError)(`Failed to extract sub-themes: ${extractionResult.error}`);
+                // Fallback to simple mapping
+                return this.getFallbackSubThemes(theme, analysis);
+            }
+            const data = extractionResult.data;
+            // Validate that all files are from parent theme
+            const validatedSubThemes = data.subThemes.map(subTheme => {
+                const validFiles = subTheme.files.filter(file => theme.affectedFiles.includes(file));
+                if (validFiles.length === 0) {
+                    (0, index_1.logError)(`Sub-theme "${subTheme.name}" has no valid files, using all parent files`);
+                    validFiles.push(...theme.affectedFiles);
+                }
+                return {
+                    ...subTheme,
+                    files: validFiles
+                };
+            });
+            return validatedSubThemes.length > 0 ? validatedSubThemes : null;
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            (0, index_1.logError)(`Sub-theme extraction failed: ${errorMessage}`);
+            return this.getFallbackSubThemes(theme, analysis);
+        }
+    }
+    /**
+     * Fallback sub-theme generation when AI extraction fails
+     */
+    getFallbackSubThemes(theme, analysis) {
+        if (analysis.separableConcerns.length === 0) {
+            return null;
+        }
+        // Simple mapping as fallback
+        const subThemes = analysis.separableConcerns.map((concern, index) => ({
+            name: concern,
+            description: `Handles ${concern.toLowerCase()} functionality`,
+            files: theme.affectedFiles, // All sub-themes inherit parent files for now
+            rationale: `Separated as distinct concern identified in analysis`
+        }));
+        return subThemes.length > 0 ? subThemes : null;
+    }
+    /**
+     * Generate default decision when all stages fail
+     */
+    getDefaultDecision(theme, currentDepth, decisionTrace) {
+        const shouldExpand = currentDepth < 8 && theme.affectedFiles.length > 1;
+        return {
+            shouldExpand,
+            isAtomic: !shouldExpand,
+            reasoning: `Fallback decision: depth ${currentDepth}, ${theme.affectedFiles.length} files. Trace: ${decisionTrace.join(' → ')}`,
+            businessContext: 'Unable to analyze business context',
+            technicalContext: 'Unable to analyze technical context',
+            testabilityAssessment: 'Unable to assess testability',
+            suggestedSubThemes: null
+        };
     }
     /**
      * Clear the decision cache
@@ -31435,6 +31653,339 @@ CRITICAL: Respond with ONLY valid JSON.
     }
 }
 exports.AISimilarityService = AISimilarityService;
+
+
+/***/ }),
+
+/***/ 9062:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UnopinionatedAnalysisService = void 0;
+const json_extractor_1 = __nccwpck_require__(8168);
+const index_1 = __nccwpck_require__(8541);
+/**
+ * Service for performing unopinionated analysis of themes
+ * Analyzes code structure and content without depth-based bias
+ */
+class UnopinionatedAnalysisService {
+    constructor(claudeClient) {
+        this.claudeClient = claudeClient;
+    }
+    /**
+     * Analyze a theme based purely on its code content and structure
+     */
+    async analyzeTheme(theme) {
+        const prompt = this.buildAnalysisPrompt(theme);
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['actualPurpose', 'codeComplexity', 'separableConcerns', 'testScenarios', 'reviewerPerspective', 'codeMetrics']);
+            if (!extractionResult.success) {
+                throw new Error(extractionResult.error || 'Failed to extract JSON');
+            }
+            const analysis = extractionResult.data;
+            if (!this.validateAnalysisResponse(analysis)) {
+                throw new Error('Invalid analysis response structure');
+            }
+            (0, index_1.logInfo)(`Theme analysis completed for "${theme.name}": ${analysis.separableConcerns.length} concerns identified`);
+            return analysis;
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            (0, index_1.logError)(`Analysis failed for theme "${theme.name}": ${errorMessage}`);
+            return this.getDefaultAnalysis(theme);
+        }
+    }
+    /**
+     * Build unopinionated analysis prompt
+     */
+    buildAnalysisPrompt(theme) {
+        return `THEME ANALYSIS - UNOPINIONATED
+
+Analyze this code theme based purely on its content and structure. 
+Do not consider theme names or descriptions if they don't match the actual code.
+Focus only on what the code actually does.
+
+THEME INFORMATION:
+Name: "${theme.name}"
+Description: ${theme.description}
+Files: ${theme.affectedFiles.join(', ')}
+
+CODE CHANGES:
+${this.formatCodeSnippets(theme.codeSnippets)}
+
+ANALYSIS FRAMEWORK:
+
+1. ACTUAL PURPOSE
+   - What does this code actually accomplish?
+   - Ignore theme name/description if they contradict the code
+   - Focus on concrete changes and their effects
+
+2. CODE STRUCTURE ANALYSIS
+   - Count distinct functions/methods being modified
+   - Count distinct classes/interfaces being modified  
+   - Identify distinct algorithms or logical processes
+   - Note natural boundaries in the code
+
+3. SEPARABILITY ANALYSIS
+   - List each distinct responsibility or concern
+   - Could these responsibilities be tested independently?
+   - Do they share state or are they logically isolated?
+   - Are there clear interfaces between different parts?
+
+4. REVIEWER PERSPECTIVE
+   - Would a code reviewer see this as one cohesive change?
+   - Or would they naturally comment on different aspects?
+   - What would be the natural review points?
+
+5. TESTING IMPLICATIONS
+   - How many distinct test scenarios would this require?
+   - Could one comprehensive test cover everything?
+   - Would multiple focused tests provide better coverage?
+   - Are there error paths that need separate testing?
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "actualPurpose": "What this theme really accomplishes (1-2 sentences)",
+  "codeComplexity": "low|medium|high",
+  "separableConcerns": ["list", "of", "distinct", "responsibilities"],
+  "testScenarios": <number_of_test_scenarios>,
+  "reviewerPerspective": "How a reviewer would naturally see this change",
+  "codeMetrics": {
+    "functionCount": <number_of_functions_modified>,
+    "classCount": <number_of_classes_modified>,
+    "distinctOperations": <number_of_distinct_logical_operations>,
+    "hasMultipleAlgorithms": <boolean>,
+    "hasNaturalBoundaries": <boolean>
+  }
+}`;
+    }
+    /**
+     * Format code snippets for analysis
+     */
+    formatCodeSnippets(codeSnippets) {
+        if (codeSnippets.length === 0) {
+            return 'No code snippets provided';
+        }
+        return codeSnippets
+            .map((snippet, index) => `--- Code Snippet ${index + 1} ---\n${snippet}`)
+            .join('\n\n');
+    }
+    /**
+     * Validate analysis response structure
+     */
+    validateAnalysisResponse(data) {
+        return (typeof data === 'object' &&
+            typeof data.actualPurpose === 'string' &&
+            ['low', 'medium', 'high'].includes(data.codeComplexity) &&
+            Array.isArray(data.separableConcerns) &&
+            typeof data.testScenarios === 'number' &&
+            typeof data.reviewerPerspective === 'string' &&
+            typeof data.codeMetrics === 'object' &&
+            typeof data.codeMetrics.functionCount === 'number' &&
+            typeof data.codeMetrics.classCount === 'number' &&
+            typeof data.codeMetrics.distinctOperations === 'number' &&
+            typeof data.codeMetrics.hasMultipleAlgorithms === 'boolean' &&
+            typeof data.codeMetrics.hasNaturalBoundaries === 'boolean');
+    }
+    /**
+     * Generate default analysis when AI analysis fails
+     */
+    getDefaultAnalysis(theme) {
+        const fileCount = theme.affectedFiles.length;
+        const codeLength = theme.codeSnippets.join('').length;
+        return {
+            actualPurpose: `Modifies ${fileCount} file(s) with changes to existing functionality`,
+            codeComplexity: codeLength > 1000 ? 'medium' : 'low',
+            separableConcerns: [],
+            testScenarios: 1,
+            reviewerPerspective: 'Single cohesive change requiring one review pass',
+            codeMetrics: {
+                functionCount: Math.min(fileCount, 2), // Conservative estimate
+                classCount: Math.min(fileCount, 1),
+                distinctOperations: 1,
+                hasMultipleAlgorithms: false,
+                hasNaturalBoundaries: fileCount > 1
+            }
+        };
+    }
+}
+exports.UnopinionatedAnalysisService = UnopinionatedAnalysisService;
+
+
+/***/ }),
+
+/***/ 7425:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ValidationService = void 0;
+const json_extractor_1 = __nccwpck_require__(8168);
+const index_1 = __nccwpck_require__(8541);
+/**
+ * Service for validating expansion decisions through self-reflection
+ */
+class ValidationService {
+    constructor(claudeClient) {
+        this.claudeClient = claudeClient;
+    }
+    /**
+     * Validate expansion decision through multi-criteria analysis
+     */
+    async validateExpansionDecision(theme, analysis, currentDepth, initialInclination) {
+        const prompt = this.buildValidationPrompt(theme, analysis, currentDepth, initialInclination);
+        try {
+            const response = await this.claudeClient.callClaude(prompt);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'confidence', 'reasoning', 'correctedFromInitial', 'validationFindings', 'granularityScore', 'depthAppropriatenessScore', 'businessValueScore', 'testBoundaryScore']);
+            if (!extractionResult.success) {
+                throw new Error(extractionResult.error || 'Failed to extract JSON');
+            }
+            const validation = extractionResult.data;
+            if (!this.validateValidationResponse(validation)) {
+                throw new Error('Invalid validation response structure');
+            }
+            (0, index_1.logInfo)(`Validation completed for "${theme.name}" at depth ${currentDepth}: expand=${validation.shouldExpand}, confidence=${validation.confidence}`);
+            return validation;
+        }
+        catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            (0, index_1.logError)(`Validation failed for theme "${theme.name}": ${errorMessage}`);
+            return this.getDefaultValidation(analysis, currentDepth);
+        }
+    }
+    /**
+     * Build validation prompt with self-reflection
+     */
+    buildValidationPrompt(theme, analysis, currentDepth, initialInclination) {
+        return `EXPANSION VALIDATION
+
+You will validate whether a theme should be expanded using multi-criteria analysis.
+
+CONTEXT:
+Theme: "${theme.name}"
+Current Depth: ${currentDepth}
+${initialInclination ? `Initial Inclination: expand=${initialInclination.shouldExpand} (confidence: ${initialInclination.confidence})` : ''}
+
+ANALYSIS RESULTS:
+- Purpose: ${analysis.actualPurpose}
+- Complexity: ${analysis.codeComplexity}
+- Separable Concerns: ${analysis.separableConcerns.length > 0 ? analysis.separableConcerns.join(', ') : 'None identified'}
+- Test Scenarios: ${analysis.testScenarios}
+- Functions Modified: ${analysis.codeMetrics.functionCount}
+- Classes Modified: ${analysis.codeMetrics.classCount}
+- Distinct Operations: ${analysis.codeMetrics.distinctOperations}
+- Multiple Algorithms: ${analysis.codeMetrics.hasMultipleAlgorithms}
+- Natural Boundaries: ${analysis.codeMetrics.hasNaturalBoundaries}
+
+VALIDATION FRAMEWORK:
+
+1. GRANULARITY CHECK (Score 0.0-1.0)
+   Evaluate if this theme is at appropriate granularity:
+   - 0.0-0.3: Over-granular (single method call, variable assignment, trivial operation)
+   - 0.4-0.6: Borderline (simple orchestration, wrapper functions, basic coordination)
+   - 0.7-1.0: Appropriate granularity (meaningful business logic, complex algorithms)
+   
+   Questions:
+   - Is this just a single method call or property assignment?
+   - Does it contain actual business logic or just coordination?
+   - Would splitting this create artificial boundaries?
+
+2. DEPTH APPROPRIATENESS (Score 0.0-1.0)
+   Evaluate expansion appropriateness at depth ${currentDepth}:
+   - Depths 0-3: High-level themes, expansion often valuable (bias toward 0.7-1.0)
+   - Depths 4-8: Feature level, balance needed (evaluate on merit)
+   - Depths 9-12: Implementation details, resist expansion (bias toward 0.3-0.6)
+   - Depths 13+: Very deep, almost never expand (bias toward 0.0-0.3)
+   
+   Question: Is this the right depth for this level of granularity?
+
+3. BUSINESS VALUE (Score 0.0-1.0)
+   Evaluate if expansion improves understanding:
+   - Would sub-themes make the code clearer to understand?
+   - Would they help during code review?
+   - Or would they just create unnecessary fragmentation?
+
+4. TEST BOUNDARY (Score 0.0-1.0)
+   Evaluate testing implications:
+   - Would sub-themes naturally have distinct test cases?
+   - Or is this logically one unit that should be tested together?
+   - Are there natural error paths that suggest separation?
+
+SELF-REFLECTION:
+${initialInclination ? `
+You initially thought: expand=${initialInclination.shouldExpand} with confidence ${initialInclination.confidence}
+- Does your detailed analysis support this initial thought?
+- What evidence supports or contradicts your initial inclination?
+- Should you correct your initial assessment?
+` : ''}
+
+Based on the four validation criteria above, make your final decision.
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "shouldExpand": <boolean>,
+  "confidence": <0.0-1.0>,
+  "reasoning": "Explanation based on validation criteria (max 100 words)",
+  "correctedFromInitial": <boolean>,
+  "validationFindings": ["key", "insights", "from", "validation", "checks"],
+  "granularityScore": <0.0-1.0>,
+  "depthAppropriatenessScore": <0.0-1.0>,
+  "businessValueScore": <0.0-1.0>,
+  "testBoundaryScore": <0.0-1.0>
+}`;
+    }
+    /**
+     * Validate validation response structure
+     */
+    validateValidationResponse(data) {
+        return (typeof data === 'object' &&
+            typeof data.shouldExpand === 'boolean' &&
+            typeof data.confidence === 'number' &&
+            data.confidence >= 0 && data.confidence <= 1 &&
+            typeof data.reasoning === 'string' &&
+            typeof data.correctedFromInitial === 'boolean' &&
+            Array.isArray(data.validationFindings) &&
+            typeof data.granularityScore === 'number' &&
+            data.granularityScore >= 0 && data.granularityScore <= 1 &&
+            typeof data.depthAppropriatenessScore === 'number' &&
+            data.depthAppropriatenessScore >= 0 && data.depthAppropriatenessScore <= 1 &&
+            typeof data.businessValueScore === 'number' &&
+            data.businessValueScore >= 0 && data.businessValueScore <= 1 &&
+            typeof data.testBoundaryScore === 'number' &&
+            data.testBoundaryScore >= 0 && data.testBoundaryScore <= 1);
+    }
+    /**
+     * Generate default validation when AI validation fails
+     */
+    getDefaultValidation(analysis, currentDepth) {
+        // Conservative defaults based on analysis
+        const shouldExpand = analysis.separableConcerns.length > 1 && currentDepth < 10;
+        const baseConfidence = analysis.separableConcerns.length > 0 ? 0.6 : 0.4;
+        // Adjust confidence based on depth
+        const depthPenalty = Math.max(0, (currentDepth - 8) * 0.1);
+        const confidence = Math.max(0.2, baseConfidence - depthPenalty);
+        return {
+            shouldExpand,
+            confidence,
+            reasoning: `Default validation: ${analysis.separableConcerns.length} separable concerns at depth ${currentDepth}`,
+            correctedFromInitial: false,
+            validationFindings: [
+                `${analysis.separableConcerns.length} separable concerns identified`,
+                `Code complexity: ${analysis.codeComplexity}`,
+                `Current depth: ${currentDepth}`
+            ],
+            granularityScore: analysis.codeMetrics.distinctOperations > 1 ? 0.6 : 0.3,
+            depthAppropriatenessScore: Math.max(0.1, 1.0 - (currentDepth * 0.08)),
+            businessValueScore: analysis.separableConcerns.length > 1 ? 0.7 : 0.3,
+            testBoundaryScore: analysis.testScenarios > 1 ? 0.7 : 0.4
+        };
+    }
+}
+exports.ValidationService = ValidationService;
 
 
 /***/ }),
@@ -32099,522 +32650,6 @@ class CodeStructureAnalyzer {
     }
 }
 exports.CodeStructureAnalyzer = CodeStructureAnalyzer;
-
-
-/***/ }),
-
-/***/ 4527:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DynamicPromptBuilder = void 0;
-/**
- * Builds dynamic, context-aware prompts for AI expansion decisions
- */
-class DynamicPromptBuilder {
-    constructor() {
-        this.expansionExamples = [];
-        this.initializeExamples();
-    }
-    /**
-     * Build a context-rich prompt for expansion decisions
-     */
-    buildExpansionPrompt(theme, currentDepth, codeAnalysis, parentTheme, siblingThemes) {
-        const contextSection = this.buildContextSection(theme, currentDepth, parentTheme, siblingThemes);
-        const analysisSection = this.buildAnalysisSection(codeAnalysis);
-        const guidanceSection = this.buildGuidanceSection(currentDepth, codeAnalysis);
-        const examplesSection = this.buildExamplesSection(codeAnalysis);
-        const decisionSection = this.buildDecisionSection(currentDepth, codeAnalysis, theme);
-        return `${contextSection}
-
-${analysisSection}
-
-${guidanceSection}
-
-${examplesSection}
-
-${decisionSection}`;
-    }
-    /**
-     * Build context section with theme information
-     */
-    buildContextSection(theme, currentDepth, parentTheme, siblingThemes) {
-        let context = `You are analyzing a code change to build a hierarchical mindmap.
-This mindmap should naturally organize code from high-level themes down to specific, reviewable units.
-
-CURRENT THEME:
-Name: "${theme.name}"
-Description: ${theme.description}
-Current depth: ${currentDepth}
-Files involved: ${theme.affectedFiles.length} files
-File list: ${theme.affectedFiles.join(', ')}`;
-        if (parentTheme) {
-            context += `
-
-PARENT THEME: "${parentTheme.name}"
-Purpose: ${parentTheme.description}`;
-        }
-        if (siblingThemes && siblingThemes.length > 0) {
-            context += `
-
-SIBLING THEMES (already identified at this level):
-${siblingThemes.map((s) => `- "${s.name}": ${s.description}`).join('\n')}
-
-Ensure suggested sub-themes don't duplicate these existing themes.`;
-        }
-        return context;
-    }
-    /**
-     * Build analysis section with code structure insights
-     */
-    buildAnalysisSection(codeAnalysis) {
-        let section = `CODE STRUCTURE ANALYSIS:
-- Functions/Methods: ${codeAnalysis.functionCount}
-- Classes/Interfaces: ${codeAnalysis.classCount}
-- Modules/Files: ${codeAnalysis.moduleCount}
-- Change Types: ${codeAnalysis.changeTypes.join(', ')}
-- Complexity: ${this.formatComplexityIndicators(codeAnalysis.complexityIndicators)}`;
-        return section;
-    }
-    /**
-     * Build dynamic guidance based on depth and complexity
-     */
-    buildGuidanceSection(currentDepth, codeAnalysis) {
-        const achievements = this.identifyAchievements(currentDepth, codeAnalysis);
-        const nextGoals = this.identifyNextGoals(currentDepth, codeAnalysis);
-        let section = `EXPANSION GUIDANCE:
-Focus: Identify distinct functional concerns that could be independently tested or reviewed
-- Look for changes that address different requirements or use cases
-- Consider separating different functions, classes, or logical units
-- Each theme should represent a coherent concern that could have its own unit test
-- Consider if different aspects could be tested or reviewed separately`;
-        if (achievements.length > 0) {
-            section += `
-
-ACHIEVEMENTS SO FAR:
-${achievements.map((achievement) => `✓ ${achievement}`).join('\n')}`;
-        }
-        if (nextGoals.length > 0) {
-            section += `
-
-NEXT GOALS TO CONSIDER:
-${nextGoals.map((goal) => `→ ${goal}`).join('\n')}`;
-        }
-        return section;
-    }
-    /**
-     * Build examples section with relevant expansion patterns
-     */
-    buildExamplesSection(codeAnalysis) {
-        const relevantExamples = this.selectRelevantExamples(codeAnalysis);
-        if (relevantExamples.length === 0) {
-            return '';
-        }
-        let section = `EXPANSION EXAMPLES (similar patterns):`;
-        relevantExamples.forEach((example, index) => {
-            section += `
-
-Example ${index + 1}: "${example.themeName}"
-Pattern: ${example.pattern}
-Sub-themes created:
-${example.subThemes.map((sub) => `  - "${sub.name}": ${sub.description}`).join('\n')}
-Why this worked: ${example.reasoning}`;
-        });
-        return section;
-    }
-    /**
-     * Build decision section with specific questions
-     */
-    buildDecisionSection(currentDepth, codeAnalysis, theme) {
-        const questions = this.generateDecisionQuestions(currentDepth, codeAnalysis);
-        let section = `You are building a hierarchical mindmap per PRD requirements.
-Goal: Natural depth (2-30 levels) based on code complexity.
-
-CURRENT THEME: "${theme.name}"
-Current depth: ${currentDepth} (no limits - let complexity guide)
-Code metrics: ${theme.affectedFiles.length} files, ${theme.codeSnippets.length} code snippets
-Files affected by this theme: ${theme.affectedFiles.map((f) => `"${f}"`).join(', ')}
-
-DEPTH-AWARE EXPANSION STRATEGY:
-
-${this.getDepthSpecificGuidance(currentDepth)}
-
-UNIVERSAL TEST BOUNDARY THINKING:
-Ask yourself: "Would a developer write ONE focused unit test for this theme?"
-- If YES → Likely atomic (especially at depth 8+)
-- If NO, needs multiple tests → Consider expansion (especially at depth <8)
-- If unsure → Default to expansion at shallow depths, atomic at deep depths
-
-EXPANSION DECISION FRAMEWORK:
-Create child nodes when:
-1. Multiple distinct responsibilities present
-2. Different test scenarios would be needed
-3. Natural code boundaries suggest separation
-4. Would improve reviewability and understanding
-
-Stay atomic when:
-1. Single cohesive algorithm or process
-2. Tightly coupled logic that shouldn't be separated
-3. Would be covered by one focused unit test
-4. Further splitting would create artificial boundaries
-
-CONSIDER THESE QUESTIONS:
-${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
-
-CRITICAL FILE ASSIGNMENT RULES:
-1. Each sub-theme MUST have "files" array populated
-2. Files MUST be selected ONLY from the parent theme's files listed above
-3. You CANNOT suggest files that are not in the parent theme's file list
-4. If parent has only 1 file, ALL sub-themes must use that SAME file
-5. Each file should typically belong to only ONE sub-theme (unless parent has only 1 file)
-6. If a sub-theme doesn't modify any specific files, it shouldn't exist
-7. The "files" field is REQUIRED - omitting it will cause an error
-
-EXAMPLE: If parent theme affects ["src/services/theme-expansion.ts"], then ALL sub-themes 
-must have "files": ["src/services/theme-expansion.ts"]. You CANNOT suggest files like 
-"src/utils/concurrency-manager.ts" that are not in the parent's file list.`;
-        section += `
-
-RESPOND WITH PRD-COMPLIANT JSON:
-{
-  "shouldExpand": boolean,
-  "reasoning": "why (max 30 words)",
-  "businessContext": "user value (max 20 words)",
-  "technicalContext": "what it does (max 20 words)",
-  "testabilityAssessment": "how to test (max 15 words)",
-  "suggestedSubThemes": [
-    {
-      "name": "Clear title (max 8 words)",
-      "description": "1-3 sentences",
-      "businessContext": "Why this matters",
-      "technicalContext": "What this does",
-      "files": ["REQUIRED: list files from parent theme that this sub-theme modifies"],
-      "rationale": "Why separate concern"
-    }
-  ] or null
-}`;
-        return section;
-    }
-    /**
-     * Get depth-specific expansion guidance
-     */
-    getDepthSpecificGuidance(currentDepth) {
-        if (currentDepth <= 2) {
-            return `DEPTH ${currentDepth} - BUSINESS LEVEL:
-You're examining high-level business themes.
-STRONGLY FAVOR EXPANSION unless trivially simple.
-
-Examples needing expansion:
-- "User Authentication" (has login, logout, session management)
-- "Payment Processing" (has validation, processing, confirmation)
-- "Data Migration" (has extraction, transformation, loading)
-
-Rarely atomic at this level:
-- "Fix typo in README" (single atomic change)
-- "Update version number" (single coordinated change)
-
-DEFAULT: Expand with high confidence (0.8-1.0)`;
-        }
-        if (currentDepth <= 5) {
-            return `DEPTH ${currentDepth} - COMPONENT LEVEL:
-You're examining technical components and major features.
-FAVOR EXPANSION for multi-faceted components.
-
-Examples needing expansion:
-- "OAuth Token Validation" with multiple providers
-- "Data transformation pipeline" with multiple steps
-- "Form validation" with multiple field types
-- "API error handling" with different error types
-
-Potentially atomic:
-- "JWT token signature verification" (single algorithm)
-- "Email format validation" (single regex check)
-- "Calculate tax amount" (single formula)
-
-DEFAULT: Expand if multiple responsibilities visible (0.6-0.8 confidence)`;
-        }
-        if (currentDepth <= 8) {
-            return `DEPTH ${currentDepth} - FEATURE IMPLEMENTATION (Sweet Spot):
-You're examining specific feature implementations.
-BALANCE expansion with cohesion - look for natural test boundaries.
-
-Consider atomic if:
-- Would be covered by ONE focused unit test
-- Splitting would separate algorithm from its error handling
-- Further division would create artificial boundaries
-
-Examples likely atomic:
-- "Validate and format phone number" (cohesive validation)
-- "Calculate discount with business rules" (complete algorithm)
-- "Extract and transform user data" (single transformation)
-- "Line-by-line assignment validation" (single process)
-
-Still expand if:
-- Multiple distinct algorithms present
-- Different test scenarios needed
-- Unrelated responsibilities combined
-
-DEFAULT: Expand only with clear evidence of multiple concerns (0.4-0.7 confidence)`;
-        }
-        if (currentDepth <= 12) {
-            return `DEPTH ${currentDepth} - IMPLEMENTATION DETAILS (Target Atomic Zone):
-You're examining implementation details and specific algorithms.
-RESIST EXPANSION unless clearly beneficial.
-
-Strong signals for atomic:
-- Complete algorithm implementation
-- Single responsibility with error handling
-- Would need just one unit test
-- Further split would separate tightly coupled logic
-
-Examples of atomic themes:
-- "Duplicate detection using Set operations"
-- "Confidence score calculation with bounds"
-- "Format error message with truncation"
-- "Extract unique file paths from diffs"
-
-Only expand for:
-- Genuinely independent algorithms
-- Clearly separable test cases
-- Mixed concerns that don't belong together
-
-DEFAULT: Stay atomic unless compelling reason (0.2-0.5 confidence for expansion)`;
-        }
-        if (currentDepth <= 16) {
-            return `DEPTH ${currentDepth} - FINE DETAILS (Avoid Over-Expansion):
-You're at implementation detail level.
-STRONGLY RESIST EXPANSION - you're likely seeing atomic operations.
-
-Almost always atomic:
-- Individual validation rules
-- Single calculations or formulas
-- Property assignments and mappings
-- Loop operations and iterations
-- Error formatting and messages
-
-Anti-patterns (DO NOT create themes for):
-- Variable assignments: "confidence = 0.5"
-- Simple conditionals: "if (x) y += 0.1"
-- Return statements: "return { result }"
-- Math operations: "Math.max(0, Math.min(1, x))"
-- Single method calls: "Set.add(item)"
-
-Only expand if code literally does unrelated things.
-
-DEFAULT: Stay atomic (0.1-0.3 confidence for expansion)`;
-        }
-        return `DEPTH ${currentDepth} - MAXIMUM DEPTH WARNING:
-You've reached extreme granularity.
-DO NOT EXPAND FURTHER unless critical error in analysis.
-Everything at this level should be atomic.
-
-DEFAULT: Stay atomic (0.0-0.1 confidence for expansion)`;
-    }
-    /**
-     * Format complexity indicators for display
-     */
-    formatComplexityIndicators(indicators) {
-        const features = [];
-        if (indicators.hasConditionals)
-            features.push(`conditionals (${indicators.branchingFactor} branches)`);
-        if (indicators.hasLoops)
-            features.push('loops');
-        if (indicators.hasErrorHandling)
-            features.push('error handling');
-        if (indicators.hasAsyncOperations)
-            features.push('async operations');
-        if (indicators.nestingDepth > 2)
-            features.push(`deep nesting (${indicators.nestingDepth})`);
-        return features.length > 0 ? features.join(', ') : 'low complexity';
-    }
-    /**
-     * Identify what has been achieved at current depth
-     */
-    identifyAchievements(currentDepth, codeAnalysis) {
-        const achievements = [];
-        if (currentDepth >= 1) {
-            if (codeAnalysis.changeTypes.length <= 2) {
-                achievements.push('Focused change types identified');
-            }
-            if (codeAnalysis.moduleCount <= 3) {
-                achievements.push('Module scope well-defined');
-            }
-        }
-        if (currentDepth >= 2) {
-            if (codeAnalysis.functionCount <= 2) {
-                achievements.push('Function-level granularity reached');
-            }
-            if (codeAnalysis.classCount <= 1) {
-                achievements.push('Single class/interface focus');
-            }
-        }
-        if (currentDepth >= 3) {
-            if (!codeAnalysis.complexityIndicators.hasConditionals ||
-                !codeAnalysis.complexityIndicators.hasLoops) {
-                achievements.push('Simplified control flow');
-            }
-        }
-        return achievements;
-    }
-    /**
-     * Identify next goals based on current state
-     */
-    identifyNextGoals(currentDepth, codeAnalysis) {
-        const goals = [];
-        if (codeAnalysis.changeTypes.length > 2) {
-            goals.push('Separate different types of changes (config vs logic vs UI)');
-        }
-        if (codeAnalysis.functionCount > 3) {
-            goals.push('Break down into individual function modifications');
-        }
-        if (codeAnalysis.complexityIndicators.hasConditionals &&
-            codeAnalysis.complexityIndicators.hasErrorHandling) {
-            goals.push('Separate control flow from error handling');
-        }
-        if (codeAnalysis.complexityIndicators.hasAsyncOperations &&
-            codeAnalysis.functionCount > 1) {
-            goals.push('Isolate asynchronous operations');
-        }
-        if (codeAnalysis.fileStructure.isMultiDirectory) {
-            goals.push('Group changes by architectural component');
-        }
-        // Add depth-specific goals
-        if (currentDepth < 2 && codeAnalysis.moduleCount > 1) {
-            goals.push('Achieve module-level separation');
-        }
-        if (currentDepth < 3 && codeAnalysis.classCount > 1) {
-            goals.push('Reach class/interface level granularity');
-        }
-        return goals;
-    }
-    /**
-     * Generate context-specific decision questions
-     */
-    generateDecisionQuestions(currentDepth, codeAnalysis) {
-        const questions = [
-            'Does this theme contain multiple distinct concerns that could be understood separately?',
-            'Would decomposition make the changes clearer and more reviewable?',
-            'Are there natural boundaries in the code that suggest separate sub-themes?',
-        ];
-        // Add complexity-specific questions
-        if (codeAnalysis.functionCount > 1) {
-            questions.push('Could different functions/methods be analyzed as separate concerns?');
-        }
-        if (codeAnalysis.changeTypes.length > 1) {
-            questions.push('Should different types of changes (config vs logic vs UI) be separated?');
-        }
-        if (codeAnalysis.complexityIndicators.hasConditionals) {
-            questions.push('Could different conditional branches or logic paths be treated separately?');
-        }
-        if (codeAnalysis.complexityIndicators.hasErrorHandling) {
-            questions.push('Should error handling be separated from main logic flow?');
-        }
-        // Add depth-specific questions
-        if (currentDepth >= 3) {
-            questions.push('Could different parts of this change be tested independently?');
-            questions.push('Would a code reviewer comment on different aspects separately?');
-        }
-        return questions;
-    }
-    /**
-     * Select relevant examples based on code patterns
-     */
-    selectRelevantExamples(codeAnalysis) {
-        return this.expansionExamples.filter((example) => this.isExampleRelevant(example, codeAnalysis)); // Include all relevant examples
-    }
-    /**
-     * Check if an example is relevant to current analysis
-     */
-    isExampleRelevant(example, analysis) {
-        // Match by change types
-        const typeMatch = example.changeTypes.some((type) => analysis.changeTypes.includes(type));
-        // Match by complexity
-        const complexityMatch = example.hasConditionals ===
-            analysis.complexityIndicators.hasConditionals ||
-            (example.hasMultipleFunctions && analysis.functionCount > 1) ||
-            (example.hasMultipleFiles && analysis.moduleCount > 1);
-        return typeMatch || complexityMatch;
-    }
-    /**
-     * Initialize example expansion patterns
-     */
-    initializeExamples() {
-        this.expansionExamples = [
-            {
-                themeName: 'Refactor authentication service',
-                pattern: 'service-refactor',
-                changeTypes: ['logic', 'types'],
-                hasConditionals: true,
-                hasMultipleFunctions: true,
-                hasMultipleFiles: true,
-                subThemes: [
-                    {
-                        name: 'Update token validation logic',
-                        description: 'Modify JWT token verification and expiration handling',
-                    },
-                    {
-                        name: 'Add new authentication methods',
-                        description: 'Implement OAuth2 and SAML authentication options',
-                    },
-                    {
-                        name: 'Refactor user session management',
-                        description: 'Improve session storage and cleanup mechanisms',
-                    },
-                ],
-                reasoning: 'Each sub-theme addresses a distinct aspect of authentication',
-            },
-            {
-                themeName: 'Add user feedback system',
-                pattern: 'feature-addition',
-                changeTypes: ['ui', 'logic', 'config'],
-                hasConditionals: false,
-                hasMultipleFunctions: true,
-                hasMultipleFiles: true,
-                subThemes: [
-                    {
-                        name: 'Create feedback UI components',
-                        description: 'Build feedback forms and display components',
-                    },
-                    {
-                        name: 'Implement feedback storage',
-                        description: 'Add database schema and API endpoints',
-                    },
-                    {
-                        name: 'Configure feedback notifications',
-                        description: 'Set up email and in-app notification system',
-                    },
-                ],
-                reasoning: 'UI, backend, and notifications are separate technical concerns',
-            },
-            {
-                themeName: 'Fix error handling in data processing',
-                pattern: 'error-handling-fix',
-                changeTypes: ['logic'],
-                hasConditionals: true,
-                hasMultipleFunctions: false,
-                hasMultipleFiles: false,
-                subThemes: [
-                    {
-                        name: 'Add input validation',
-                        description: 'Validate data format and requirements before processing',
-                    },
-                    {
-                        name: 'Improve error messages',
-                        description: 'Provide more descriptive error messages to users',
-                    },
-                    {
-                        name: 'Add retry logic',
-                        description: 'Implement automatic retry for transient failures',
-                    },
-                ],
-                reasoning: 'Prevention, messaging, and recovery are distinct error handling strategies',
-            },
-        ];
-    }
-}
-exports.DynamicPromptBuilder = DynamicPromptBuilder;
 
 
 /***/ }),
@@ -34017,7 +34052,6 @@ CRITICAL: Respond with ONLY valid JSON.
         const expansionCandidate = request.context;
         // We already have the expansion decision from evaluateExpansionCandidate
         if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
-            // Debug: Log what AI provided
             // Convert suggested sub-themes to ConsolidatedThemes
             const suggestedSubThemes = expansionCandidate.expansionDecision.suggestedSubThemes;
             const subThemes = this.convertSuggestedToConsolidatedThemes(suggestedSubThemes, theme);
@@ -34030,98 +34064,16 @@ CRITICAL: Respond with ONLY valid JSON.
                 userFlowPatterns: [],
             };
         }
-        // Fallback: Ask for sub-theme analysis if not already provided
-        const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
-        const prompt = `
-You already decided this theme should be expanded. Now create the specific sub-themes.
-
-THEME TO EXPAND:
-Name: ${theme.name}
-Description: ${theme.description}
-Business Impact: ${theme.businessImpact}
-Current Level: ${theme.level}
-Depth: ${depth}
-Files: ${theme.affectedFiles.join(', ')}
-
-${parentTheme
-            ? `PARENT CONTEXT: ${parentTheme.name} - ${parentTheme.businessImpact}`
-            : ''}
-
-${siblingThemes.length > 0
-            ? `SIBLING THEMES (avoid duplication):
-${siblingThemes.map((s) => `- ${s.name}`).join('\n')}
-`
-            : ''}
-
-CODE TO ANALYZE:
-${theme.codeSnippets.join('\n---\n')}
-
-CREATE SUB-THEMES:
-${depth < 3
-            ? `Focus on distinct business capabilities or user features within this theme.`
-            : `Focus on atomic, testable units (single responsibility, single concern).`}
-
-Return JSON with specific sub-themes:
-{
-  "subThemes": [
-    {
-      "name": "What this accomplishes (max 8 words)",
-      "description": "What changes (max 15 words)",
-      "businessImpact": "User benefit (max 12 words)",
-      "relevantFiles": ["specific files for this sub-theme"],
-      "rationale": "Why this is separate (max 15 words)"
-    }
-  ],
-  "reasoning": "Overall expansion rationale (max 20 words)"
-}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['subThemes']);
-            if (!extractionResult.success) {
-                logger_1.logger.info('EXPANSION', `Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`);
-                return {
-                    subThemes: [],
-                    shouldExpand: false,
-                    confidence: 0.3,
-                    reasoning: `Sub-theme parsing failed: ${extractionResult.error}`,
-                    businessLogicPatterns: [],
-                    userFlowPatterns: [],
-                };
-            }
-            const analysis = extractionResult.data;
-            // Convert to ConsolidatedTheme objects
-            const subThemes = this.convertSuggestedToConsolidatedThemes(analysis.subThemes || [], theme);
-            return {
-                subThemes,
-                shouldExpand: subThemes.length > 0,
-                confidence: 0.8,
-                reasoning: analysis.reasoning || 'Sub-themes identified',
-                businessLogicPatterns: [],
-                userFlowPatterns: [],
-            };
-        }
-        catch (error) {
-            // Log detailed context on error
-            console.error(`[EXPANSION-ERROR] AI analysis failed for theme "${theme.name}"`);
-            console.error(`[EXPANSION-ERROR] Theme ID: ${theme.id}`);
-            console.error(`[EXPANSION-ERROR] Parent theme: ${parentTheme?.name || 'none'} (ID: ${parentTheme?.id || 'N/A'})`);
-            console.error(`[EXPANSION-ERROR] Current depth: ${depth}`);
-            console.error(`[EXPANSION-ERROR] Theme level: ${theme.level}`);
-            console.error(`[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`);
-            console.error(`[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`);
-            console.error(`[EXPANSION-ERROR] Total files affected: ${theme.affectedFiles.length}`);
-            console.error(`[EXPANSION-ERROR] Error: ${error}`);
-            console.error(`[EXPANSION-ERROR] Stack trace:`, error instanceof Error ? error.stack : 'No stack trace available');
-            logger_1.logger.info('EXPANSION', `AI analysis failed for theme ${theme.name}: ${error}`);
-            return {
-                subThemes: [],
-                shouldExpand: false,
-                confidence: 0,
-                reasoning: `Analysis failed: ${error}`,
-                businessLogicPatterns: [],
-                userFlowPatterns: [],
-            };
-        }
+        // No sub-themes provided by multi-stage system - should not expand
+        logger_1.logger.info('EXPANSION', `No sub-themes provided for ${theme.name} - marking as atomic`);
+        return {
+            subThemes: [],
+            shouldExpand: false,
+            confidence: 0.9,
+            reasoning: 'Multi-stage analysis did not provide sub-themes',
+            businessLogicPatterns: [],
+            userFlowPatterns: [],
+        };
     }
     /**
      * Convert suggested sub-themes to ConsolidatedTheme objects
@@ -35646,6 +35598,27 @@ Be conservative - only merge when themes serve the same business purpose.`;
     }
 }
 exports.ThemeSimilarityService = ThemeSimilarityService;
+
+
+/***/ }),
+
+/***/ 6050:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_MULTI_STAGE_CONFIG = void 0;
+/**
+ * Default configuration values
+ */
+exports.DEFAULT_MULTI_STAGE_CONFIG = {
+    enableQuickDecisions: true,
+    enableConsistencyCheck: true,
+    consistencyVarianceThreshold: 0.2,
+    quickDecisionDepthThreshold: 15,
+    quickDecisionConfidenceThreshold: 0.95
+};
 
 
 /***/ }),
@@ -38217,6 +38190,39 @@ function logInfo(message) {
 function setOutput(name, value) {
     core.setOutput(name, value);
 }
+
+
+/***/ }),
+
+/***/ 8541:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logTrace = exports.logDebug = exports.logInfo = exports.logWarning = exports.logError = void 0;
+const logger_1 = __nccwpck_require__(411);
+// Export logging functions with consistent interface
+const logError = (message) => {
+    logger_1.Logger.error('ai-code-review', message);
+};
+exports.logError = logError;
+const logWarning = (message) => {
+    logger_1.Logger.warn('ai-code-review', message);
+};
+exports.logWarning = logWarning;
+const logInfo = (message) => {
+    logger_1.Logger.info('ai-code-review', message);
+};
+exports.logInfo = logInfo;
+const logDebug = (message) => {
+    logger_1.Logger.debug('ai-code-review', message);
+};
+exports.logDebug = logDebug;
+const logTrace = (message) => {
+    logger_1.Logger.trace('ai-code-review', message);
+};
+exports.logTrace = logTrace;
 
 
 /***/ }),

@@ -1128,18 +1128,14 @@ CRITICAL: Respond with ONLY valid JSON.
 
     // We already have the expansion decision from evaluateExpansionCandidate
     if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
-      // Debug: Log what AI provided
-
       // Convert suggested sub-themes to ConsolidatedThemes
       const suggestedSubThemes =
         expansionCandidate.expansionDecision.suggestedSubThemes;
-
 
       const subThemes = this.convertSuggestedToConsolidatedThemes(
         suggestedSubThemes,
         theme
       );
-
 
       return {
         subThemes,
@@ -1151,147 +1147,19 @@ CRITICAL: Respond with ONLY valid JSON.
       };
     }
 
-    // Fallback: Ask for sub-theme analysis if not already provided
-    const siblingThemes =
-      parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
-
-    const prompt = `
-You already decided this theme should be expanded. Now create the specific sub-themes.
-
-THEME TO EXPAND:
-Name: ${theme.name}
-Description: ${theme.description}
-Business Impact: ${theme.businessImpact}
-Current Level: ${theme.level}
-Depth: ${depth}
-Files: ${theme.affectedFiles.join(', ')}
-
-${
-  parentTheme
-    ? `PARENT CONTEXT: ${parentTheme.name} - ${parentTheme.businessImpact}`
-    : ''
-}
-
-${
-  siblingThemes.length > 0
-    ? `SIBLING THEMES (avoid duplication):
-${siblingThemes.map((s) => `- ${s.name}`).join('\n')}
-`
-    : ''
-}
-
-CODE TO ANALYZE:
-${theme.codeSnippets.join('\n---\n')}
-
-CREATE SUB-THEMES:
-${
-  depth < 3
-    ? `Focus on distinct business capabilities or user features within this theme.`
-    : `Focus on atomic, testable units (single responsibility, single concern).`
-}
-
-Return JSON with specific sub-themes:
-{
-  "subThemes": [
-    {
-      "name": "What this accomplishes (max 8 words)",
-      "description": "What changes (max 15 words)",
-      "businessImpact": "User benefit (max 12 words)",
-      "relevantFiles": ["specific files for this sub-theme"],
-      "rationale": "Why this is separate (max 15 words)"
-    }
-  ],
-  "reasoning": "Overall expansion rationale (max 20 words)"
-}`;
-
-    try {
-      const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-
-      const extractionResult = JsonExtractor.extractAndValidateJson(
-        response,
-        'object',
-        ['subThemes']
-      );
-
-      if (!extractionResult.success) {
-        logger.info(
-          'EXPANSION',
-          `Failed to parse sub-themes for ${theme.name}: ${extractionResult.error}`
-        );
-        return {
-          subThemes: [],
-          shouldExpand: false,
-          confidence: 0.3,
-          reasoning: `Sub-theme parsing failed: ${extractionResult.error}`,
-          businessLogicPatterns: [],
-          userFlowPatterns: [],
-        };
-      }
-
-      const analysis = extractionResult.data as {
-        subThemes?: Array<{
-          name: string;
-          description: string;
-          businessImpact: string;
-          relevantFiles: string[];
-          rationale: string;
-        }>;
-        reasoning?: string;
-      };
-
-      // Convert to ConsolidatedTheme objects
-      const subThemes = this.convertSuggestedToConsolidatedThemes(
-        analysis.subThemes || [],
-        theme
-      );
-
-      return {
-        subThemes,
-        shouldExpand: subThemes.length > 0,
-        confidence: 0.8,
-        reasoning: analysis.reasoning || 'Sub-themes identified',
-        businessLogicPatterns: [],
-        userFlowPatterns: [],
-      };
-    } catch (error) {
-      // Log detailed context on error
-      console.error(
-        `[EXPANSION-ERROR] AI analysis failed for theme "${theme.name}"`
-      );
-      console.error(`[EXPANSION-ERROR] Theme ID: ${theme.id}`);
-      console.error(
-        `[EXPANSION-ERROR] Parent theme: ${parentTheme?.name || 'none'} (ID: ${parentTheme?.id || 'N/A'})`
-      );
-      console.error(`[EXPANSION-ERROR] Current depth: ${depth}`);
-      console.error(`[EXPANSION-ERROR] Theme level: ${theme.level}`);
-      console.error(
-        `[EXPANSION-ERROR] Affected files: ${theme.affectedFiles.join(', ')}`
-      );
-      console.error(
-        `[EXPANSION-ERROR] Code snippets count: ${theme.codeSnippets.length}`
-      );
-      console.error(
-        `[EXPANSION-ERROR] Total files affected: ${theme.affectedFiles.length}`
-      );
-      console.error(`[EXPANSION-ERROR] Error: ${error}`);
-      console.error(
-        `[EXPANSION-ERROR] Stack trace:`,
-        error instanceof Error ? error.stack : 'No stack trace available'
-      );
-
-      logger.info(
-        'EXPANSION',
-        `AI analysis failed for theme ${theme.name}: ${error}`
-      );
-      return {
-        subThemes: [],
-        shouldExpand: false,
-        confidence: 0,
-        reasoning: `Analysis failed: ${error}`,
-        businessLogicPatterns: [],
-        userFlowPatterns: [],
-      };
-    }
+    // No sub-themes provided by multi-stage system - should not expand
+    logger.info(
+      'EXPANSION',
+      `No sub-themes provided for ${theme.name} - marking as atomic`
+    );
+    return {
+      subThemes: [],
+      shouldExpand: false,
+      confidence: 0.9,
+      reasoning: 'Multi-stage analysis did not provide sub-themes',
+      businessLogicPatterns: [],
+      userFlowPatterns: [],
+    };
   }
 
   /**
