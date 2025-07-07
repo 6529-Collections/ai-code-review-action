@@ -31202,313 +31202,530 @@ exports.AIDomainAnalyzer = AIDomainAnalyzer;
 
 /***/ }),
 
-/***/ 7867:
+/***/ 3555:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.AIExpansionDecisionService = void 0;
+exports.AIMindmapService = void 0;
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
-const index_1 = __nccwpck_require__(8541);
-const code_structure_analyzer_1 = __nccwpck_require__(5873);
-const unopinionated_analysis_service_1 = __nccwpck_require__(9062);
-const validation_service_1 = __nccwpck_require__(7425);
-const multi_stage_types_1 = __nccwpck_require__(6050);
+const utils_1 = __nccwpck_require__(1798);
 /**
- * Custom error for sub-theme extraction failures
+ * AI service for mindmap generation with PRD-aligned prompts
+ * Creates self-contained nodes with natural depth detection
  */
-class SubThemeExtractionError extends Error {
-    constructor(message, themeName, themeId, aiResponse, parseError, expectedFormat) {
-        super(message);
-        this.themeName = themeName;
-        this.themeId = themeId;
-        this.aiResponse = aiResponse;
-        this.parseError = parseError;
-        this.expectedFormat = expectedFormat;
-        this.name = 'SubThemeExtractionError';
-        // Ensure proper prototype chain for instanceof checks
-        Object.setPrototypeOf(this, SubThemeExtractionError.prototype);
-    }
-}
-/**
- * Multi-stage AI-driven expansion decision service
- * Uses unopinionated analysis followed by validation for better decisions
- */
-class AIExpansionDecisionService {
-    constructor(anthropicApiKey, config = multi_stage_types_1.DEFAULT_MULTI_STAGE_CONFIG) {
+class AIMindmapService {
+    constructor(anthropicApiKey) {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
-        this.decisionCache = new Map();
-        this.codeAnalyzer = new code_structure_analyzer_1.CodeStructureAnalyzer();
-        this.analysisService = new unopinionated_analysis_service_1.UnopinionatedAnalysisService(this.claudeClient);
-        this.validationService = new validation_service_1.ValidationService(this.claudeClient);
-        this.config = config;
     }
     /**
-     * Main decision point: Should this theme be expanded?
-     * Uses multi-stage analysis: unopinionated analysis → validation → final decision
+     * Determine if a node should be expanded with direct code assignment
+     * PRD: "AI decides when further decomposition is needed"
      */
-    async shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes) {
-        const startTime = Date.now();
-        const decisionTrace = [];
-        // Enhanced cache check with analysis hash
-        const analysisHash = await this.getAnalysisHash(theme);
-        const cacheKey = `${theme.id}_${currentDepth}_${analysisHash}`;
-        if (this.decisionCache.has(cacheKey)) {
-            const cachedDecision = this.decisionCache.get(cacheKey);
-            if (cachedDecision) {
-                (0, index_1.logInfo)(`Using cached decision for theme "${theme.name}" at depth ${currentDepth}`);
-                return cachedDecision;
-            }
-        }
+    async shouldExpandNode(node, currentDepth) {
+        return this.attemptExpansionWithRetry(node, currentDepth, 0);
+    }
+    /**
+     * Attempt expansion with AI-only retry strategy
+     */
+    async attemptExpansionWithRetry(node, currentDepth, retryCount) {
+        const maxRetries = 2;
         try {
-            // Stage 1: Unopinionated Analysis
-            decisionTrace.push(`Starting multi-stage analysis for theme "${theme.name}" at depth ${currentDepth}`);
-            const analysis = await this.analysisService.analyzeTheme(theme);
-            decisionTrace.push(`Analysis completed: ${analysis.separableConcerns.length} concerns, complexity: ${analysis.codeComplexity}`);
-            // Stage 2: AI Validation (no mechanical shortcuts)
-            // All themes now go through full AI validation for better decision quality
-            decisionTrace.push('Proceeding to validation stage');
-            const validation = await this.validationService.validateExpansionDecision(theme, analysis, currentDepth);
-            decisionTrace.push(`Validation completed: expand=${validation.shouldExpand}, confidence=${validation.confidence}`);
-            // Stage 4: Consistency Check (if enabled)
-            if (this.config.enableConsistencyCheck && this.needsConsistencyCheck(validation)) {
-                decisionTrace.push('Running consistency check due to score variance');
-                const adjusted = await this.performConsistencyCheck(theme, analysis, validation, currentDepth);
-                if (adjusted) {
-                    decisionTrace.push('Decision adjusted by consistency check');
-                    validation.shouldExpand = adjusted.shouldExpand;
-                    validation.confidence = adjusted.confidence;
-                    validation.reasoning = `Consistency-adjusted: ${adjusted.reasoning}`;
+            const prompt = retryCount === 0
+                ? this.buildDirectAssignmentPrompt(node, currentDepth)
+                : this.buildEnhancedCodeAssignmentPrompt(node, currentDepth, retryCount);
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'shouldExpand', 'isAtomic', 'confidence'
+            ]);
+            if (!result.success) {
+                throw new Error(`Invalid JSON response: ${result.error}`);
+            }
+            const data = result.data;
+            // Strict validation - no fallbacks
+            if (data.shouldExpand && (!data.children || data.children.length === 0)) {
+                throw new Error('AI indicated expansion but provided no children');
+            }
+            // Validate code assignments if expanding
+            let children;
+            if (data.shouldExpand && data.children) {
+                children = this.validateDirectAssignments(data.children);
+                if (children.length === 0) {
+                    throw new Error('AI provided children but none had valid code assignments');
                 }
             }
-            // Stage 5: Build Final Decision
-            const decision = this.buildDecisionFromValidation(validation, decisionTrace);
-            // Stage 6: Extract Sub-themes if expanding
-            if (decision.shouldExpand) {
-                (0, index_1.logInfo)(`Extracting sub-themes for "${theme.name}" - ${analysis.separableConcerns.length} concerns identified`);
-                decision.suggestedSubThemes = await this.extractSubThemes(theme, analysis, validation);
-                (0, index_1.logInfo)(`Sub-themes extracted: ${decision.suggestedSubThemes?.length || 0} themes generated`);
-            }
-            else {
-                (0, index_1.logInfo)(`Skipping sub-theme extraction for "${theme.name}" - shouldExpand=false`);
-            }
-            const processingTime = Date.now() - startTime;
-            (0, index_1.logInfo)(`Multi-stage decision completed for "${theme.name}" in ${processingTime}ms: expand=${decision.shouldExpand}`);
-            this.decisionCache.set(cacheKey, decision);
-            return decision;
+            return {
+                shouldExpand: data.shouldExpand,
+                isAtomic: data.isAtomic || !data.shouldExpand,
+                atomicReason: data.atomicReason || (data.shouldExpand ? undefined : 'AI determined this is atomic'),
+                children,
+                confidence: data.confidence || 0.8,
+            };
         }
         catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            decisionTrace.push(`Error in multi-stage analysis: ${errorMessage}`);
-            (0, index_1.logError)(`Multi-stage decision failed for theme "${theme.name}": ${errorMessage}`);
-            const fallbackDecision = this.getDefaultDecision(theme, currentDepth, decisionTrace);
-            this.decisionCache.set(cacheKey, fallbackDecision);
-            return fallbackDecision;
+            (0, utils_1.logInfo)(`AI expansion attempt ${retryCount + 1} failed for "${node.name}": ${errorMessage}`);
+            // Retry with enhanced prompt if we haven't exhausted retries
+            if (retryCount < maxRetries) {
+                (0, utils_1.logInfo)(`Retrying expansion for "${node.name}" with enhanced prompt (attempt ${retryCount + 2})`);
+                return this.attemptExpansionWithRetry(node, currentDepth, retryCount + 1);
+            }
+            // Final attempt: explicit code extraction
+            if (retryCount === maxRetries) {
+                (0, utils_1.logInfo)(`Final attempt: explicit code extraction for "${node.name}"`);
+                return this.attemptExplicitCodeExtraction(node, currentDepth);
+            }
+            // No fallbacks - fail loudly
+            throw new Error(`AI expansion failed after ${maxRetries + 1} attempts for "${node.name}": ${errorMessage}`);
         }
     }
     /**
-     * Generate a simple hash for theme analysis caching
+     * Build enhanced prompt for retry attempts
      */
-    async getAnalysisHash(theme) {
-        const content = `${theme.id}_${theme.affectedFiles.join(',')}_${theme.codeSnippets.join('')}`;
-        // Simple hash - in production you might want a proper hash function
-        return Buffer.from(content).toString('base64').slice(0, 16);
-    }
-    /**
-     * Check if validation scores are inconsistent and need consistency check
-     */
-    needsConsistencyCheck(validation) {
-        const scores = [
-            validation.granularityScore,
-            validation.depthAppropriatenessScore,
-            validation.businessValueScore,
-            validation.testBoundaryScore
-        ];
-        const avg = scores.reduce((a, b) => a + b) / scores.length;
-        const variance = scores.reduce((sum, score) => sum + Math.pow(score - avg, 2), 0) / scores.length;
-        // High variance suggests inconsistent reasoning
-        return variance > this.config.consistencyVarianceThreshold;
-    }
-    /**
-     * Perform consistency check when validation scores are contradictory
-     */
-    async performConsistencyCheck(theme, analysis, validation, currentDepth) {
-        const prompt = `CONSISTENCY CHECK
+    buildEnhancedCodeAssignmentPrompt(node, currentDepth, retryCount) {
+        const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
+        return `RETRY ${retryCount}: Previous response was invalid. You MUST provide proper code assignments.
 
-Theme: "${theme.name}" at depth ${currentDepth}
+CRITICAL REQUIREMENTS:
+- If shouldExpand=true, you MUST provide children array with code assignments
+- Each child MUST have assignedCode with proper CodeDiff structure
+- Every line of parent code MUST be assigned to exactly one child
+- Use exact JSON format specified below
 
-ANALYSIS: ${analysis.actualPurpose}
-Separable concerns: ${analysis.separableConcerns.length}
-Complexity: ${analysis.codeComplexity}
+CURRENT NODE: "${node.name}"
+Description: ${node.description}
+Depth: ${currentDepth}
 
-VALIDATION SCORES (showing inconsistency):
-- Granularity: ${validation.granularityScore}
-- Depth Appropriateness: ${validation.depthAppropriatenessScore}  
-- Business Value: ${validation.businessValueScore}
-- Test Boundary: ${validation.testBoundaryScore}
+COMPLETE CODE TO ASSIGN:
+${completeCodeDiff}
 
-CURRENT DECISION: expand=${validation.shouldExpand}, confidence=${validation.confidence}
+You must either:
+1. Set shouldExpand=false and explain why in atomicReason
+2. Set shouldExpand=true and provide complete code assignments
 
-The validation scores show high variance, suggesting inconsistent reasoning.
-Re-evaluate the decision with focus on consistency.
-
-Should the decision be adjusted? Respond with JSON:
+RESPOND WITH EXACT JSON FORMAT:
 {
-  "needsAdjustment": boolean,
-  "adjustedShouldExpand": boolean,
-  "adjustedConfidence": number,
-  "reasoning": "explanation for adjustment"
+  "shouldExpand": boolean,
+  "isAtomic": boolean,
+  "atomicReason": "if atomic, specific reason (required if shouldExpand=false)",
+  "confidence": 0.0-1.0,
+  "children": [
+    {
+      "name": "Specific action name (max 8 words)",
+      "description": "What this child does (1-2 sentences)", 
+      "businessValue": "User impact (max 12 words)",
+      "technicalPurpose": "Technical function (max 10 words)",
+      "assignedCode": [
+        {
+          "file": "exact file path from parent",
+          "hunks": [
+            {
+              "oldStart": number,
+              "oldLines": number, 
+              "newStart": number,
+              "newLines": number,
+              "changes": [
+                {
+                  "type": "add|delete|context",
+                  "content": "exact line content from parent"
+                }
+              ]
+            }
+          ],
+          "ownership": "primary"
+        }
+      ],
+      "rationale": "Why separate (max 15 words)"
+    }
+  ]
+}`;
+    }
+    /**
+     * Final attempt: explicit code extraction for each potential child
+     */
+    async attemptExplicitCodeExtraction(node, currentDepth) {
+        const prompt = `FINAL ATTEMPT: Extract code for potential sub-themes.
+
+NODE: "${node.name}"
+COMPLETE CODE:
+${this.formatCompleteCodeDiff(node.codeDiff)}
+
+First decide: Should this be expanded at all?
+If YES, identify 2-4 clear responsibilities and assign specific code to each.
+If NO, explain why it's atomic.
+
+RESPOND WITH JSON:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean, 
+  "atomicReason": "specific reason if atomic",
+  "confidence": 0.0-1.0,
+  "children": [] // empty if not expanding
 }`;
         try {
-            const response = await this.claudeClient.callClaude(prompt);
-            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['needsAdjustment']);
-            if (result.success && result.data.needsAdjustment) {
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand']);
+            if (result.success) {
                 const data = result.data;
                 return {
-                    shouldExpand: data.adjustedShouldExpand,
-                    confidence: data.adjustedConfidence,
-                    reasoning: data.reasoning
+                    shouldExpand: data.shouldExpand || false,
+                    isAtomic: data.isAtomic || !data.shouldExpand,
+                    atomicReason: data.atomicReason || 'Explicit extraction determined atomic',
+                    children: undefined, // No children on final fallback
+                    confidence: data.confidence || 0.3,
                 };
             }
         }
         catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            (0, index_1.logError)(`Consistency check failed: ${errorMessage}`);
+            (0, utils_1.logInfo)(`Explicit code extraction failed for "${node.name}": ${error}`);
         }
-        return null; // No adjustment needed or failed
-    }
-    /**
-     * Build final expansion decision from validation result
-     */
-    buildDecisionFromValidation(validation, decisionTrace) {
-        (0, index_1.logInfo)(`Building decision from validation: shouldExpand=${validation.shouldExpand}, confidence=${validation.confidence}`);
-        (0, index_1.logInfo)(`Validation scores: granularity=${validation.granularityScore.toFixed(2)}, depth=${validation.depthAppropriatenessScore.toFixed(2)}, business=${validation.businessValueScore.toFixed(2)}, test=${validation.testBoundaryScore.toFixed(2)}`);
+        // Absolute final fallback - treat as atomic
         return {
-            shouldExpand: validation.shouldExpand,
-            isAtomic: !validation.shouldExpand,
-            reasoning: validation.reasoning,
-            businessContext: `Business value score: ${validation.businessValueScore.toFixed(2)}`,
-            technicalContext: `Granularity score: ${validation.granularityScore.toFixed(2)}`,
-            testabilityAssessment: `Test boundary score: ${validation.testBoundaryScore.toFixed(2)}`,
-            suggestedSubThemes: null // Will be populated if expanding
+            shouldExpand: false,
+            isAtomic: true,
+            atomicReason: 'All AI attempts failed - treating as atomic',
+            children: undefined,
+            confidence: 0.1,
         };
     }
     /**
-     * Extract sub-themes when expansion is decided
+     * Build prompt for direct code assignment (PRD aligned)
+     * AI sees complete code and assigns it directly to children
      */
-    async extractSubThemes(theme, analysis, validation) {
-        if (analysis.separableConcerns.length === 0) {
-            return null;
-        }
-        // Build prompt for intelligent sub-theme extraction
-        const prompt = `Based on the analysis, create specific sub-themes for this theme.
+    buildDirectAssignmentPrompt(node, currentDepth) {
+        const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
+        const fileCount = node.metrics.fileCount;
+        return `Analyze this code change node for expansion with DIRECT CODE ASSIGNMENT.
 
-THEME: "${theme.name}"
-Files: ${theme.affectedFiles.join(', ')}
+CURRENT NODE: "${node.name}"
+Description: ${node.description}
+Business Context: ${node.businessContext}
+Technical Context: ${node.technicalContext}
+Depth: ${currentDepth}
+Metrics: ${fileCount} files, complexity: ${node.metrics.complexity}
 
-ANALYSIS RESULTS:
-- Purpose: ${analysis.actualPurpose}
-- Separable Concerns: ${analysis.separableConcerns.join(', ')}
-- Complexity: ${analysis.codeComplexity}
-- Test Scenarios: ${analysis.testScenarios}
+COMPLETE CODE CHANGES:
+${completeCodeDiff}
 
-CODE CONTEXT:
-${theme.codeSnippets.slice(0, 3).map((snippet, i) => `Snippet ${i + 1}:\n${snippet.substring(0, 500)}...`).join('\n\n')}
+ATOMIC CRITERIA (Stop expansion when ALL true):
+1. Single responsibility (does exactly ONE thing)
+2. Single cohesive functionality or responsibility
+3. Single method or cohesive code block
+4. No mixed concerns (e.g., validation AND persistence)
+5. Can be understood without looking elsewhere
 
-Create sub-themes for each separable concern. Each sub-theme should:
-1. Have a clear, specific name (not just the concern name)
-2. Include only the files it actually modifies
-3. Be independently testable and reviewable
+IF YOU EXPAND:
+- You MUST assign EVERY code change to exactly ONE child
+- Each child must have a single, clear responsibility
+- Return the complete CodeDiff structure for each child
+- Focus on logical code boundaries, not size
 
-CRITICAL: Each sub-theme MUST specify which files from the parent's list it affects.
-If parent has only 1 file, all sub-themes must use that file.
-Otherwise, distribute files logically based on the concern.
-
-Respond with JSON:
+RESPOND WITH JSON:
 {
-  "subThemes": [
+  "shouldExpand": boolean,
+  "isAtomic": boolean,
+  "atomicReason": "if atomic, why? (max 20 words)",
+  "confidence": 0.0-1.0,
+  "children": [
     {
-      "name": "Clear action-oriented name (max 8 words)",
-      "description": "What this sub-theme specifically does (1-2 sentences)",
-      "files": ["list only the relevant files from parent theme"],
-      "rationale": "Why this is a separate concern (1 sentence)"
+      "name": "Clear theme name (max 8 words)",
+      "description": "What this child does (1-2 sentences)",
+      "businessValue": "User impact (max 12 words)",
+      "technicalPurpose": "Technical function (max 10 words)",
+      "assignedCode": [
+        {
+          "file": "exact file path",
+          "hunks": [
+            {
+              "oldStart": number,
+              "oldLines": number,
+              "newStart": number,
+              "newLines": number,
+              "changes": [
+                {
+                  "type": "add|delete|context", 
+                  "content": "exact line content"
+                }
+              ]
+            }
+          ],
+          "ownership": "primary"
+        }
+      ],
+      "rationale": "Why this is separate (max 15 words)",
+      "contextualMeaning": "How this code serves THIS specific child's purpose (max 20 words)",
+      "suggestedCrossReferences": [
+        {
+          "targetTheme": "name of related theme",
+          "relationship": "uses|used-by|modifies|depends-on",
+          "reason": "brief explanation (max 10 words)"
+        }
+      ]
     }
   ]
 }`;
-        const expectedFormat = `{
-  "subThemes": [
-    {
-      "name": "string",
-      "description": "string", 
-      "files": ["string"],
-      "rationale": "string"
     }
-  ]
-}`;
-        let response;
+    /**
+     * Format complete code diff for AI analysis (no truncation)
+     * AI needs to see ALL code to make proper assignments
+     */
+    formatCompleteCodeDiff(codeDiffs) {
+        const output = [];
+        let globalLineNumber = 1;
+        for (const diff of codeDiffs) {
+            output.push(`\n=== FILE: ${diff.file} ===`);
+            for (const hunk of diff.hunks) {
+                output.push(`\n[Hunk @ old:${hunk.oldStart} new:${hunk.newStart}]`);
+                for (const change of hunk.changes) {
+                    const prefix = change.type === 'add' ? '+' : change.type === 'delete' ? '-' : ' ';
+                    output.push(`L${globalLineNumber}: ${prefix} ${change.content}`);
+                    globalLineNumber++;
+                }
+            }
+        }
+        return output.join('\n');
+    }
+    /**
+     * Validate direct code assignments from AI
+     */
+    validateDirectAssignments(assignments) {
+        const validated = [];
+        for (const assignment of assignments) {
+            // Validate required fields
+            if (!assignment.name ||
+                !assignment.technicalPurpose ||
+                !assignment.assignedCode) {
+                (0, utils_1.logInfo)(`Skipping invalid assignment: ${assignment.name}`);
+                continue;
+            }
+            // Validate and convert assigned code
+            const assignedCode = [];
+            for (const codeAssignment of assignment.assignedCode) {
+                if (!codeAssignment.file || !codeAssignment.hunks)
+                    continue;
+                const validHunks = [];
+                for (const hunk of codeAssignment.hunks) {
+                    if (!hunk.changes)
+                        continue;
+                    const validChanges = [];
+                    for (const change of hunk.changes) {
+                        if (change.type && change.content !== undefined) {
+                            validChanges.push({
+                                type: change.type,
+                                lineNumber: 0, // Line numbers not used in direct assignment
+                                content: change.content,
+                            });
+                        }
+                    }
+                    if (validChanges.length > 0) {
+                        validHunks.push({
+                            oldStart: hunk.oldStart || 0,
+                            oldLines: hunk.oldLines || 0,
+                            newStart: hunk.newStart || 0,
+                            newLines: hunk.newLines || 0,
+                            changes: validChanges,
+                        });
+                    }
+                }
+                if (validHunks.length > 0) {
+                    assignedCode.push({
+                        file: codeAssignment.file,
+                        hunks: validHunks,
+                        fileContext: {
+                            startLine: validHunks[0]?.newStart || 0,
+                            endLine: validHunks[validHunks.length - 1]?.newStart || 0,
+                            contextType: 'function',
+                        },
+                        ownership: codeAssignment.ownership ||
+                            'primary',
+                    });
+                }
+            }
+            if (assignedCode.length > 0) {
+                validated.push({
+                    name: this.trimToLimit(assignment.name, 8),
+                    description: assignment.description || assignment.technicalPurpose,
+                    businessValue: this.trimToLimit(assignment.businessValue || assignment.name, 12),
+                    technicalPurpose: this.trimToLimit(assignment.technicalPurpose, 10),
+                    assignedCode,
+                    ownership: 'primary',
+                    contextualMeaning: this.trimToLimit(assignment.contextualMeaning || assignment.technicalPurpose, 20),
+                    rationale: this.trimToLimit(assignment.rationale || 'Distinct concern', 15),
+                });
+            }
+        }
+        return validated;
+    }
+    /**
+     * Generate initial theme suggestions from semantic diff
+     * Used at the root level to identify major themes
+     */
+    async generateRootThemes(semanticDiff) {
+        const prompt = this.buildRootThemePrompt(semanticDiff);
         try {
-            response = await this.claudeClient.callClaude(prompt);
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
+                'themes',
+            ]);
+            if (result.success) {
+                const data = result.data;
+                return this.validateThemeSuggestions(data.themes, semanticDiff);
+            }
         }
         catch (error) {
-            throw new SubThemeExtractionError(`AI call failed for sub-theme extraction`, theme.name, theme.id, undefined, error instanceof Error ? error.message : String(error), expectedFormat);
+            (0, utils_1.logInfo)(`Root theme generation failed: ${error}`);
         }
-        // Parse AI response
-        const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['subThemes']);
-        if (!extractionResult.success) {
-            throw new SubThemeExtractionError(`Failed to parse sub-themes JSON response`, theme.name, theme.id, response.substring(0, 1000), // Include first 1000 chars of response
-            extractionResult.error, expectedFormat);
-        }
-        const data = extractionResult.data;
-        // Validate sub-themes structure and files
-        const validatedSubThemes = data.subThemes.map((subTheme, index) => {
-            // Validate required fields
-            if (!subTheme.name || !subTheme.description || !Array.isArray(subTheme.files) || !subTheme.rationale) {
-                throw new SubThemeExtractionError(`Sub-theme at index ${index} missing required fields`, theme.name, theme.id, JSON.stringify(subTheme), 'Missing one of: name, description, files[], rationale', expectedFormat);
-            }
-            // Validate files are from parent theme
-            const invalidFiles = subTheme.files.filter(file => !theme.affectedFiles.includes(file));
-            if (invalidFiles.length > 0) {
-                throw new SubThemeExtractionError(`Sub-theme "${subTheme.name}" contains invalid files not in parent theme`, theme.name, theme.id, JSON.stringify({
-                    invalidFiles,
-                    parentFiles: theme.affectedFiles,
-                    subThemeFiles: subTheme.files
-                }), `Invalid files: ${invalidFiles.join(', ')}`, `Files must be from parent theme: ${theme.affectedFiles.join(', ')}`);
-            }
-            if (subTheme.files.length === 0) {
-                throw new SubThemeExtractionError(`Sub-theme "${subTheme.name}" has no files assigned`, theme.name, theme.id, JSON.stringify(subTheme), 'Sub-theme must have at least one file from parent theme', `Available parent files: ${theme.affectedFiles.join(', ')}`);
-            }
-            return subTheme;
-        });
-        if (validatedSubThemes.length === 0) {
-            throw new SubThemeExtractionError('AI returned empty sub-themes array', theme.name, theme.id, response.substring(0, 500), 'No sub-themes generated despite having separable concerns', expectedFormat);
-        }
-        return validatedSubThemes;
+        // Fallback: create single theme
+        return [
+            {
+                name: 'Code Changes',
+                businessValue: 'Update implementation',
+                description: 'Changes to codebase',
+                affectedFiles: semanticDiff.files.map((f) => f.path),
+                confidence: 0.5,
+            },
+        ];
     }
     /**
-     * Generate default decision when all stages fail
+     * Build prompt for root theme generation
      */
-    getDefaultDecision(theme, currentDepth, decisionTrace) {
-        const shouldExpand = currentDepth < 8 && theme.affectedFiles.length > 1;
-        return {
-            shouldExpand,
-            isAtomic: !shouldExpand,
-            reasoning: `Fallback decision: depth ${currentDepth}, ${theme.affectedFiles.length} files. Trace: ${decisionTrace.join(' → ')}`,
-            businessContext: 'Unable to analyze business context',
-            technicalContext: 'Unable to analyze technical context',
-            testabilityAssessment: 'Unable to assess testability',
-            suggestedSubThemes: null
-        };
+    buildRootThemePrompt(semanticDiff) {
+        const filesByType = this.groupFilesByType(semanticDiff);
+        return `Analyze this pull request and identify distinct business themes (user stories/capabilities).
+
+PR OVERVIEW:
+Total files: ${semanticDiff.files.length}
+Complexity: ${semanticDiff.totalComplexity}
+
+FILES BY TYPE:
+${Object.entries(filesByType)
+            .map(([type, files]) => `${type}: ${files.length} files`)
+            .join('\n')}
+
+BUSINESS PATTERNS DETECTED:
+${semanticDiff.businessPatterns
+            .map((p) => `- ${p.name}: ${p.description}`)
+            .join('\n') || 'None detected'}
+
+SEMANTIC CHANGES:
+${this.summarizeSemanticChanges(semanticDiff)}
+
+Identify 1-5 DISTINCT business themes that:
+1. Represent complete user stories or business capabilities
+2. Have clear, independent business value
+3. Could be deployed/rolled back separately
+4. Make sense to non-technical stakeholders
+
+CRITICAL: Respond with ONLY valid JSON:
+{
+  "themes": [
+    {
+      "name": "Clear business theme (max 8 words)",
+      "businessValue": "Value to users (max 12 words)",
+      "description": "What this accomplishes (1-2 sentences)",
+      "affectedFiles": ["relevant", "file", "paths"],
+      "confidence": 0.0-1.0
+    }
+  ]
+}`;
     }
     /**
-     * Clear the decision cache
+     * Group files by type for summary
      */
-    clearCache() {
-        this.decisionCache.clear();
+    groupFilesByType(semanticDiff) {
+        const grouped = {};
+        for (const file of semanticDiff.files) {
+            if (!grouped[file.fileType]) {
+                grouped[file.fileType] = [];
+            }
+            grouped[file.fileType].push(file.path);
+        }
+        return grouped;
+    }
+    /**
+     * Summarize semantic changes for prompt
+     */
+    summarizeSemanticChanges(semanticDiff) {
+        const summary = [];
+        const changeTypes = new Map();
+        for (const file of semanticDiff.files) {
+            for (const change of file.semanticChanges) {
+                const count = changeTypes.get(change.type) || 0;
+                changeTypes.set(change.type, count + 1);
+            }
+        }
+        for (const [type, count] of changeTypes) {
+            summary.push(`- ${type}: ${count} occurrences`);
+        }
+        return summary.join('\n') || 'No specific patterns identified';
+    }
+    /**
+     * Validate theme suggestions
+     */
+    validateThemeSuggestions(suggestions, semanticDiff) {
+        const allFiles = new Set(semanticDiff.files.map((f) => f.path));
+        const validated = [];
+        for (const suggestion of suggestions) {
+            if (!suggestion.name)
+                continue;
+            const affectedFiles = (suggestion.affectedFiles || []).filter((f) => allFiles.has(f));
+            if (affectedFiles.length === 0) {
+                // Skip themes with no valid files
+                continue;
+            }
+            validated.push({
+                name: this.trimToLimit(suggestion.name, 8),
+                businessValue: this.trimToLimit(suggestion.businessValue || suggestion.name, 12),
+                description: suggestion.description || suggestion.businessValue || '',
+                affectedFiles,
+                confidence: suggestion.confidence || 0.7,
+            });
+        }
+        return validated;
+    }
+    /**
+     * Trim text to word limit
+     */
+    trimToLimit(text, maxWords) {
+        if (!text)
+            return '';
+        const words = text.split(/\s+/);
+        if (words.length <= maxWords) {
+            return text;
+        }
+        return words.slice(0, maxWords).join(' ');
+    }
+    /**
+     * Generate contextual explanation for code in a specific theme
+     * PRD: "Same code shown differently based on usage context"
+     */
+    async generateContextualExplanation(code, viewingNode) {
+        const prompt = `
+Explain what this code change means specifically for "${viewingNode.name}".
+
+VIEWING CONTEXT:
+Theme: ${viewingNode.name}
+Business Purpose: ${viewingNode.businessContext}
+Technical Purpose: ${viewingNode.technicalContext}
+
+CODE CHANGE:
+File: ${code.file}
+${this.formatCompleteCodeDiff([code])}
+
+Provide a brief, contextual explanation (max 20 words) of what this code does FOR THIS SPECIFIC THEME.
+Focus on the relationship to the theme's purpose, not generic code description.`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+            return this.trimToLimit(response.trim(), 20);
+        }
+        catch (error) {
+            return `Changes for ${viewingNode.name}`;
+        }
     }
 }
-exports.AIExpansionDecisionService = AIExpansionDecisionService;
+exports.AIMindmapService = AIMindmapService;
 
 
 /***/ }),
@@ -31694,339 +31911,6 @@ CRITICAL: Respond with ONLY valid JSON.
     }
 }
 exports.AISimilarityService = AISimilarityService;
-
-
-/***/ }),
-
-/***/ 9062:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.UnopinionatedAnalysisService = void 0;
-const json_extractor_1 = __nccwpck_require__(8168);
-const index_1 = __nccwpck_require__(8541);
-/**
- * Service for performing unopinionated analysis of themes
- * Analyzes code structure and content without depth-based bias
- */
-class UnopinionatedAnalysisService {
-    constructor(claudeClient) {
-        this.claudeClient = claudeClient;
-    }
-    /**
-     * Analyze a theme based purely on its code content and structure
-     */
-    async analyzeTheme(theme) {
-        const prompt = this.buildAnalysisPrompt(theme);
-        try {
-            const response = await this.claudeClient.callClaude(prompt);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['actualPurpose', 'codeComplexity', 'separableConcerns', 'testScenarios', 'reviewerPerspective', 'codeMetrics']);
-            if (!extractionResult.success) {
-                throw new Error(extractionResult.error || 'Failed to extract JSON');
-            }
-            const analysis = extractionResult.data;
-            if (!this.validateAnalysisResponse(analysis)) {
-                throw new Error('Invalid analysis response structure');
-            }
-            (0, index_1.logInfo)(`Theme analysis completed for "${theme.name}": ${analysis.separableConcerns.length} concerns identified`);
-            return analysis;
-        }
-        catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            (0, index_1.logError)(`Analysis failed for theme "${theme.name}": ${errorMessage}`);
-            return this.getDefaultAnalysis(theme);
-        }
-    }
-    /**
-     * Build unopinionated analysis prompt
-     */
-    buildAnalysisPrompt(theme) {
-        return `THEME ANALYSIS - UNOPINIONATED
-
-Analyze this code theme based purely on its content and structure. 
-Do not consider theme names or descriptions if they don't match the actual code.
-Focus only on what the code actually does.
-
-THEME INFORMATION:
-Name: "${theme.name}"
-Description: ${theme.description}
-Files: ${theme.affectedFiles.join(', ')}
-
-CODE CHANGES:
-${this.formatCodeSnippets(theme.codeSnippets)}
-
-ANALYSIS FRAMEWORK:
-
-1. ACTUAL PURPOSE
-   - What does this code actually accomplish?
-   - Ignore theme name/description if they contradict the code
-   - Focus on concrete changes and their effects
-
-2. CODE STRUCTURE ANALYSIS
-   - Count distinct functions/methods being modified
-   - Count distinct classes/interfaces being modified  
-   - Identify distinct algorithms or logical processes
-   - Note natural boundaries in the code
-
-3. SEPARABILITY ANALYSIS
-   - List each distinct responsibility or concern
-   - Could these responsibilities be tested independently?
-   - Do they share state or are they logically isolated?
-   - Are there clear interfaces between different parts?
-
-4. REVIEWER PERSPECTIVE
-   - Would a code reviewer see this as one cohesive change?
-   - Or would they naturally comment on different aspects?
-   - What would be the natural review points?
-
-5. TESTING IMPLICATIONS
-   - How many distinct test scenarios would this require?
-   - Could one comprehensive test cover everything?
-   - Would multiple focused tests provide better coverage?
-   - Are there error paths that need separate testing?
-
-RESPOND WITH ONLY VALID JSON:
-{
-  "actualPurpose": "What this theme really accomplishes (1-2 sentences)",
-  "codeComplexity": "low|medium|high",
-  "separableConcerns": ["list", "of", "distinct", "responsibilities"],
-  "testScenarios": <number_of_test_scenarios>,
-  "reviewerPerspective": "How a reviewer would naturally see this change",
-  "codeMetrics": {
-    "functionCount": <number_of_functions_modified>,
-    "classCount": <number_of_classes_modified>,
-    "distinctOperations": <number_of_distinct_logical_operations>,
-    "hasMultipleAlgorithms": <boolean>,
-    "hasNaturalBoundaries": <boolean>
-  }
-}`;
-    }
-    /**
-     * Format code snippets for analysis
-     */
-    formatCodeSnippets(codeSnippets) {
-        if (codeSnippets.length === 0) {
-            return 'No code snippets provided';
-        }
-        return codeSnippets
-            .map((snippet, index) => `--- Code Snippet ${index + 1} ---\n${snippet}`)
-            .join('\n\n');
-    }
-    /**
-     * Validate analysis response structure
-     */
-    validateAnalysisResponse(data) {
-        return (typeof data === 'object' &&
-            typeof data.actualPurpose === 'string' &&
-            ['low', 'medium', 'high'].includes(data.codeComplexity) &&
-            Array.isArray(data.separableConcerns) &&
-            typeof data.testScenarios === 'number' &&
-            typeof data.reviewerPerspective === 'string' &&
-            typeof data.codeMetrics === 'object' &&
-            typeof data.codeMetrics.functionCount === 'number' &&
-            typeof data.codeMetrics.classCount === 'number' &&
-            typeof data.codeMetrics.distinctOperations === 'number' &&
-            typeof data.codeMetrics.hasMultipleAlgorithms === 'boolean' &&
-            typeof data.codeMetrics.hasNaturalBoundaries === 'boolean');
-    }
-    /**
-     * Generate default analysis when AI analysis fails
-     */
-    getDefaultAnalysis(theme) {
-        const fileCount = theme.affectedFiles.length;
-        const codeLength = theme.codeSnippets.join('').length;
-        return {
-            actualPurpose: `Modifies ${fileCount} file(s) with changes to existing functionality`,
-            codeComplexity: codeLength > 1000 ? 'medium' : 'low',
-            separableConcerns: [],
-            testScenarios: 1,
-            reviewerPerspective: 'Single cohesive change requiring one review pass',
-            codeMetrics: {
-                functionCount: Math.min(fileCount, 2), // Conservative estimate
-                classCount: Math.min(fileCount, 1),
-                distinctOperations: 1,
-                hasMultipleAlgorithms: false,
-                hasNaturalBoundaries: fileCount > 1
-            }
-        };
-    }
-}
-exports.UnopinionatedAnalysisService = UnopinionatedAnalysisService;
-
-
-/***/ }),
-
-/***/ 7425:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.ValidationService = void 0;
-const json_extractor_1 = __nccwpck_require__(8168);
-const index_1 = __nccwpck_require__(8541);
-/**
- * Service for validating expansion decisions through self-reflection
- */
-class ValidationService {
-    constructor(claudeClient) {
-        this.claudeClient = claudeClient;
-    }
-    /**
-     * Validate expansion decision through multi-criteria analysis
-     */
-    async validateExpansionDecision(theme, analysis, currentDepth, initialInclination) {
-        const prompt = this.buildValidationPrompt(theme, analysis, currentDepth, initialInclination);
-        try {
-            const response = await this.claudeClient.callClaude(prompt);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand', 'confidence', 'reasoning', 'correctedFromInitial', 'validationFindings', 'granularityScore', 'depthAppropriatenessScore', 'businessValueScore', 'testBoundaryScore']);
-            if (!extractionResult.success) {
-                throw new Error(extractionResult.error || 'Failed to extract JSON');
-            }
-            const validation = extractionResult.data;
-            if (!this.validateValidationResponse(validation)) {
-                throw new Error('Invalid validation response structure');
-            }
-            (0, index_1.logInfo)(`Validation completed for "${theme.name}" at depth ${currentDepth}: expand=${validation.shouldExpand}, confidence=${validation.confidence}`);
-            return validation;
-        }
-        catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            (0, index_1.logError)(`Validation failed for theme "${theme.name}": ${errorMessage}`);
-            return this.getDefaultValidation(analysis, currentDepth);
-        }
-    }
-    /**
-     * Build validation prompt with self-reflection
-     */
-    buildValidationPrompt(theme, analysis, currentDepth, initialInclination) {
-        return `EXPANSION VALIDATION
-
-You will validate whether a theme should be expanded using multi-criteria analysis.
-
-CONTEXT:
-Theme: "${theme.name}"
-Current Depth: ${currentDepth}
-${initialInclination ? `Initial Inclination: expand=${initialInclination.shouldExpand} (confidence: ${initialInclination.confidence})` : ''}
-
-ANALYSIS RESULTS:
-- Purpose: ${analysis.actualPurpose}
-- Complexity: ${analysis.codeComplexity}
-- Separable Concerns: ${analysis.separableConcerns.length > 0 ? analysis.separableConcerns.join(', ') : 'None identified'}
-- Test Scenarios: ${analysis.testScenarios}
-- Functions Modified: ${analysis.codeMetrics.functionCount}
-- Classes Modified: ${analysis.codeMetrics.classCount}
-- Distinct Operations: ${analysis.codeMetrics.distinctOperations}
-- Multiple Algorithms: ${analysis.codeMetrics.hasMultipleAlgorithms}
-- Natural Boundaries: ${analysis.codeMetrics.hasNaturalBoundaries}
-
-VALIDATION FRAMEWORK:
-
-1. GRANULARITY CHECK (Score 0.0-1.0)
-   Evaluate if this theme is at appropriate granularity:
-   - 0.0-0.3: Over-granular (single method call, variable assignment, trivial operation)
-   - 0.4-0.6: Borderline (simple orchestration, wrapper functions, basic coordination)
-   - 0.7-1.0: Appropriate granularity (meaningful business logic, complex algorithms)
-   
-   Questions:
-   - Is this just a single method call or property assignment?
-   - Does it contain actual business logic or just coordination?
-   - Would splitting this create artificial boundaries?
-
-2. DEPTH APPROPRIATENESS (Score 0.0-1.0)
-   Evaluate expansion appropriateness at depth ${currentDepth}:
-   - Depths 0-3: High-level themes, expansion often valuable (bias toward 0.7-1.0)
-   - Depths 4-8: Feature level, balance needed (evaluate on merit)
-   - Depths 9-12: Implementation details, resist expansion (bias toward 0.3-0.6)
-   - Depths 13+: Very deep, almost never expand (bias toward 0.0-0.3)
-   
-   Question: Is this the right depth for this level of granularity?
-
-3. BUSINESS VALUE (Score 0.0-1.0)
-   Evaluate if expansion improves understanding:
-   - Would sub-themes make the code clearer to understand?
-   - Would they help during code review?
-   - Or would they just create unnecessary fragmentation?
-
-4. TEST BOUNDARY (Score 0.0-1.0)
-   Evaluate testing implications:
-   - Would sub-themes naturally have distinct test cases?
-   - Or is this logically one unit that should be tested together?
-   - Are there natural error paths that suggest separation?
-
-SELF-REFLECTION:
-${initialInclination ? `
-You initially thought: expand=${initialInclination.shouldExpand} with confidence ${initialInclination.confidence}
-- Does your detailed analysis support this initial thought?
-- What evidence supports or contradicts your initial inclination?
-- Should you correct your initial assessment?
-` : ''}
-
-Based on the four validation criteria above, make your final decision.
-
-RESPOND WITH ONLY VALID JSON:
-{
-  "shouldExpand": <boolean>,
-  "confidence": <0.0-1.0>,
-  "reasoning": "Explanation based on validation criteria (max 100 words)",
-  "correctedFromInitial": <boolean>,
-  "validationFindings": ["key", "insights", "from", "validation", "checks"],
-  "granularityScore": <0.0-1.0>,
-  "depthAppropriatenessScore": <0.0-1.0>,
-  "businessValueScore": <0.0-1.0>,
-  "testBoundaryScore": <0.0-1.0>
-}`;
-    }
-    /**
-     * Validate validation response structure
-     */
-    validateValidationResponse(data) {
-        return (typeof data === 'object' &&
-            typeof data.shouldExpand === 'boolean' &&
-            typeof data.confidence === 'number' &&
-            data.confidence >= 0 && data.confidence <= 1 &&
-            typeof data.reasoning === 'string' &&
-            typeof data.correctedFromInitial === 'boolean' &&
-            Array.isArray(data.validationFindings) &&
-            typeof data.granularityScore === 'number' &&
-            data.granularityScore >= 0 && data.granularityScore <= 1 &&
-            typeof data.depthAppropriatenessScore === 'number' &&
-            data.depthAppropriatenessScore >= 0 && data.depthAppropriatenessScore <= 1 &&
-            typeof data.businessValueScore === 'number' &&
-            data.businessValueScore >= 0 && data.businessValueScore <= 1 &&
-            typeof data.testBoundaryScore === 'number' &&
-            data.testBoundaryScore >= 0 && data.testBoundaryScore <= 1);
-    }
-    /**
-     * Generate default validation when AI validation fails
-     */
-    getDefaultValidation(analysis, currentDepth) {
-        // Conservative defaults based on analysis
-        const shouldExpand = analysis.separableConcerns.length > 1 && currentDepth < 10;
-        const baseConfidence = analysis.separableConcerns.length > 0 ? 0.6 : 0.4;
-        // Adjust confidence based on depth
-        const depthPenalty = Math.max(0, (currentDepth - 8) * 0.1);
-        const confidence = Math.max(0.2, baseConfidence - depthPenalty);
-        return {
-            shouldExpand,
-            confidence,
-            reasoning: `Default validation: ${analysis.separableConcerns.length} separable concerns at depth ${currentDepth}`,
-            correctedFromInitial: false,
-            validationFindings: [
-                `${analysis.separableConcerns.length} separable concerns identified`,
-                `Code complexity: ${analysis.codeComplexity}`,
-                `Current depth: ${currentDepth}`
-            ],
-            granularityScore: analysis.codeMetrics.distinctOperations > 1 ? 0.6 : 0.3,
-            depthAppropriatenessScore: Math.max(0.1, 1.0 - (currentDepth * 0.08)),
-            businessValueScore: analysis.separableConcerns.length > 1 ? 0.7 : 0.3,
-            testBoundaryScore: analysis.testScenarios > 1 ? 0.7 : 0.4
-        };
-    }
-}
-exports.ValidationService = ValidationService;
 
 
 /***/ }),
@@ -32482,215 +32366,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
     }
 }
 exports.BusinessDomainService = BusinessDomainService;
-
-
-/***/ }),
-
-/***/ 5873:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.CodeStructureAnalyzer = void 0;
-/**
- * Analyzes code structure to provide intelligent hints for theme expansion
- */
-class CodeStructureAnalyzer {
-    /**
-     * Analyze code structure to generate expansion hints
-     */
-    async analyzeThemeStructure(theme) {
-        const analysis = {
-            functionCount: this.countFunctions(theme),
-            classCount: this.countClasses(theme),
-            moduleCount: this.countModules(theme),
-            changeTypes: this.identifyChangeTypes(theme),
-            complexityIndicators: this.analyzeComplexity(theme),
-            fileStructure: this.analyzeFileStructure(theme),
-        };
-        return analysis;
-    }
-    /**
-     * Count distinct functions/methods in code changes
-     */
-    countFunctions(theme) {
-        let functionCount = 0;
-        theme.codeSnippets.forEach((snippet) => {
-            // Match function declarations in various formats
-            const patterns = [
-                /function\s+\w+/g, // function name()
-                /\w+\s*:\s*function/g, // name: function
-                /\w+\s*=>\s*{/g, // arrow functions
-                /async\s+\w+\s*\(/g, // async functions
-                /\w+\s*\([^)]*\)\s*{/g, // method declarations
-                /export\s+function\s+\w+/g, // exported functions
-                /private\s+\w+\s*\(/g, // private methods
-                /public\s+\w+\s*\(/g, // public methods
-            ];
-            patterns.forEach((pattern) => {
-                const matches = snippet.match(pattern);
-                if (matches) {
-                    functionCount += matches.length;
-                }
-            });
-        });
-        return functionCount;
-    }
-    /**
-     * Count distinct classes/interfaces in code changes
-     */
-    countClasses(theme) {
-        let classCount = 0;
-        theme.codeSnippets.forEach((snippet) => {
-            const patterns = [
-                /class\s+\w+/g, // class declarations
-                /interface\s+\w+/g, // interface declarations
-                /type\s+\w+\s*=/g, // type definitions
-                /enum\s+\w+/g, // enum declarations
-                /export\s+class\s+\w+/g, // exported classes
-                /export\s+interface\s+\w+/g, // exported interfaces
-            ];
-            patterns.forEach((pattern) => {
-                const matches = snippet.match(pattern);
-                if (matches) {
-                    classCount += matches.length;
-                }
-            });
-        });
-        return classCount;
-    }
-    /**
-     * Count distinct modules/files with significant changes
-     */
-    countModules(theme) {
-        return theme.affectedFiles.length;
-    }
-    /**
-     * Identify types of changes (config, logic, UI, test, etc.)
-     */
-    identifyChangeTypes(theme) {
-        const types = new Set();
-        theme.affectedFiles.forEach((file) => {
-            if (file.includes('.test.') ||
-                file.includes('.spec.') ||
-                file.includes('/test/')) {
-                types.add('test');
-            }
-            else if (file.includes('config') ||
-                file.endsWith('.json') ||
-                file.endsWith('.yaml') ||
-                file.endsWith('.yml')) {
-                types.add('config');
-            }
-            else if (file.includes('/components/') ||
-                file.includes('/ui/') ||
-                file.includes('.css') ||
-                file.includes('.scss')) {
-                types.add('ui');
-            }
-            else if (file.includes('/api/') ||
-                file.includes('/services/') ||
-                file.includes('/business/')) {
-                types.add('logic');
-            }
-            else if (file.includes('/types/') || file.endsWith('.d.ts')) {
-                types.add('types');
-            }
-            else if (file.includes('/utils/') || file.includes('/helpers/')) {
-                types.add('utils');
-            }
-            else if (file.includes('README') || file.endsWith('.md')) {
-                types.add('docs');
-            }
-            else {
-                types.add('implementation');
-            }
-        });
-        // Also analyze code content for additional type detection
-        theme.codeSnippets.forEach((snippet) => {
-            if (snippet.includes('import') || snippet.includes('export')) {
-                types.add('imports');
-            }
-            if (snippet.includes('test(') ||
-                snippet.includes('describe(') ||
-                snippet.includes('it(')) {
-                types.add('test');
-            }
-            if (snippet.includes('interface') || snippet.includes('type ')) {
-                types.add('types');
-            }
-        });
-        return Array.from(types);
-    }
-    /**
-     * Analyze code complexity indicators
-     */
-    analyzeComplexity(theme) {
-        const indicators = {
-            hasConditionals: false,
-            hasLoops: false,
-            hasErrorHandling: false,
-            hasAsyncOperations: false,
-            nestingDepth: 0,
-            branchingFactor: 0,
-        };
-        theme.codeSnippets.forEach((snippet) => {
-            // Check for conditionals
-            if (/if\s*\(|switch\s*\(|case\s+|ternary\s*\?/.test(snippet)) {
-                indicators.hasConditionals = true;
-                indicators.branchingFactor += (snippet.match(/if\s*\(|case\s+/g) || []).length;
-            }
-            // Check for loops
-            if (/for\s*\(|while\s*\(|forEach|map\(|filter\(/.test(snippet)) {
-                indicators.hasLoops = true;
-            }
-            // Check for error handling
-            if (/try\s*{|catch\s*\(|throw\s+|\.catch\(/.test(snippet)) {
-                indicators.hasErrorHandling = true;
-            }
-            // Check for async operations
-            if (/async\s+|await\s+|Promise\.|\.then\(/.test(snippet)) {
-                indicators.hasAsyncOperations = true;
-            }
-            // Calculate nesting depth (simplified)
-            const openBraces = (snippet.match(/{/g) || []).length;
-            const closeBraces = (snippet.match(/}/g) || []).length;
-            const netDepth = Math.abs(openBraces - closeBraces);
-            indicators.nestingDepth = Math.max(indicators.nestingDepth, netDepth);
-        });
-        return indicators;
-    }
-    /**
-     * Analyze file structure patterns
-     */
-    analyzeFileStructure(theme) {
-        const analysis = {
-            directories: new Set(),
-            fileExtensions: new Set(),
-            isMultiDirectory: false,
-            isMultiLanguage: false,
-            hasTestFiles: false,
-            hasConfigFiles: false,
-        };
-        theme.affectedFiles.forEach((file) => {
-            const dir = file.substring(0, file.lastIndexOf('/'));
-            const ext = file.substring(file.lastIndexOf('.'));
-            analysis.directories.add(dir);
-            analysis.fileExtensions.add(ext);
-            if (file.includes('.test.') || file.includes('.spec.')) {
-                analysis.hasTestFiles = true;
-            }
-            if (file.includes('config') || ext === '.json' || ext === '.yaml') {
-                analysis.hasConfigFiles = true;
-            }
-        });
-        analysis.isMultiDirectory = analysis.directories.size > 1;
-        analysis.isMultiLanguage = analysis.fileExtensions.size > 2; // More than 2 different extensions
-        return analysis;
-    }
-}
-exports.CodeStructureAnalyzer = CodeStructureAnalyzer;
 
 
 /***/ }),
@@ -33360,7 +33035,8 @@ const generic_cache_1 = __nccwpck_require__(282);
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const secure_file_namer_1 = __nccwpck_require__(5584);
-const ai_expansion_decision_service_1 = __nccwpck_require__(7867);
+const ai_mindmap_service_1 = __nccwpck_require__(3555);
+const theme_mindmap_converter_1 = __nccwpck_require__(3936);
 const logger_1 = __nccwpck_require__(411);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
@@ -33368,6 +33044,7 @@ exports.DEFAULT_EXPANSION_CONFIG = {
 };
 class ThemeExpansionService {
     constructor(anthropicApiKey, config = {}) {
+        this.converter = theme_mindmap_converter_1.ThemeMindmapConverter;
         this.effectiveness = {
             themesEvaluated: 0,
             themesExpanded: 0,
@@ -33381,7 +33058,7 @@ class ThemeExpansionService {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
         this.cache = new generic_cache_1.GenericCache(3600000); // 1 hour TTL
         this.config = { ...exports.DEFAULT_EXPANSION_CONFIG, ...config };
-        this.aiDecisionService = new ai_expansion_decision_service_1.AIExpansionDecisionService(anthropicApiKey);
+        this.aiMindmapService = new ai_mindmap_service_1.AIMindmapService(anthropicApiKey);
     }
     /**
      * Process items sequentially with retry logic
@@ -33591,8 +33268,10 @@ class ThemeExpansionService {
         this.effectiveness.themesEvaluated++;
         // Get sibling themes for context
         const siblingThemes = parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
+        // Convert theme to MindmapNode for AI analysis
+        const mindmapNode = this.converter.convertThemeToMindmapNode(theme);
         // Let AI decide based on full context
-        const expansionDecision = await this.aiDecisionService.shouldExpandTheme(theme, currentDepth, parentTheme, siblingThemes);
+        const expansionDecision = await this.aiMindmapService.shouldExpandNode(mindmapNode, currentDepth);
         // Update theme with PRD-aligned decision metadata
         theme.isAtomic = expansionDecision.isAtomic;
         // If theme is atomic or shouldn't expand, return null
@@ -33606,10 +33285,10 @@ class ThemeExpansionService {
                 themeName: theme.name,
                 depth: currentDepth,
                 reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
-                details: expansionDecision.reasoning,
+                details: expansionDecision.atomicReason || 'AI decision',
                 fileCount: theme.affectedFiles.length,
             });
-            logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`);
+            logger_1.logger.info('EXPANSION', `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.atomicReason || 'AI decision'}`);
             return null;
         }
         // Return candidate for expansion
@@ -34091,20 +33770,23 @@ CRITICAL: Respond with ONLY valid JSON.
     async analyzeThemeForSubThemes(request) {
         const { theme, parentTheme, depth } = request;
         const expansionCandidate = request.context;
-        // We already have the expansion decision from evaluateExpansionCandidate
-        if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
-            // Convert suggested sub-themes to ConsolidatedThemes
-            const suggestedSubThemes = expansionCandidate.expansionDecision.suggestedSubThemes;
-            const subThemes = this.convertSuggestedToConsolidatedThemes(suggestedSubThemes, theme);
+        // Check if we have expansion decision with DirectChildAssignment (new system)
+        if (expansionCandidate?.expansionDecision?.children) {
+            // NEW: Use DirectChildAssignment system
+            const childAssignments = expansionCandidate.expansionDecision.children;
+            const subThemes = this.convertDirectAssignmentToConsolidatedThemes(childAssignments, theme);
+            logger_1.logger.info('EXPANSION', `Using DirectChildAssignment system: ${subThemes.length} sub-themes with proper code assignment`);
             return {
                 subThemes,
                 shouldExpand: true,
-                confidence: 0.8,
-                reasoning: expansionCandidate.expansionDecision.reasoning,
+                confidence: expansionCandidate.expansionDecision.confidence,
+                reasoning: expansionCandidate.expansionDecision.atomicReason || 'AI-driven expansion with direct code assignment',
                 businessLogicPatterns: [],
                 userFlowPatterns: [],
             };
         }
+        // Note: Legacy file-based system (suggestedSubThemes) removed
+        // All expansion now uses DirectChildAssignment system
         // No sub-themes provided by multi-stage system - should not expand
         logger_1.logger.info('EXPANSION', `No sub-themes provided for ${theme.name} - marking as atomic`);
         return {
@@ -34120,6 +33802,8 @@ CRITICAL: Respond with ONLY valid JSON.
      * Convert suggested sub-themes to ConsolidatedTheme objects
      */
     convertSuggestedToConsolidatedThemes(suggestedThemes, parentTheme) {
+        // This method is kept for backward compatibility with old system
+        // NEW: Also handle DirectChildAssignment from AI
         return suggestedThemes.map((suggested, index) => {
             const relevantFiles = suggested.files || suggested.relevantFiles || [];
             // Validate that AI provided files
@@ -34161,6 +33845,21 @@ CRITICAL: Respond with ONLY valid JSON.
         });
     }
     /**
+     * NEW: Convert DirectChildAssignment to ConsolidatedThemes
+     * This is the new system that uses proper AI code assignment
+     */
+    convertDirectAssignmentToConsolidatedThemes(assignments, // DirectChildAssignment[] - avoiding import for now
+    parentTheme) {
+        return assignments.map((assignment) => {
+            // Validate assignment using converter
+            if (!this.converter.validateDirectAssignment(assignment)) {
+                throw new Error(`Invalid DirectChildAssignment for "${assignment.name}"`);
+            }
+            // Convert using the new converter
+            return this.converter.convertDirectAssignmentToTheme(assignment, parentTheme);
+        });
+    }
+    /**
      * Get effectiveness metrics for this expansion analysis
      */
     getEffectiveness() {
@@ -34182,6 +33881,229 @@ CRITICAL: Respond with ONLY valid JSON.
     }
 }
 exports.ThemeExpansionService = ThemeExpansionService;
+
+
+/***/ }),
+
+/***/ 3936:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ThemeMindmapConverter = void 0;
+const index_1 = __nccwpck_require__(8541);
+/**
+ * Bidirectional converter between ConsolidatedTheme and MindmapNode representations
+ * Ensures proper data flow between theme expansion and direct code assignment systems
+ */
+class ThemeMindmapConverter {
+    /**
+     * Convert ConsolidatedTheme to MindmapNode for use with AIMindmapService
+     */
+    static convertThemeToMindmapNode(theme) {
+        const codeDiff = this.convertCodeSnippetsToCodeDiff(theme.codeSnippets, theme.affectedFiles);
+        return {
+            id: theme.id,
+            name: theme.name,
+            level: theme.level,
+            description: theme.description,
+            businessContext: theme.businessImpact,
+            technicalContext: theme.detailedDescription || theme.description,
+            codeDiff,
+            affectedFiles: theme.affectedFiles,
+            metrics: {
+                complexity: (theme.codeMetrics?.filesChanged || 0) > 2 ? 'high' : 'medium',
+                fileCount: theme.affectedFiles.length
+            },
+            parentId: theme.parentId,
+            children: [], // Will be populated by expansion
+            crossReferences: [],
+            isPrimary: true,
+            expansionConfidence: theme.confidence
+        };
+    }
+    /**
+     * Convert MindmapNode back to ConsolidatedTheme
+     */
+    static convertMindmapNodeToTheme(node) {
+        const codeSnippets = this.convertCodeDiffToSnippets(node.codeDiff);
+        return {
+            id: node.id,
+            name: node.name,
+            description: node.description,
+            level: node.level,
+            parentId: node.parentId,
+            childThemes: [], // Will be populated separately
+            affectedFiles: node.affectedFiles,
+            confidence: node.expansionConfidence,
+            businessImpact: node.businessContext,
+            codeSnippets,
+            context: node.technicalContext,
+            lastAnalysis: new Date(),
+            sourceThemes: [node.id],
+            consolidationMethod: 'expansion',
+            detailedDescription: node.description,
+            technicalSummary: node.technicalContext,
+            codeMetrics: {
+                filesChanged: node.metrics.fileCount
+            }
+        };
+    }
+    /**
+     * Convert DirectChildAssignment to ConsolidatedTheme
+     */
+    static convertDirectAssignmentToTheme(assignment, parentTheme) {
+        const codeSnippets = this.convertCodeDiffToSnippets(assignment.assignedCode);
+        const affectedFiles = assignment.assignedCode.map(diff => diff.file);
+        return {
+            id: `${parentTheme.id}_child_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+            name: assignment.name,
+            description: assignment.description,
+            level: parentTheme.level + 1,
+            parentId: parentTheme.id,
+            childThemes: [],
+            affectedFiles,
+            confidence: 0.8, // Will be determined by AI analysis
+            businessImpact: assignment.businessValue,
+            codeSnippets,
+            context: assignment.contextualMeaning || assignment.description,
+            lastAnalysis: new Date(),
+            sourceThemes: [parentTheme.id],
+            consolidationMethod: 'expansion',
+            detailedDescription: assignment.description,
+            technicalSummary: assignment.technicalPurpose,
+            codeMetrics: {
+                filesChanged: affectedFiles.length
+            }
+        };
+    }
+    /**
+     * Convert code snippets (string[]) to structured CodeDiff[]
+     * This is a best-effort conversion since snippets may lack line numbers
+     */
+    static convertCodeSnippetsToCodeDiff(snippets, files) {
+        const codeDiffs = [];
+        for (const file of files) {
+            // Find snippets that mention this file
+            const relevantSnippets = snippets.filter(snippet => snippet.includes(file) || snippet.includes(file.split('/').pop() || ''));
+            if (relevantSnippets.length === 0)
+                continue;
+            // Create a single hunk for all changes in this file
+            const changes = [];
+            let lineNumber = 1;
+            for (const snippet of relevantSnippets) {
+                // Parse snippet for added/removed lines (simple heuristic)
+                const lines = snippet.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('+')) {
+                        changes.push({
+                            type: 'add',
+                            lineNumber: lineNumber++,
+                            content: line.substring(1).trim()
+                        });
+                    }
+                    else if (line.startsWith('-')) {
+                        changes.push({
+                            type: 'delete',
+                            lineNumber: lineNumber++,
+                            content: line.substring(1).trim()
+                        });
+                    }
+                    else if (line.trim() && !line.startsWith('@@') && !line.startsWith('diff')) {
+                        changes.push({
+                            type: 'context',
+                            lineNumber: lineNumber++,
+                            content: line.trim()
+                        });
+                    }
+                }
+            }
+            if (changes.length > 0) {
+                const hunk = {
+                    oldStart: 1,
+                    oldLines: changes.filter(c => c.type === 'delete' || c.type === 'context').length,
+                    newStart: 1,
+                    newLines: changes.filter(c => c.type === 'add' || c.type === 'context').length,
+                    changes
+                };
+                const fileContext = {
+                    startLine: 1,
+                    endLine: changes.length,
+                    contextType: this.inferContextType(file)
+                };
+                codeDiffs.push({
+                    file,
+                    hunks: [hunk],
+                    fileContext,
+                    ownership: 'primary',
+                    contextualMeaning: `Changes in ${file}`
+                });
+            }
+        }
+        return codeDiffs;
+    }
+    /**
+     * Convert structured CodeDiff[] back to simple code snippets
+     */
+    static convertCodeDiffToSnippets(codeDiffs) {
+        const snippets = [];
+        for (const diff of codeDiffs) {
+            let fileSnippet = `--- ${diff.file}\n`;
+            for (const hunk of diff.hunks) {
+                fileSnippet += `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@\n`;
+                for (const change of hunk.changes) {
+                    const prefix = change.type === 'add' ? '+' : change.type === 'delete' ? '-' : ' ';
+                    fileSnippet += `${prefix}${change.content}\n`;
+                }
+            }
+            snippets.push(fileSnippet);
+        }
+        return snippets;
+    }
+    /**
+     * Infer context type from file path
+     */
+    static inferContextType(filePath) {
+        if (filePath.includes('test') || filePath.includes('spec')) {
+            return 'test';
+        }
+        else if (filePath.includes('config') || filePath.endsWith('.json') || filePath.endsWith('.yml')) {
+            return 'config';
+        }
+        else if (filePath.endsWith('.ts') || filePath.endsWith('.js')) {
+            return 'function'; // Default for code files
+        }
+        else {
+            return 'module';
+        }
+    }
+    /**
+     * Validate that DirectChildAssignment has proper code assignments
+     */
+    static validateDirectAssignment(assignment) {
+        if (!assignment.assignedCode || assignment.assignedCode.length === 0) {
+            (0, index_1.logError)(`DirectChildAssignment "${assignment.name}" has no assigned code`);
+            return false;
+        }
+        // Check that all assigned code has proper structure
+        for (const codeDiff of assignment.assignedCode) {
+            if (!codeDiff.file || !codeDiff.hunks || codeDiff.hunks.length === 0) {
+                (0, index_1.logError)(`DirectChildAssignment "${assignment.name}" has invalid CodeDiff structure`);
+                return false;
+            }
+            for (const hunk of codeDiff.hunks) {
+                if (!hunk.changes || hunk.changes.length === 0) {
+                    (0, index_1.logError)(`DirectChildAssignment "${assignment.name}" has empty hunk`);
+                    return false;
+                }
+            }
+        }
+        (0, index_1.logInfo)(`DirectChildAssignment "${assignment.name}" validation passed`);
+        return true;
+    }
+}
+exports.ThemeMindmapConverter = ThemeMindmapConverter;
 
 
 /***/ }),
@@ -35639,27 +35561,6 @@ Be conservative - only merge when themes serve the same business purpose.`;
     }
 }
 exports.ThemeSimilarityService = ThemeSimilarityService;
-
-
-/***/ }),
-
-/***/ 6050:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_MULTI_STAGE_CONFIG = void 0;
-/**
- * Default configuration values
- */
-exports.DEFAULT_MULTI_STAGE_CONFIG = {
-    enableQuickDecisions: false, // Removed mechanical quick decisions for pure AI-driven evaluation
-    enableConsistencyCheck: true,
-    consistencyVarianceThreshold: 0.2,
-    quickDecisionDepthThreshold: 15, // Kept for backwards compatibility but unused
-    quickDecisionConfidenceThreshold: 0.95 // Kept for backwards compatibility but unused
-};
 
 
 /***/ }),

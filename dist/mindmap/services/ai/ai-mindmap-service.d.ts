@@ -12,6 +12,18 @@ export declare class AIMindmapService {
      */
     shouldExpandNode(node: MindmapNode, currentDepth: number): Promise<ExpansionDecision>;
     /**
+     * Attempt expansion with AI-only retry strategy
+     */
+    private attemptExpansionWithRetry;
+    /**
+     * Build enhanced prompt for retry attempts
+     */
+    private buildEnhancedCodeAssignmentPrompt;
+    /**
+     * Final attempt: explicit code extraction for each potential child
+     */
+    private attemptExplicitCodeExtraction;
+    /**
      * Build prompt for direct code assignment (PRD aligned)
      * AI sees complete code and assigns it directly to children
      */

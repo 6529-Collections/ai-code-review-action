@@ -3,10 +3,9 @@ import { GenericCache } from '@/shared/cache/generic-cache';
 import { ClaudeClient } from '@/shared/utils/claude-client';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { SecureFileNamer } from '../utils/secure-file-namer';
-import {
-  AIExpansionDecisionService,
-  ExpansionDecision,
-} from './ai/ai-expansion-decision-service';
+import { AIMindmapService } from './ai/ai-mindmap-service';
+import { ThemeMindmapConverter } from './theme-mindmap-converter';
+import { ExpansionDecision as AIMindmapExpansionDecision } from '../types/mindmap-types';
 import { logger } from '@/shared/utils/logger';
 
 // Configuration for theme expansion
@@ -23,7 +22,7 @@ export const DEFAULT_EXPANSION_CONFIG: ExpansionConfig = {
 export interface ExpansionCandidate {
   theme: ConsolidatedTheme;
   parentTheme?: ConsolidatedTheme;
-  expansionDecision: ExpansionDecision;
+  expansionDecision: AIMindmapExpansionDecision; // Use the new mindmap expansion decision
 }
 
 export interface SubThemeAnalysis {
@@ -78,7 +77,8 @@ export class ThemeExpansionService {
   private claudeClient: ClaudeClient;
   private cache: GenericCache;
   private config: ExpansionConfig;
-  private aiDecisionService: AIExpansionDecisionService;
+  private aiMindmapService: AIMindmapService;
+  private converter = ThemeMindmapConverter;
   private effectiveness: ExpansionEffectiveness = {
     themesEvaluated: 0,
     themesExpanded: 0,
@@ -94,7 +94,7 @@ export class ThemeExpansionService {
     this.claudeClient = new ClaudeClient(anthropicApiKey);
     this.cache = new GenericCache(3600000); // 1 hour TTL
     this.config = { ...DEFAULT_EXPANSION_CONFIG, ...config };
-    this.aiDecisionService = new AIExpansionDecisionService(anthropicApiKey);
+    this.aiMindmapService = new AIMindmapService(anthropicApiKey);
   }
 
   /**
@@ -422,13 +422,13 @@ export class ThemeExpansionService {
     const siblingThemes =
       parentTheme?.childThemes.filter((t) => t.id !== theme.id) || [];
 
+    // Convert theme to MindmapNode for AI analysis
+    const mindmapNode = this.converter.convertThemeToMindmapNode(theme);
+    
     // Let AI decide based on full context
-
-    const expansionDecision = await this.aiDecisionService.shouldExpandTheme(
-      theme,
-      currentDepth,
-      parentTheme,
-      siblingThemes
+    const expansionDecision = await this.aiMindmapService.shouldExpandNode(
+      mindmapNode,
+      currentDepth
     );
 
 
@@ -449,13 +449,13 @@ export class ThemeExpansionService {
         themeName: theme.name,
         depth: currentDepth,
         reason: expansionDecision.isAtomic ? 'atomic' : 'ai-decision',
-        details: expansionDecision.reasoning,
+        details: expansionDecision.atomicReason || 'AI decision',
         fileCount: theme.affectedFiles.length,
       });
 
       logger.info(
         'EXPANSION',
-        `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.reasoning}`
+        `Theme "${theme.name}" stops expansion at depth ${currentDepth}: ${expansionDecision.atomicReason || 'AI decision'}`
       );
 
 
@@ -1126,26 +1126,33 @@ CRITICAL: Respond with ONLY valid JSON.
     const { theme, parentTheme, depth } = request;
     const expansionCandidate = request.context;
 
-    // We already have the expansion decision from evaluateExpansionCandidate
-    if (expansionCandidate?.expansionDecision?.suggestedSubThemes) {
-      // Convert suggested sub-themes to ConsolidatedThemes
-      const suggestedSubThemes =
-        expansionCandidate.expansionDecision.suggestedSubThemes;
-
-      const subThemes = this.convertSuggestedToConsolidatedThemes(
-        suggestedSubThemes,
+    // Check if we have expansion decision with DirectChildAssignment (new system)
+    if (expansionCandidate?.expansionDecision?.children) {
+      // NEW: Use DirectChildAssignment system
+      const childAssignments = expansionCandidate.expansionDecision.children;
+      
+      const subThemes = this.convertDirectAssignmentToConsolidatedThemes(
+        childAssignments,
         theme
       );
-
+      
+      logger.info(
+        'EXPANSION',
+        `Using DirectChildAssignment system: ${subThemes.length} sub-themes with proper code assignment`
+      );
+      
       return {
         subThemes,
         shouldExpand: true,
-        confidence: 0.8,
-        reasoning: expansionCandidate.expansionDecision.reasoning,
+        confidence: expansionCandidate.expansionDecision.confidence,
+        reasoning: expansionCandidate.expansionDecision.atomicReason || 'AI-driven expansion with direct code assignment',
         businessLogicPatterns: [],
         userFlowPatterns: [],
       };
     }
+    
+    // Note: Legacy file-based system (suggestedSubThemes) removed
+    // All expansion now uses DirectChildAssignment system
 
     // No sub-themes provided by multi-stage system - should not expand
     logger.info(
@@ -1176,6 +1183,9 @@ CRITICAL: Respond with ONLY valid JSON.
     }>,
     parentTheme: ConsolidatedTheme
   ): ConsolidatedTheme[] {
+    // This method is kept for backward compatibility with old system
+    // NEW: Also handle DirectChildAssignment from AI
+    
     return suggestedThemes.map((suggested, index) => {
       const relevantFiles = suggested.files || suggested.relevantFiles || [];
 
@@ -1240,6 +1250,25 @@ CRITICAL: Respond with ONLY valid JSON.
         consolidationMethod: 'expansion' as const,
         isAtomic: parentTheme.level >= 3, // Deeper levels likely atomic
       };
+    });
+  }
+
+  /**
+   * NEW: Convert DirectChildAssignment to ConsolidatedThemes
+   * This is the new system that uses proper AI code assignment
+   */
+  private convertDirectAssignmentToConsolidatedThemes(
+    assignments: any[], // DirectChildAssignment[] - avoiding import for now
+    parentTheme: ConsolidatedTheme
+  ): ConsolidatedTheme[] {
+    return assignments.map((assignment) => {
+      // Validate assignment using converter
+      if (!this.converter.validateDirectAssignment(assignment)) {
+        throw new Error(`Invalid DirectChildAssignment for "${assignment.name}"`);
+      }
+      
+      // Convert using the new converter
+      return this.converter.convertDirectAssignmentToTheme(assignment, parentTheme);
     });
   }
 

@@ -1,5 +1,5 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { ExpansionDecision } from './ai/ai-expansion-decision-service';
+import { ExpansionDecision as AIMindmapExpansionDecision } from '../types/mindmap-types';
 export interface ExpansionConfig {
     maxDepth: number;
     enableProgressLogging: boolean;
@@ -8,7 +8,7 @@ export declare const DEFAULT_EXPANSION_CONFIG: ExpansionConfig;
 export interface ExpansionCandidate {
     theme: ConsolidatedTheme;
     parentTheme?: ConsolidatedTheme;
-    expansionDecision: ExpansionDecision;
+    expansionDecision: AIMindmapExpansionDecision;
 }
 export interface SubThemeAnalysis {
     subThemes: ConsolidatedTheme[];
@@ -57,7 +57,8 @@ export declare class ThemeExpansionService {
     private claudeClient;
     private cache;
     private config;
-    private aiDecisionService;
+    private aiMindmapService;
+    private converter;
     private effectiveness;
     private expansionStopReasons;
     constructor(anthropicApiKey: string, config?: Partial<ExpansionConfig>);
@@ -114,6 +115,11 @@ export declare class ThemeExpansionService {
      * Convert suggested sub-themes to ConsolidatedTheme objects
      */
     private convertSuggestedToConsolidatedThemes;
+    /**
+     * NEW: Convert DirectChildAssignment to ConsolidatedThemes
+     * This is the new system that uses proper AI code assignment
+     */
+    private convertDirectAssignmentToConsolidatedThemes;
     /**
      * Get effectiveness metrics for this expansion analysis
      */
