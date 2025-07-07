@@ -138,7 +138,7 @@ RESPOND WITH JSON:
 }`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'cross-reference');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'shouldLink',
       ]);
@@ -419,7 +419,7 @@ RESPOND WITH JSON:
 }`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'cross-reference');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'shouldLink',
       ]);

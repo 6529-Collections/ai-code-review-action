@@ -108,9 +108,6 @@ export type CrossReferenceType =
  * Node metrics for complexity assessment
  */
 export interface NodeMetrics {
-  linesAdded: number;
-  linesRemoved: number;
-  linesModified: number;
   complexity: 'low' | 'medium' | 'high';
   fileCount: number;
   testCoverage?: number; // If test changes included
@@ -283,7 +280,6 @@ export interface ValidationResult {
   coverage: {
     percentage: number;
     missingFiles: string[];
-    missingLines: Array<{ file: string; lines: number[] }>;
   };
   duplication: {
     score: number; // 0-1, lower is better
@@ -328,7 +324,6 @@ export interface HierarchicalId {
  */
 export interface MindmapOptions {
   maxDepth?: number; // Default: unlimited (per PRD)
-  targetLeafSize?: number; // Target lines for atomic nodes (default: 10)
   crossReferenceThreshold?: number; // Min similarity for cross-refs (0-1)
   enablePatternDetection?: boolean;
   enableSmartDuplication?: boolean;
@@ -347,6 +342,8 @@ export interface AIDomainClassification {
   reasoning: string; // Why this domain (max 20 words)
   subDomains?: string[]; // Specific user flows within capability
   crossCuttingConcerns?: string[]; // Domains this also affects
+  userJourney?: string; // Step in user workflow this improves
+  businessMetrics?: string[]; // Metrics this improvement could affect
 }
 
 /**

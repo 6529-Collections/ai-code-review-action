@@ -31,10 +31,6 @@ export declare class CodeStructureAnalyzer {
      * Analyze file structure patterns
      */
     private analyzeFileStructure;
-    /**
-     * Generate contextual expansion hints based on analysis
-     */
-    private generateExpansionHints;
 }
 /**
  * Analysis result containing code structure insights
@@ -46,7 +42,6 @@ export interface CodeStructureAnalysis {
     changeTypes: ChangeType[];
     complexityIndicators: ComplexityIndicators;
     fileStructure: FileStructureAnalysis;
-    expansionHints: string[];
 }
 /**
  * Types of code changes detected

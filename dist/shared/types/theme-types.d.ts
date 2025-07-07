@@ -21,8 +21,6 @@ export interface Theme {
     mainFunctionsChanged?: string[];
     mainClassesChanged?: string[];
     codeMetrics?: {
-        linesAdded: number;
-        linesRemoved: number;
         filesChanged: number;
     };
     codeExamples?: Array<{

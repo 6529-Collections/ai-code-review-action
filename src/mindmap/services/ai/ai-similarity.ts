@@ -3,7 +3,7 @@ import { AISimilarityResult } from '../../types/similarity-types';
 import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { ClaudeClient } from '@/shared/utils/claude-client';
-import { logger } from '@/shared/utils/logger';
+import { logger } from '@/shared/logger/logger';
 
 export class AISimilarityService {
   private similarityCalculator: SimilarityCalculator;
@@ -28,18 +28,9 @@ export class AISimilarityService {
       );
       const result = this.parseAISimilarityResponse(output);
 
-      logger.debug(
-        'AI-SIMILARITY',
-        `"${theme1.name}" vs "${theme2.name}": ${result.shouldMerge ? 'MERGE' : 'SEPARATE'} (confidence: ${result.confidence})`
-      );
-      logger.debug('AI-SIMILARITY', `Reasoning: ${result.reasoning}`);
 
       return result;
     } catch (error) {
-      logger.warn(
-        'AI-SIMILARITY',
-        `AI similarity failed for "${theme1.name}" vs "${theme2.name}": ${error}`
-      );
       // Fallback to basic string matching
       return this.createFallbackSimilarity(theme1, theme2);
     }
@@ -112,8 +103,8 @@ CRITICAL: Respond with ONLY valid JSON.
 
     // Add code metrics if available
     if (theme.codeMetrics) {
-      const { linesAdded, linesRemoved, filesChanged } = theme.codeMetrics;
-      details += `\nCode Metrics: +${linesAdded}/-${linesRemoved} lines in ${filesChanged} files`;
+      const { filesChanged } = theme.codeMetrics;
+      details += `\nCode Metrics: ${filesChanged} files changed`;
     }
 
     // Add main functions/classes if available
@@ -166,16 +157,7 @@ CRITICAL: Respond with ONLY valid JSON.
       };
     }
 
-    // Log the extraction failure for debugging
-    console.warn(
-      '[AI-SIMILARITY] JSON extraction failed:',
-      extractionResult.error
-    );
     if (extractionResult.originalResponse) {
-      console.debug(
-        '[AI-SIMILARITY] Original response:',
-        extractionResult.originalResponse?.substring(0, 200) + '...'
-      );
     }
 
     return {
@@ -232,9 +214,6 @@ CRITICAL: Respond with ONLY valid JSON.
         `batch of ${expectedResults} pairs`
       );
 
-      console.log(
-        `[AI-BATCH-SIMILARITY] Raw response length: ${response.length}`
-      );
 
       // Extract and validate JSON response
       const jsonResult = JsonExtractor.extractAndValidateJson(
@@ -255,18 +234,11 @@ CRITICAL: Respond with ONLY valid JSON.
       }
 
       if (batchData.results.length !== expectedResults) {
-        console.warn(
-          `[AI-BATCH-SIMILARITY] Expected ${expectedResults} results, got ${batchData.results.length}`
-        );
       }
 
-      console.log(
-        `[AI-BATCH-SIMILARITY] Successfully processed batch with ${batchData.results.length} results`
-      );
 
       return batchData;
     } catch (error) {
-      console.error(`[AI-BATCH-SIMILARITY] Processing failed: ${error}`);
       throw error;
     }
   }

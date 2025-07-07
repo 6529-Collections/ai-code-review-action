@@ -8,7 +8,9 @@
     "paths": {
       "@/mindmap/*": ["mindmap/*"],
       "@/review/*": ["review/*"],
-      "@/shared/*": ["shared/*"]
+      "@/shared/*": ["shared/*"],
+      "@/local-testing": ["local-testing/index.ts"],
+      "@/local-testing/*": ["local-testing/*"]
     },
     "strict": true,
     "esModuleInterop": true,

@@ -2,8 +2,6 @@ export interface CodeChange {
     file: string;
     diffHunk: string;
     changeType: 'added' | 'modified' | 'deleted' | 'renamed';
-    linesAdded: number;
-    linesRemoved: number;
     functionsChanged: string[];
     classesChanged: string[];
     importsChanged: string[];
@@ -53,16 +51,15 @@ export declare class AICodeAnalyzer {
      * Process a single changed file with AI analysis
      * Replaces the static processChangedFile method
      */
-    processChangedFile(filename: string, diffPatch: string, changeType: 'added' | 'modified' | 'deleted' | 'renamed', linesAdded: number, linesRemoved: number): Promise<CodeChange>;
+    processChangedFile(filename: string, diffPatch: string, changeType: 'added' | 'modified' | 'deleted' | 'renamed'): Promise<CodeChange>;
     /**
-     * Process multiple files concurrently using ConcurrencyManager
+     * Process multiple files in parallel batches
+     * ClaudeClient handles rate limiting and concurrency
      */
     processChangedFilesConcurrently(files: Array<{
         filename: string;
         diffPatch: string;
         changeType: 'added' | 'modified' | 'deleted' | 'renamed';
-        linesAdded: number;
-        linesRemoved: number;
     }>): Promise<CodeChange[]>;
     /**
      * Perform AI analysis on a single file

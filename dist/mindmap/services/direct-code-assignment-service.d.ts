@@ -17,6 +17,11 @@ export declare class DirectCodeAssignmentService {
      */
     private validateCodeCoverage;
     /**
+     * Validate that all AI-assigned lines actually exist in parent code
+     * Throws error immediately if any assigned line doesn't exist in parent
+     */
+    private validateAIAssignedLinesExist;
+    /**
      * Extract all line content from code diffs for comparison
      */
     private extractAllLines;
@@ -28,6 +33,10 @@ export declare class DirectCodeAssignmentService {
      * Extract affected files from code diffs
      */
     private extractAffectedFiles;
+    /**
+     * Calculate confidence based on assignment quality
+     */
+    private calculateConfidence;
     /**
      * Generate child node ID
      */

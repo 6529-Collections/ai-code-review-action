@@ -7,7 +7,7 @@ export declare class ThemeService {
     private hierarchicalSimilarityService;
     private expansionEnabled;
     constructor(anthropicApiKey: string, consolidationConfig?: Partial<ConsolidationConfig>);
-    analyzeThemesWithEnhancedContext(gitService: import('@/shared/services/git-service').GitService): Promise<ThemeAnalysisResult>;
+    analyzeThemesWithEnhancedContext(gitService: import('@/shared/interfaces/git-service-interface').IGitService): Promise<ThemeAnalysisResult>;
     private calculateExpansionStats;
     private createFallbackThemes;
     /**

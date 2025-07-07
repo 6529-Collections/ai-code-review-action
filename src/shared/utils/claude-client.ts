@@ -55,7 +55,8 @@ export class ClaudeClient {
   // Static shared rate limiting components
   private static requestQueue: QueueItem[] = [];
   private static activeRequests = 0;
-  private static readonly MAX_CONCURRENT_REQUESTS = 5;
+  private static activeRequestsByContext: Map<string, number> = new Map();
+  private static readonly MAX_CONCURRENT_REQUESTS = 10;
   private static readonly MIN_REQUEST_INTERVAL = 200; // ms between requests
   private static isProcessing = false;
   private static lastRequestTime = 0;
@@ -137,11 +138,9 @@ export class ClaudeClient {
       // Start processing if not already running
       ClaudeClient.startQueueProcessor();
 
-      // Log queue status every 10 requests
+      // Log enhanced queue status every 10 requests
       if (ClaudeClient.queueMetrics.totalQueued % 10 === 0) {
-        console.log(
-          `[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting, ${ClaudeClient.activeRequests} active, ${ClaudeClient.queueMetrics.totalProcessed} completed`
-        );
+        ClaudeClient.logEnhancedQueueStatus();
       }
     });
   }
@@ -153,42 +152,86 @@ export class ClaudeClient {
     if (!ClaudeClient.isProcessing) {
       ClaudeClient.isProcessing = true;
       ClaudeClient.processingPromise = ClaudeClient.processQueue();
+      
+      // Start periodic diagnostic logging
+      ClaudeClient.startPeriodicLogging();
     }
+  }
+
+  /**
+   * Start periodic diagnostic logging every 10 seconds
+   */
+  private static startPeriodicLogging(): void {
+    const logInterval = setInterval(() => {
+      if (ClaudeClient.requestQueue.length > 0 || ClaudeClient.activeRequests > 0) {
+        const cbActive = Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil;
+        console.log(`[CLAUDE-DIAGNOSTIC] active: ${ClaudeClient.activeRequests}/${ClaudeClient.MAX_CONCURRENT_REQUESTS}, queue: ${ClaudeClient.requestQueue.length}, processed: ${ClaudeClient.queueMetrics.totalProcessed}/${ClaudeClient.queueMetrics.totalQueued}${cbActive ? ', CB-ACTIVE' : ''}`);
+      } else if (ClaudeClient.queueMetrics.totalProcessed > 0) {
+        // Stop logging when queue is empty and some work was done
+        clearInterval(logInterval);
+        console.log('[CLAUDE-DIAGNOSTIC] Queue empty, stopping logs');
+      }
+    }, 10000); // Every 10 seconds
   }
 
   /**
    * Process the request queue with rate limiting
    */
   private static async processQueue(): Promise<void> {
+    let loopIterations = 0;
+    let lastDiagnosticLog = Date.now();
+    
     while (
       ClaudeClient.requestQueue.length > 0 ||
       ClaudeClient.activeRequests > 0
     ) {
+      loopIterations++;
+      
+      // Early termination check - if truly idle, exit immediately
+      if (ClaudeClient.requestQueue.length === 0 && ClaudeClient.activeRequests === 0) {
+        break;
+      }
+      
+      // Log diagnostics every 5 seconds while processing
+      if (Date.now() - lastDiagnosticLog > 5000) {
+        console.log(`[CLAUDE-QUEUE] Loop #${loopIterations} | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}`);
+        lastDiagnosticLog = Date.now();
+      }
+      
       // Check circuit breaker
       if (Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil) {
+        console.log('[CLAUDE-QUEUE] Circuit breaker active, sleeping 1000ms');
         await ClaudeClient.sleep(1000);
         continue;
       }
 
       // Check if we can start new request
-      if (
-        ClaudeClient.requestQueue.length > 0 &&
-        ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS &&
-        Date.now() - ClaudeClient.lastRequestTime >=
-          ClaudeClient.MIN_REQUEST_INTERVAL
-      ) {
+      const hasItemsInQueue = ClaudeClient.requestQueue.length > 0;
+      const hasCapacity = ClaudeClient.activeRequests < ClaudeClient.MAX_CONCURRENT_REQUESTS;
+      const intervalPassed = Date.now() - ClaudeClient.lastRequestTime >= ClaudeClient.MIN_REQUEST_INTERVAL;
+      
+      if (hasItemsInQueue && hasCapacity && intervalPassed) {
         const queueItem = ClaudeClient.requestQueue.shift()!;
         ClaudeClient.activeRequests++;
         ClaudeClient.lastRequestTime = Date.now();
+        
+        console.log(`[CLAUDE-QUEUE] Starting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
 
         // Process request asynchronously
         ClaudeClient.processRequest(queueItem);
       } else {
+        // Log why we can't start a new request (only if there are items in queue)
+        if (hasItemsInQueue && loopIterations % 100 === 0) { // Log every 100 iterations (5 seconds)
+          console.log(`[CLAUDE-QUEUE] Waiting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, reason: ${!hasCapacity ? 'capacity' : !intervalPassed ? 'interval' : 'unknown'}`);
+        }
+        
         // Wait briefly before checking again
         await ClaudeClient.sleep(50);
       }
     }
 
+    console.log(`[CLAUDE-QUEUE] Complete all | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, iterations: ${loopIterations}`);
+    
     ClaudeClient.isProcessing = false;
     ClaudeClient.processingPromise = null;
   }
@@ -198,6 +241,11 @@ export class ClaudeClient {
    */
   private static async processRequest(queueItem: QueueItem): Promise<void> {
     const startTime = Date.now();
+    const contextKey = ClaudeClient.getCategoryKey(queueItem.context);
+    
+    // Track active request by context
+    const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+    ClaudeClient.activeRequestsByContext.set(contextKey, currentActive + 1);
 
     try {
       // Create a temporary client instance for execution
@@ -236,6 +284,16 @@ export class ClaudeClient {
       await ClaudeClient.handleRequestError(queueItem, error);
     } finally {
       ClaudeClient.activeRequests--;
+      
+      console.log(`[CLAUDE-QUEUE] Complete | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
+      
+      // Remove from active context tracking
+      const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
+      if (currentActive <= 1) {
+        ClaudeClient.activeRequestsByContext.delete(contextKey);
+      } else {
+        ClaudeClient.activeRequestsByContext.set(contextKey, currentActive - 1);
+      }
     }
   }
 
@@ -441,6 +499,7 @@ export class ClaudeClient {
 
     ClaudeClient.requestQueue = [];
     ClaudeClient.activeRequests = 0;
+    ClaudeClient.activeRequestsByContext.clear();
     ClaudeClient.isProcessing = false;
     ClaudeClient.processingPromise = null;
 
@@ -498,5 +557,78 @@ export class ClaudeClient {
         hasPromise: ClaudeClient.processingPromise !== null,
       },
     };
+  }
+
+  /**
+   * Log enhanced queue status with categorization
+   */
+  private static logEnhancedQueueStatus(): void {
+    const queueStats = ClaudeClient.getQueueCategoryStats();
+    const activeStats = ClaudeClient.getActiveCategoryStats();
+    
+    // Build waiting queue breakdown
+    const waitingBreakdown = Object.entries(queueStats)
+      .filter(([, count]) => count > 0)
+      .map(([context, count]) => `${count}×${context}`)
+      .join(', ');
+    
+    // Build active breakdown
+    const activeBreakdown = Object.entries(activeStats)
+      .filter(([, count]) => count > 0)
+      .map(([context, count]) => `${count}×${context}`)
+      .join(', ');
+    
+    const waitingDesc = waitingBreakdown || '0';
+    const activeDesc = activeBreakdown || '0';
+    
+    console.log(
+      `[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`
+    );
+  }
+
+  /**
+   * Get category statistics for waiting queue items
+   */
+  private static getQueueCategoryStats(): Record<string, number> {
+    const stats: Record<string, number> = {};
+    
+    for (const item of ClaudeClient.requestQueue) {
+      const key = ClaudeClient.getCategoryKey(item.context);
+      stats[key] = (stats[key] || 0) + 1;
+    }
+    
+    return stats;
+  }
+
+  /**
+   * Get category statistics for active requests
+   */
+  private static getActiveCategoryStats(): Record<string, number> {
+    const stats: Record<string, number> = {};
+    
+    for (const [context, count] of ClaudeClient.activeRequestsByContext) {
+      stats[context] = count;
+    }
+    
+    return stats;
+  }
+
+  /**
+   * Simplify context names for display
+   */
+  private static getCategoryKey(context: string): string {
+    // Simplify common context names for readability
+    const contextMap: Record<string, string> = {
+      'similarity-analysis': 'similarity',
+      'batch-similarity': 'batch-sim',
+      'domain-classification': 'domain', 
+      'multi-domain-analysis': 'multi-domain',
+      'theme-expansion': 'expansion',
+      'theme-analysis': 'theme',
+      'code-analysis': 'code',
+      'hierarchical-analysis': 'hierarchy'
+    };
+    
+    return contextMap[context] || context;
   }
 }

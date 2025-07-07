@@ -10,8 +10,9 @@ export declare class BusinessDomainService {
      */
     private extractBusinessDomainWithAI;
     /**
-     * Fallback domain extraction for when AI fails
+     * Fallback business capability extraction for when AI fails
      * PRD: "Graceful degradation - never fail completely"
+     * Maps technical changes to user-centric business capabilities
      */
     private extractBusinessDomainFallback;
     extractBusinessDomainWithContext(name: string, description: string, enhancedContext?: {

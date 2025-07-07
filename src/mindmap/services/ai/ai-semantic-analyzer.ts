@@ -30,7 +30,7 @@ export class AISemanticAnalyzer {
     const prompt = this.buildSemanticAnalysisPrompt(context);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'semantic-analysis');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'changeType',
         'semanticImpact',
@@ -297,7 +297,7 @@ RESPOND WITH ONLY VALID JSON:
     const prompt = this.buildFilePurposePrompt(filePath, content, context);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'semantic-analysis');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'actualPurpose',
         'businessRelevance',
@@ -462,7 +462,7 @@ RESPOND WITH ONLY VALID JSON:
     const prompt = this.buildRelatedChangesPrompt(contexts);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'semantic-analysis');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'clusters',
       ]);

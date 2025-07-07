@@ -32,7 +32,7 @@ An AI-driven system that:
 
 #### Leaf Level (Atomic Changes)
 - **Definition**: Smallest unit-testable code change
-- **Size**: Typically 5-15 lines of focused change
+- **Characteristics**: Single responsibility, independently testable
 - **Content**: Specific code diff that could have its own unit test
 
 ## Data Structure at Each Level
@@ -48,9 +48,9 @@ Node:
   affectedFiles: List of files involved at this level
   codeDiff: Relevant code changes for this specific node
   metrics:
-    linesAdded: X
-    linesRemoved: Y
     complexity: low|medium|high
+    affectedFiles: number
+    changeTypes: [config|logic|ui|test]
   children: [] (empty for leaves)
   crossReferences: [] (IDs of related nodes for shared code)
 ```

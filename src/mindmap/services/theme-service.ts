@@ -14,7 +14,6 @@ import {
   SmartContext,
 } from '@/shared/utils/ai-code-analyzer';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
-import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { performanceTracker } from '@/shared/utils/performance-tracker';
 import { 
   Theme,
@@ -25,12 +24,11 @@ import {
   ChunkAnalysisResult,
   ThemeAnalysisResult
 } from '@/shared/types/theme-types';
+import { BusinessPromptTemplates } from '../utils/business-prompt-templates';
 
-// Concurrency configuration
-const PARALLEL_CONFIG = {
-  CONCURRENCY_LIMIT: 5,
+// Processing configuration
+const PROCESSING_CONFIG = {
   CHUNK_TIMEOUT: 120000, // 2 minutes
-  MAX_RETRIES: 3,
 } as const;
 
 
@@ -71,7 +69,6 @@ class ClaudeService {
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      console.warn('Claude analysis failed, using fallback:', error);
       return this.createFallbackAnalysis(chunk);
     }
   }
@@ -91,7 +88,6 @@ class ClaudeService {
       enhancedContext += `\n\nPre-analyzed code structure:`;
       enhancedContext += `\nFile type: ${codeChange.fileType}`;
       enhancedContext += `\nComplexity: ${codeChange.codeComplexity}`;
-      enhancedContext += `\nChanges: +${codeChange.linesAdded}/-${codeChange.linesRemoved} lines`;
 
       if (codeChange.functionsChanged.length > 0) {
         enhancedContext += `\nFunctions changed: ${codeChange.functionsChanged.join(', ')}`;
@@ -114,39 +110,12 @@ class ClaudeService {
       }
     }
 
-    return `${enhancedContext}
-
-Analyze this code change. Be specific but concise.
-
-File: ${chunk.filename}
-Code changes:
-${truncatedContent}
-
-Focus on WHAT changed with exact details:
-- Exact values changed (before → after)
-- Business purpose of the changes
-- User impact
-
-Examples:
-✅ "Changed pull_request.branches from ['main'] to ['**'] in .github/workflows/test.yml"
-✅ "Added detailedDescription field to ConsolidatedTheme interface"
-❌ "Enhanced workflow configuration for improved flexibility"
-❌ "Expanded theme structure with comprehensive analysis capabilities"
-
-CRITICAL: Respond with ONLY valid JSON:
-
-{
-  "themeName": "what this accomplishes (max 10 words)",
-  "description": "one specific sentence with exact names/values (max 20 words)",
-  "detailedDescription": "additional context if needed (max 15 words, or null)",
-  "businessImpact": "user benefit in one sentence (max 15 words)",
-  "technicalSummary": "exact technical change (max 12 words)",
-  "keyChanges": ["max 3 changes, each max 10 words"],
-  "userScenario": null,
-  "suggestedParent": null,
-  "confidence": 0.8,
-  "codePattern": "change type (max 3 words)"
-}`;
+    // Use business-first prompt template for theme analysis
+    return BusinessPromptTemplates.createBusinessImpactPrompt(
+      chunk.filename,
+      truncatedContent,
+      enhancedContext
+    );
   }
 
   private parseClaudeResponse(
@@ -154,14 +123,50 @@ CRITICAL: Respond with ONLY valid JSON:
     chunk: CodeChunk,
     codeChange?: CodeChange
   ): ChunkAnalysis {
-    const extractionResult = JsonExtractor.extractAndValidateJson(
+    // Try new business capability format first
+    const businessCapabilityResult = JsonExtractor.extractAndValidateJson(
+      output,
+      'object',
+      ['businessCapability', 'userValue', 'businessProcess', 'confidence']
+    );
+
+    if (businessCapabilityResult.success) {
+      const data = businessCapabilityResult.data as {
+        businessCapability?: string;
+        userValue?: string;
+        businessProcess?: string;
+        userScenarios?: string[];
+        businessDomain?: string;
+        executiveSummary?: string;
+        technicalImplementation?: string;
+        confidence?: number;
+      };
+      
+      return {
+        themeName: data.businessCapability || 'Unknown Business Capability',
+        description: data.userValue || 'No user value identified',
+        businessImpact: data.businessProcess || 'Unknown business process',
+        confidence: data.confidence || 0.5,
+        codePattern: data.businessDomain || 'General Enhancement',
+        suggestedParent: undefined,
+        detailedDescription: data.executiveSummary,
+        technicalSummary: data.technicalImplementation,
+        keyChanges: data.userScenarios,
+        userScenario: data.userScenarios?.[0],
+        mainFunctionsChanged: codeChange?.functionsChanged || [],
+        mainClassesChanged: codeChange?.classesChanged || [],
+      };
+    }
+
+    // Fallback to legacy format for backward compatibility
+    const legacyResult = JsonExtractor.extractAndValidateJson(
       output,
       'object',
       ['themeName', 'description', 'businessImpact', 'confidence']
     );
 
-    if (extractionResult.success) {
-      const data = extractionResult.data as {
+    if (legacyResult.success) {
+      const data = legacyResult.data as {
         themeName?: string;
         description?: string;
         businessImpact?: string;
@@ -193,29 +198,44 @@ CRITICAL: Respond with ONLY valid JSON:
       };
     }
 
-    console.warn(
-      '[THEME-SERVICE] JSON extraction failed:',
-      extractionResult.error
-    );
-    if (extractionResult.originalResponse) {
-      console.debug(
-        '[THEME-SERVICE] Original response:',
-        extractionResult.originalResponse?.substring(0, 200) + '...'
-      );
-    }
-
     // Use the better fallback that includes filename
     return this.createFallbackAnalysis(chunk);
   }
 
   private createFallbackAnalysis(chunk: CodeChunk): ChunkAnalysis {
+    // Try to infer business capability from filename
+    const fileName = chunk.filename.toLowerCase();
+    let businessCapability = 'User Experience Enhancement';
+    let userValue = 'Users benefit from improved system functionality';
+    let businessProcess = 'General system improvement and optimization';
+    
+    if (fileName.includes('auth') || fileName.includes('login')) {
+      businessCapability = 'User Account Management';
+      userValue = 'Users access their accounts securely and efficiently';
+      businessProcess = 'Secure user authentication and access control';
+    } else if (fileName.includes('test') || fileName.includes('spec')) {
+      businessCapability = 'Development Workflow Optimization';
+      userValue = 'Developers catch issues before users experience them';
+      businessProcess = 'Quality assurance and automated testing';
+    } else if (fileName.includes('config') || fileName.includes('setting')) {
+      businessCapability = 'Development Workflow Optimization';
+      userValue = 'Developers deploy and maintain systems reliably';
+      businessProcess = 'System configuration and deployment management';
+    } else if (fileName.includes('ui') || fileName.includes('component')) {
+      businessCapability = 'User Experience Enhancement';
+      userValue = 'Users accomplish tasks intuitively and efficiently';
+      businessProcess = 'Intuitive user interface and interaction design';
+    }
+    
     return {
-      themeName: `Changes in ${chunk.filename}`,
-      description: 'Analysis unavailable - using fallback',
-      businessImpact: 'Unknown impact',
-      confidence: 0.3,
-      codePattern: 'File modification',
+      themeName: businessCapability,
+      description: userValue,
+      businessImpact: businessProcess,
+      confidence: 0.4,
+      codePattern: 'User Experience Enhancement',
       suggestedParent: undefined,
+      detailedDescription: `Business analysis unavailable - inferred from file: ${chunk.filename}`,
+      technicalSummary: `Modifications in ${chunk.filename}`,
     };
   }
 }
@@ -282,9 +302,6 @@ class ThemeContextManager {
   ): void {
     for (const result of results) {
       if (result.error) {
-        console.warn(
-          `Chunk analysis failed for ${result.chunk.filename}: ${result.error}`
-        );
       }
       const placement = this.determineThemePlacement(result.analysis);
       const codeChange = codeChangeMap.get(result.chunk.filename);
@@ -368,13 +385,9 @@ class ThemeContextManager {
 
           // Update metrics
           if (existingTheme.codeMetrics && codeChange) {
-            existingTheme.codeMetrics.linesAdded += codeChange.linesAdded;
-            existingTheme.codeMetrics.linesRemoved += codeChange.linesRemoved;
             existingTheme.codeMetrics.filesChanged += 1;
           } else if (codeChange) {
             existingTheme.codeMetrics = {
-              linesAdded: codeChange.linesAdded,
-              linesRemoved: codeChange.linesRemoved,
               filesChanged: 1,
             };
           }
@@ -429,8 +442,6 @@ class ThemeContextManager {
         mainClassesChanged: analysis.mainClassesChanged,
         codeMetrics: codeChange
           ? {
-              linesAdded: codeChange.linesAdded,
-              linesRemoved: codeChange.linesRemoved,
               filesChanged: 1,
             }
           : undefined,
@@ -484,31 +495,22 @@ export class ThemeService {
   }
 
   async analyzeThemesWithEnhancedContext(
-    gitService: import('@/shared/services/git-service').GitService
+    gitService: import('@/shared/interfaces/git-service-interface').IGitService
   ): Promise<ThemeAnalysisResult> {
     performanceTracker.startTiming('Code Analysis');
-    console.log('[THEME-SERVICE] Starting enhanced theme analysis');
     const startTime = Date.now();
 
     // Get enhanced code changes instead of basic changed files
     const codeChanges = await gitService.getEnhancedChangedFiles();
-    console.log(
-      `[THEME-SERVICE] Got ${codeChanges.length} enhanced code changes`
-    );
 
     // Analyze the code changes to build smart context with AI
     const aiAnalyzer = new AICodeAnalyzer(this.anthropicApiKey);
     const smartContext = await aiAnalyzer.analyzeCodeChanges(codeChanges);
-    console.log(
-      `[THEME-SERVICE] AI-enhanced smart context: ${smartContext.contextSummary}`
-    );
 
     // Convert to the legacy format for ChunkProcessor compatibility
     const changedFiles = codeChanges.map((change) => ({
       filename: change.file,
       status: change.changeType as 'added' | 'modified' | 'removed' | 'renamed',
-      additions: change.linesAdded,
-      deletions: change.linesRemoved,
       patch: change.diffHunk,
     }));
 
@@ -552,64 +554,43 @@ export class ThemeService {
 
       const chunks = chunkProcessor.splitChangedFiles(changedFiles);
 
-      // Parallel processing: analyze all chunks concurrently, then update context sequentially
-      console.log(
-        `[THEME-SERVICE] Starting concurrent analysis of ${chunks.length} chunks`
-      );
+      // Process chunks in parallel batches
+      // ClaudeClient handles rate limiting and queuing
 
-      const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-        chunks,
-        (chunk) => {
-          const codeChange = codeChangeMap.get(chunk.filename);
-          return contextManager.analyzeChunkOnly(chunk, codeChange);
-        },
-        {
-          concurrencyLimit: PARALLEL_CONFIG.CONCURRENCY_LIMIT,
-          maxRetries: PARALLEL_CONFIG.MAX_RETRIES,
-          enableLogging: false,
-          onProgress: (completed, total) => {
-            console.log(
-              `[THEME-SERVICE] Chunk analysis progress: ${completed}/${total}`
-            );
-          },
-          onError: (error, chunk, retryCount) => {
-            console.warn(
-              `[THEME-SERVICE] Retry ${retryCount} for chunk ${chunk.filename}: ${error.message}`
-            );
-          },
-        }
-      );
-
-      // Transform results to handle ConcurrencyManager's mixed return types
       const analysisResults: ChunkAnalysisResult[] = [];
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
-        if (result && typeof result === 'object' && 'error' in result) {
-          // Convert ConcurrencyManager error format to ChunkAnalysisResult format
-          const errorResult = result as { error: Error; item: CodeChunk };
-          console.warn(
-            `[THEME-SERVICE] Chunk analysis failed for ${errorResult.item.filename}: ${errorResult.error.message}`
-          );
-          analysisResults.push({
-            chunk: errorResult.item,
-            analysis: {
-              themeName: `Changes in ${errorResult.item.filename}`,
-              description: 'Analysis failed - using fallback',
-              businessImpact: 'Unknown impact',
-              confidence: 0.3,
-              codePattern: 'File modification',
-              suggestedParent: undefined,
-            },
-            error: errorResult.error.message,
-          });
-        } else {
-          analysisResults.push(result as ChunkAnalysisResult);
-        }
+      const batchSize = 10; // Match ClaudeClient MAX_CONCURRENT_REQUESTS
+      
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        const batch = chunks.slice(i, Math.min(i + batchSize, chunks.length));
+        
+        // Process batch in parallel
+        const batchPromises = batch.map(async (chunk) => {
+          try {
+            const codeChange = codeChangeMap.get(chunk.filename);
+            const result = await contextManager.analyzeChunkOnly(chunk, codeChange);
+            return result;
+          } catch (error) {
+            const errorObj = error instanceof Error ? error : new Error(String(error));
+            return {
+              chunk,
+              analysis: {
+                themeName: `Changes in ${chunk.filename}`,
+                description: 'Analysis failed - using fallback',
+                businessImpact: 'Unknown impact',
+                confidence: 0.3,
+                codePattern: 'File modification',
+                suggestedParent: undefined,
+              },
+              error: errorObj.message,
+            };
+          }
+        });
+        
+        // Wait for all chunks in batch to complete
+        const batchResults = await Promise.all(batchPromises);
+        analysisResults.push(...batchResults);
       }
 
-      console.log(
-        `[THEME-SERVICE] Analysis completed: ${analysisResults.length} chunks processed`
-      );
 
       // Sequential context updates to maintain thread safety
       contextManager.processBatchResults(analysisResults, codeChangeMap);
@@ -619,9 +600,6 @@ export class ThemeService {
       const originalThemes = contextManager.getRootThemes();
 
       // Pipeline optimization: Overlap consolidation and expansion preparation
-      console.log(
-        '[THEME-SERVICE] Starting pipeline optimization with overlapped phases'
-      );
       performanceTracker.endTiming('Code Analysis');
 
       performanceTracker.startTiming('Theme Consolidation');
@@ -651,9 +629,6 @@ export class ThemeService {
 
       performanceTracker.endTiming('Theme Consolidation');
 
-      console.log(
-        `[THEME-SERVICE] Pipeline phase 1 completed in ${consolidationTime}ms`
-      );
 
       // Apply hierarchical expansion if enabled
       let expansionTime = 0;
@@ -661,24 +636,15 @@ export class ThemeService {
 
       if (this.expansionEnabled && consolidatedThemes.length > 0) {
         performanceTracker.startTiming('Theme Expansion');
-        console.log(
-          '[THEME-SERVICE] Starting AI-driven hierarchical expansion'
-        );
         const expansionStartTime = Date.now();
 
         try {
           // Expand themes hierarchically using pre-identified candidates for optimization
-          console.log(
-            `[DEBUG-THEME-SERVICE] Before expansion: ${consolidatedThemes.length} themes, ${expansionCandidates.length} pre-identified candidates`
-          );
           const beforeExpansionCount = consolidatedThemes.length;
           const expandedThemes =
             await this.expansionService.expandThemesHierarchically(
               consolidatedThemes
             );
-          console.log(
-            `[DEBUG-THEME-SERVICE] After expansion: ${expandedThemes.length} themes`
-          );
 
           // Apply cross-level deduplication
           const minThemesForCrossLevel = parseInt(
@@ -689,7 +655,6 @@ export class ThemeService {
             expandedThemes.length >= minThemesForCrossLevel
           ) {
             performanceTracker.startTiming('Cross-Level Deduplication');
-            console.log('[THEME-SERVICE] Running cross-level deduplication...');
             const beforeDedup = expandedThemes.length;
             const dedupStartTime = Date.now();
 
@@ -706,14 +671,6 @@ export class ThemeService {
             );
 
             performanceTracker.endTiming('Cross-Level Deduplication');
-          } else if (process.env.SKIP_CROSS_LEVEL_DEDUP === 'true') {
-            console.log(
-              '[THEME-SERVICE] Skipping cross-level deduplication (SKIP_CROSS_LEVEL_DEDUP=true)'
-            );
-          } else {
-            console.log(
-              `[THEME-SERVICE] Skipping cross-level deduplication: ${expandedThemes.length} themes < minimum ${minThemesForCrossLevel}`
-            );
           }
 
           // Track expansion effectiveness
@@ -726,21 +683,12 @@ export class ThemeService {
 
           // Update consolidated themes with expanded and deduplicated results
           consolidatedThemes = expandedThemes; // For now, use expanded themes directly
-          console.log(
-            `[DEBUG-THEME-SERVICE] Final themes after processing: ${consolidatedThemes.length}`
-          );
 
           // Calculate expansion statistics
           expansionStats = this.calculateExpansionStats(consolidatedThemes);
 
-          console.log(
-            `[THEME-SERVICE] Expansion complete: ${expansionStats.expandedThemes} themes expanded, max depth: ${expansionStats.maxDepth}`
-          );
         } catch (error) {
-          console.warn(
-            '[THEME-SERVICE] Expansion failed, using consolidated themes:',
-            error
-          );
+          // Expansion failed, continue with consolidated themes
         }
 
         expansionTime = Date.now() - expansionStartTime;
@@ -788,7 +736,6 @@ export class ThemeService {
         analysisResult.expandable.hasChildThemes = hasHierarchy;
       }
     } catch (error) {
-      console.error('Theme analysis failed:', error);
       analysisResult.summary = 'Theme analysis failed - using fallback';
       const fallbackThemes = this.createFallbackThemes(changedFiles);
       analysisResult.themes = fallbackThemes.map((theme) => ({
@@ -909,10 +856,6 @@ export class ThemeService {
    * PRD: "Progressive rendering of deep trees" and "Lazy expansion for large PRs"
    */
   private async identifyExpansionCandidates(themes: Theme[]): Promise<Theme[]> {
-    console.log(
-      `[THEME-SERVICE] Identifying expansion candidates for ${themes.length} themes`
-    );
-
     const candidates: Theme[] = [];
 
     // Quick heuristic-based candidate identification (fast, runs in parallel with consolidation)
@@ -922,9 +865,6 @@ export class ThemeService {
       }
     }
 
-    console.log(
-      `[THEME-SERVICE] Identified ${candidates.length} expansion candidates`
-    );
     return candidates;
   }
 

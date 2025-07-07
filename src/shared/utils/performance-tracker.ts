@@ -1,4 +1,4 @@
-import { logger } from './logger';
+import { logger } from '../logger/logger';
 
 export interface TimingEntry {
   name: string;

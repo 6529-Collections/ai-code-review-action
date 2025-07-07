@@ -8,12 +8,12 @@ export declare class AIDomainAnalyzer {
     private claudeClient;
     constructor(anthropicApiKey: string);
     /**
-     * Classify business domain using AI semantic understanding
+     * Classify business capability using AI semantic understanding
      * PRD: Root level represents "distinct user flow, story, or business capability"
      */
     classifyBusinessDomain(context: AIAnalysisContext, semanticDiff?: SemanticDiff): Promise<AIDomainClassification>;
     /**
-     * Build AI prompt for business domain classification
+     * Build AI prompt for business capability classification
      * PRD: "Structure emerges from code, not forced into preset levels"
      */
     private buildDomainClassificationPrompt;
@@ -22,11 +22,15 @@ export declare class AIDomainAnalyzer {
      */
     private formatSemanticDiffContext;
     /**
-     * Validate and normalize AI domain classification response
+     * Transform business capability response to AIDomainClassification format
+     */
+    private transformToAIDomainClassification;
+    /**
+     * Validate and normalize AI domain classification response (legacy support)
      */
     private validateDomainClassification;
     /**
-     * Create fallback domain when AI analysis fails
+     * Create fallback business capability when AI analysis fails
      * PRD: "Graceful degradation - never fail completely"
      */
     private createFallbackDomain;

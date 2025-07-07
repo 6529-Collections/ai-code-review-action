@@ -1,7 +1,6 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
 import { CodeChange } from '@/shared/utils/ai-code-analyzer';
 import * as exec from '@actions/exec';
-import { ConcurrencyManager } from '@/shared/utils/concurrency-manager';
 import { SecureFileNamer } from '../utils/secure-file-namer';
 import { AIDomainAnalyzer } from './ai/ai-domain-analyzer';
 import { AIAnalysisContext } from '../types/mindmap-types';
@@ -17,56 +16,29 @@ export class BusinessDomainService {
   ): Promise<Map<string, ConsolidatedTheme[]>> {
     const domains = new Map<string, ConsolidatedTheme[]>();
 
-    console.log(
-      `[DOMAIN] Extracting business domains for ${themes.length} themes using batch processing`
-    );
 
     // Use batch processing for significant performance improvement
     const batchSize = this.calculateOptimalDomainBatchSize(themes.length);
     const batches = this.createDomainBatches(themes, batchSize);
 
-    console.log(
-      `[DOMAIN-BATCH] Split into ${batches.length} batches of ~${batchSize} themes each`
-    );
 
-    // Process batches concurrently
-    const results = await ConcurrencyManager.processConcurrentlyWithLimit(
-      batches,
-      async (batch) => {
-        return await this.processDomainBatch(batch);
-      },
-      {
-        concurrencyLimit: 3, // Fewer concurrent batches since each is larger
-        maxRetries: 2,
-        enableLogging: false,
-        onProgress: (completed, total) => {
-          const themesCompleted = completed * batchSize;
-          const totalThemes = themes.length;
-          console.log(
-            `[DOMAIN-BATCH] Progress: ${themesCompleted}/${totalThemes} themes processed (${completed}/${total} batches)`
-          );
-        },
-        onError: (error, batch, retryCount) => {
-          console.warn(
-            `[DOMAIN-BATCH] Retry ${retryCount} for batch of ${batch.length} themes: ${error.message}`
-          );
-        },
-      }
+    // Process batches using Promise.all
+    // ClaudeClient handles rate limiting and queuing
+    const results = await Promise.all(
+      batches.map(async (batch) => {
+        try {
+          return await this.processDomainBatch(batch);
+        } catch (error) {
+          console.warn(`[BUSINESS-DOMAIN] Batch failed: ${error}`);
+          return []; // Return empty array for failed batch
+        }
+      })
     );
 
     // Flatten batch results and group by domain
     const flatResults: Array<{ theme: ConsolidatedTheme; domain: string }> = [];
-
     for (const batchResult of results) {
-      if (
-        batchResult &&
-        typeof batchResult === 'object' &&
-        'error' in batchResult
-      ) {
-        console.warn(`[DOMAIN-BATCH] Batch processing failed, using fallback`);
-        // Handle failed batch - use fallback for all themes in the failed batch
-        continue;
-      } else if (Array.isArray(batchResult)) {
+      if (Array.isArray(batchResult)) {
         flatResults.push(...batchResult);
       }
     }
@@ -74,7 +46,6 @@ export class BusinessDomainService {
     // Group results by domain
     for (const result of flatResults) {
       const { theme, domain } = result;
-      console.log(`[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`);
 
       if (!domains.has(domain)) {
         domains.set(domain, []);
@@ -110,15 +81,9 @@ export class BusinessDomainService {
         return domainClassification.domain;
       } else {
         // Medium confidence - use with warning
-        console.log(
-          `[DOMAIN] Medium confidence (${domainClassification.confidence}) for theme "${theme.name}": ${domainClassification.domain}`
-        );
         return domainClassification.domain;
       }
     } catch (error) {
-      console.warn(
-        `[DOMAIN] AI classification failed for theme "${theme.name}": ${error}`
-      );
 
       // Graceful degradation: use simplified heuristic fallback
       return this.extractBusinessDomainFallback(theme.name, theme.description);
@@ -126,8 +91,9 @@ export class BusinessDomainService {
   }
 
   /**
-   * Fallback domain extraction for when AI fails
+   * Fallback business capability extraction for when AI fails
    * PRD: "Graceful degradation - never fail completely"
+   * Maps technical changes to user-centric business capabilities
    */
   private extractBusinessDomainFallback(
     name: string,
@@ -135,51 +101,115 @@ export class BusinessDomainService {
   ): string {
     const text = (name + ' ' + description).toLowerCase();
 
-    // Simple heuristics for common domains
-    if (text.includes('test') || text.includes('spec')) {
-      return 'Quality Assurance';
+    // Business capability heuristics focused on user value
+    if (text.includes('test') || text.includes('spec') || text.includes('quality')) {
+      return 'Development Workflow Optimization';
     }
-    if (text.includes('config') || text.includes('setting')) {
-      return 'System Configuration';
+    if (text.includes('config') || text.includes('setting') || text.includes('deploy')) {
+      return 'Development Workflow Optimization';
     }
     if (
       text.includes('auth') ||
       text.includes('login') ||
-      text.includes('user')
+      text.includes('password') ||
+      text.includes('security') ||
+      text.includes('account')
     ) {
-      return 'User Management';
+      return 'User Account Management';
     }
     if (
-      text.includes('api') ||
-      text.includes('endpoint') ||
-      text.includes('service')
+      text.includes('payment') ||
+      text.includes('purchase') ||
+      text.includes('order') ||
+      text.includes('transaction') ||
+      text.includes('billing')
     ) {
-      return 'API Services';
+      return 'Transaction Processing';
+    }
+    if (
+      text.includes('search') ||
+      text.includes('discover') ||
+      text.includes('browse') ||
+      text.includes('filter') ||
+      text.includes('recommend')
+    ) {
+      return 'Content Discovery';
+    }
+    if (
+      text.includes('message') ||
+      text.includes('notification') ||
+      text.includes('email') ||
+      text.includes('alert') ||
+      text.includes('communication')
+    ) {
+      return 'Communication & Collaboration';
     }
     if (
       text.includes('ui') ||
       text.includes('component') ||
-      text.includes('interface')
+      text.includes('interface') ||
+      text.includes('design') ||
+      text.includes('layout')
     ) {
-      return 'User Interface';
+      return 'User Experience Enhancement';
     }
     if (
       text.includes('data') ||
       text.includes('database') ||
-      text.includes('storage')
+      text.includes('storage') ||
+      text.includes('backup') ||
+      text.includes('export')
     ) {
       return 'Data Management';
     }
     if (
+      text.includes('api') ||
+      text.includes('endpoint') ||
+      text.includes('service') ||
+      text.includes('integration') ||
+      text.includes('connect')
+    ) {
+      return 'Integration & Connectivity';
+    }
+    if (
+      text.includes('report') ||
+      text.includes('analytics') ||
+      text.includes('dashboard') ||
+      text.includes('metrics') ||
+      text.includes('insights')
+    ) {
+      return 'Analytics & Insights';
+    }
+    if (
+      text.includes('workflow') ||
+      text.includes('automation') ||
+      text.includes('process') ||
+      text.includes('efficiency') ||
+      text.includes('streamline')
+    ) {
+      return 'Workflow Automation';
+    }
+    if (
+      text.includes('create') ||
+      text.includes('author') ||
+      text.includes('edit') ||
+      text.includes('publish') ||
+      text.includes('content')
+    ) {
+      return 'Content Creation & Publishing';
+    }
+    if (
       text.includes('error') ||
       text.includes('fix') ||
-      text.includes('bug')
+      text.includes('bug') ||
+      text.includes('debug') ||
+      text.includes('log')
     ) {
-      return 'Error Resolution';
+      return 'Development Workflow Optimization';
     }
 
-    // Default domain
-    return 'System Enhancement';
+    // Default to user experience enhancement
+    return 'User Experience Enhancement';
   }
 
   async extractBusinessDomainWithContext(
@@ -245,7 +275,6 @@ export class BusinessDomainService {
     }
 
     // Stage 2: Try structured prompt with context
-    console.log(`[AI-DOMAIN] Stage 1 failed for "${name}", trying Stage 2`);
     const stage2Result = await this.tryDomainExtraction(
       name,
       prompt,
@@ -257,9 +286,6 @@ export class BusinessDomainService {
     }
 
     // Stage 3: Enhanced fallback using AI response keywords
-    console.warn(
-      `[AI-DOMAIN] Both stages failed for "${name}", using enhanced fallback`
-    );
     return this.extractBusinessDomainFallback(name, description || '');
   }
 
@@ -284,14 +310,12 @@ export class BusinessDomainService {
         });
 
         const domain = this.parseDomainExtractionResponse(output);
-        console.log(`[AI-DOMAIN] ${stage} result for "${name}": "${domain}"`);
 
         return domain;
       } finally {
         cleanup();
       }
     } catch (error) {
-      console.warn(`[AI-DOMAIN] ${stage} extraction failed:`, error);
       return null;
     }
   }
@@ -385,9 +409,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
     // Second try: extract domain from longer response
     const extractedDomain = this.extractDomainFromResponse(output);
     if (extractedDomain && this.isValidDomainName(extractedDomain)) {
-      console.log(
-        `[AI-DOMAIN] Extracted domain from response: "${extractedDomain}"`
-      );
       return extractedDomain;
     }
 
@@ -490,11 +511,12 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
    * PRD: "Dynamic batch sizing" - adapt to content complexity
    */
   private calculateOptimalDomainBatchSize(totalThemes: number): number {
-    // Smaller batches for domain classification due to context complexity
-    if (totalThemes <= 5) return Math.max(1, totalThemes); // Very small PRs
-    if (totalThemes <= 20) return 10; // Small PRs - moderate batching
-    if (totalThemes <= 50) return 15; // Medium PRs - larger batches
-    return 20; // Large PRs - maximum batch size for domain analysis
+    // Optimize for concurrency while respecting domain analysis complexity
+    // Target: Create enough batches to utilize 6-10 concurrent request slots
+    if (totalThemes <= 5) return Math.max(1, Math.ceil(totalThemes / 3)); // 2-3 small batches
+    if (totalThemes <= 20) return Math.max(2, Math.ceil(totalThemes / 8)); // 6-8 batches
+    if (totalThemes <= 50) return Math.max(5, Math.ceil(totalThemes / 10)); // 8-10 batches
+    return Math.max(8, Math.ceil(totalThemes / 10)); // Target 10 batches for large sets
   }
 
   /**
@@ -545,16 +567,10 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
         }
 
         results.push({ theme, domain });
-        console.log(
-          `[DOMAIN-BATCH] Theme "${theme.name}" → Domain "${domain}"`
-        );
       }
 
       return results;
     } catch (error) {
-      console.warn(
-        `[DOMAIN-BATCH] Batch processing failed for ${themes.length} themes, falling back to individual processing: ${error}`
-      );
 
       // Fallback to individual processing
       return await this.processDomainBatchIndividually(themes);
@@ -574,9 +590,6 @@ OUTPUT THE DOMAIN NAME NOW (nothing else):`;
         const domain = await this.extractBusinessDomainWithAI(theme);
         results.push({ theme, domain });
       } catch (error) {
-        console.warn(
-          `[DOMAIN-BATCH-FALLBACK] Failed individual processing for "${theme.name}": ${error}`
-        );
         // Use fallback domain for failed individual processing
         const fallbackDomain = this.extractBusinessDomainFallback(
           theme.name,

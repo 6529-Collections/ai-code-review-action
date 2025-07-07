@@ -1,20 +1,14 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { ExpansionDecision } from './ai/ai-expansion-decision-service';
+import { ExpansionDecision as AIMindmapExpansionDecision } from '../types/mindmap-types';
 export interface ExpansionConfig {
     maxDepth: number;
-    concurrencyLimit: number;
-    maxRetries: number;
-    retryDelay: number;
-    retryBackoffMultiplier: number;
     enableProgressLogging: boolean;
-    dynamicConcurrency: boolean;
-    enableJitter: boolean;
 }
 export declare const DEFAULT_EXPANSION_CONFIG: ExpansionConfig;
 export interface ExpansionCandidate {
     theme: ConsolidatedTheme;
     parentTheme?: ConsolidatedTheme;
-    expansionDecision: ExpansionDecision;
+    expansionDecision: AIMindmapExpansionDecision;
 }
 export interface SubThemeAnalysis {
     subThemes: ConsolidatedTheme[];
@@ -58,20 +52,20 @@ export interface ExpansionStopReason {
     reason: 'atomic' | 'ai-decision' | 'max-depth' | 'error';
     details: string;
     fileCount: number;
-    lineCount: number;
 }
 export declare class ThemeExpansionService {
     private claudeClient;
     private cache;
     private config;
-    private aiDecisionService;
+    private aiMindmapService;
+    private converter;
     private effectiveness;
     private expansionStopReasons;
     constructor(anthropicApiKey: string, config?: Partial<ExpansionConfig>);
     /**
-     * Process items concurrently with limit and retry logic
+     * Process items sequentially with retry logic
+     * ClaudeClient handles rate limiting and queuing
      */
-    private processConcurrentlyWithLimit;
     /**
      * Main entry point for expanding themes hierarchically
      */
@@ -121,6 +115,11 @@ export declare class ThemeExpansionService {
      * Convert suggested sub-themes to ConsolidatedTheme objects
      */
     private convertSuggestedToConsolidatedThemes;
+    /**
+     * NEW: Convert DirectChildAssignment to ConsolidatedThemes
+     * This is the new system that uses proper AI code assignment
+     */
+    private convertDirectAssignmentToConsolidatedThemes;
     /**
      * Get effectiveness metrics for this expansion analysis
      */

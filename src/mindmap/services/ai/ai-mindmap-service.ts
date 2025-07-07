@@ -30,41 +30,196 @@ export class AIMindmapService {
     node: MindmapNode,
     currentDepth: number
   ): Promise<ExpansionDecision> {
-    const prompt = this.buildDirectAssignmentPrompt(node, currentDepth);
+    return this.attemptExpansionWithRetry(node, currentDepth, 0);
+  }
 
+  /**
+   * Attempt expansion with AI-only retry strategy
+   */
+  private async attemptExpansionWithRetry(
+    node: MindmapNode,
+    currentDepth: number,
+    retryCount: number
+  ): Promise<ExpansionDecision> {
+    const maxRetries = 2;
+    
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const prompt = retryCount === 0 
+        ? this.buildDirectAssignmentPrompt(node, currentDepth)
+        : this.buildEnhancedCodeAssignmentPrompt(node, currentDepth, retryCount);
+
+      const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
-        'shouldExpand',
+        'shouldExpand', 'isAtomic', 'confidence'
       ]);
 
+      if (!result.success) {
+        throw new Error(`Invalid JSON response: ${result.error}`);
+      }
+
+      const data = result.data as DirectExpansionResponse;
+
+      // Strict validation - no fallbacks
+      if (data.shouldExpand && (!data.children || data.children.length === 0)) {
+        throw new Error('AI indicated expansion but provided no children');
+      }
+
+      // Validate code assignments if expanding
+      let children: DirectChildAssignment[] | undefined;
+      if (data.shouldExpand && data.children) {
+        children = this.validateDirectAssignments(data.children);
+        if (children.length === 0) {
+          throw new Error('AI provided children but none had valid code assignments');
+        }
+      }
+
+      return {
+        shouldExpand: data.shouldExpand,
+        isAtomic: data.isAtomic || !data.shouldExpand,
+        atomicReason: data.atomicReason || (data.shouldExpand ? undefined : 'AI determined this is atomic'),
+        children,
+        confidence: data.confidence || 0.8,
+      };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logInfo(`AI expansion attempt ${retryCount + 1} failed for "${node.name}": ${errorMessage}`);
+
+      // Retry with enhanced prompt if we haven't exhausted retries
+      if (retryCount < maxRetries) {
+        logInfo(`Retrying expansion for "${node.name}" with enhanced prompt (attempt ${retryCount + 2})`);
+        return this.attemptExpansionWithRetry(node, currentDepth, retryCount + 1);
+      }
+
+      // Final attempt: explicit code extraction
+      if (retryCount === maxRetries) {
+        logInfo(`Final attempt: explicit code extraction for "${node.name}"`);
+        return this.attemptExplicitCodeExtraction(node, currentDepth);
+      }
+
+      // No fallbacks - fail loudly
+      throw new Error(`AI expansion failed after ${maxRetries + 1} attempts for "${node.name}": ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Build enhanced prompt for retry attempts
+   */
+  private buildEnhancedCodeAssignmentPrompt(
+    node: MindmapNode,
+    currentDepth: number,
+    retryCount: number
+  ): string {
+    const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
+    
+    return `RETRY ${retryCount}: Previous response was invalid. You MUST provide proper code assignments.
+
+CRITICAL REQUIREMENTS:
+- If shouldExpand=true, you MUST provide children array with code assignments
+- Each child MUST have assignedCode with proper CodeDiff structure
+- Every line of parent code MUST be assigned to exactly one child
+- Use exact JSON format specified below
+
+CURRENT NODE: "${node.name}"
+Description: ${node.description}
+Depth: ${currentDepth}
+
+COMPLETE CODE TO ASSIGN:
+${completeCodeDiff}
+
+You must either:
+1. Set shouldExpand=false and explain why in atomicReason
+2. Set shouldExpand=true and provide complete code assignments
+
+RESPOND WITH EXACT JSON FORMAT:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean,
+  "atomicReason": "if atomic, specific reason (required if shouldExpand=false)",
+  "confidence": 0.0-1.0,
+  "children": [
+    {
+      "name": "Specific action name (max 8 words)",
+      "description": "What this child does (1-2 sentences)", 
+      "businessValue": "User impact (max 12 words)",
+      "technicalPurpose": "Technical function (max 10 words)",
+      "assignedCode": [
+        {
+          "file": "exact file path from parent",
+          "hunks": [
+            {
+              "oldStart": number,
+              "oldLines": number, 
+              "newStart": number,
+              "newLines": number,
+              "changes": [
+                {
+                  "type": "add|delete|context",
+                  "content": "exact line content from parent"
+                }
+              ]
+            }
+          ],
+          "ownership": "primary"
+        }
+      ],
+      "rationale": "Why separate (max 15 words)"
+    }
+  ]
+}`;
+  }
+
+  /**
+   * Final attempt: explicit code extraction for each potential child
+   */
+  private async attemptExplicitCodeExtraction(
+    node: MindmapNode,
+    currentDepth: number
+  ): Promise<ExpansionDecision> {
+    const prompt = `FINAL ATTEMPT: Extract code for potential sub-themes.
+
+NODE: "${node.name}"
+COMPLETE CODE:
+${this.formatCompleteCodeDiff(node.codeDiff)}
+
+First decide: Should this be expanded at all?
+If YES, identify 2-4 clear responsibilities and assign specific code to each.
+If NO, explain why it's atomic.
+
+RESPOND WITH JSON:
+{
+  "shouldExpand": boolean,
+  "isAtomic": boolean, 
+  "atomicReason": "specific reason if atomic",
+  "confidence": 0.0-1.0,
+  "children": [] // empty if not expanding
+}`;
+
+    try {
+      const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
+      const result = JsonExtractor.extractAndValidateJson(response, 'object', ['shouldExpand']);
+      
       if (result.success) {
         const data = result.data as DirectExpansionResponse;
-
-        // Validate code assignments if expanding
-        let children: DirectChildAssignment[] | undefined;
-        if (data.shouldExpand && data.children) {
-          children = this.validateDirectAssignments(data.children);
-        }
-
         return {
-          shouldExpand: data.shouldExpand,
-          isAtomic: data.isAtomic || false,
-          atomicReason: data.atomicReason,
-          children,
-          confidence: data.confidence || 0.8,
+          shouldExpand: data.shouldExpand || false,
+          isAtomic: data.isAtomic || !data.shouldExpand,
+          atomicReason: data.atomicReason || 'Explicit extraction determined atomic',
+          children: undefined, // No children on final fallback
+          confidence: data.confidence || 0.3,
         };
       }
     } catch (error) {
-      logInfo(`AI expansion decision failed for "${node.name}": ${error}`);
+      logInfo(`Explicit code extraction failed for "${node.name}": ${error}`);
     }
 
-    // Fallback: don't expand on error
+    // Absolute final fallback - treat as atomic
     return {
       shouldExpand: false,
       isAtomic: true,
-      atomicReason: 'AI analysis failed - treating as atomic',
-      confidence: 0.3,
+      atomicReason: 'All AI attempts failed - treating as atomic',
+      children: undefined,
+      confidence: 0.1,
     };
   }
 
@@ -77,10 +232,7 @@ export class AIMindmapService {
     currentDepth: number
   ): string {
     const completeCodeDiff = this.formatCompleteCodeDiff(node.codeDiff);
-    const lineCount =
-      node.metrics.linesAdded +
-      node.metrics.linesRemoved +
-      node.metrics.linesModified;
+    const fileCount = node.metrics.fileCount;
 
     return `Analyze this code change node for expansion with DIRECT CODE ASSIGNMENT.
 
@@ -89,23 +241,23 @@ Description: ${node.description}
 Business Context: ${node.businessContext}
 Technical Context: ${node.technicalContext}
 Depth: ${currentDepth}
-Metrics: ${lineCount} lines across ${node.metrics.fileCount} files
+Metrics: ${fileCount} files, complexity: ${node.metrics.complexity}
 
 COMPLETE CODE CHANGES:
 ${completeCodeDiff}
 
 ATOMIC CRITERIA (Stop expansion when ALL true):
 1. Single responsibility (does exactly ONE thing)
-2. <20 lines of meaningful code changes
+2. Single cohesive functionality or responsibility
 3. Single method or cohesive code block
 4. No mixed concerns (e.g., validation AND persistence)
 5. Can be understood without looking elsewhere
 
 IF YOU EXPAND:
-- You MUST assign EVERY line of code to exactly ONE child
+- You MUST assign EVERY code change to exactly ONE child
 - Each child must have a single, clear responsibility
 - Return the complete CodeDiff structure for each child
-- No line numbers - return actual code content
+- Focus on logical code boundaries, not size
 
 RESPOND WITH JSON:
 {
@@ -307,7 +459,7 @@ RESPOND WITH JSON:
     const prompt = this.buildRootThemePrompt(semanticDiff);
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
       const result = JsonExtractor.extractAndValidateJson(response, 'object', [
         'themes',
       ]);
@@ -337,13 +489,11 @@ RESPOND WITH JSON:
    */
   private buildRootThemePrompt(semanticDiff: SemanticDiff): string {
     const filesByType = this.groupFilesByType(semanticDiff);
-    const totalLines = this.calculateTotalLines(semanticDiff);
 
     return `Analyze this pull request and identify distinct business themes (user stories/capabilities).
 
 PR OVERVIEW:
 Total files: ${semanticDiff.files.length}
-Total changes: ${totalLines} lines
 Complexity: ${semanticDiff.totalComplexity}
 
 FILES BY TYPE:
@@ -399,20 +549,6 @@ CRITICAL: Respond with ONLY valid JSON:
     return grouped;
   }
 
-  /**
-   * Calculate total lines changed
-   */
-  private calculateTotalLines(semanticDiff: SemanticDiff): number {
-    let total = 0;
-
-    for (const file of semanticDiff.files) {
-      for (const hunk of file.hunks) {
-        total += hunk.changes.filter((c) => c.type !== 'context').length;
-      }
-    }
-
-    return total;
-  }
 
   /**
    * Summarize semantic changes for prompt
@@ -514,7 +650,7 @@ Provide a brief, contextual explanation (max 20 words) of what this code does FO
 Focus on the relationship to the theme's purpose, not generic code description.`;
 
     try {
-      const response = await this.claudeClient.callClaude(prompt);
+      const response = await this.claudeClient.callClaude(prompt, 'mindmap-generation');
       return this.trimToLimit(response.trim(), 20);
     } catch (error) {
       return `Changes for ${viewingNode.name}`;
