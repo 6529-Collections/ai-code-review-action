@@ -1,6 +1,7 @@
 /**
  * Logging utility with configurable levels
  */
+import * as fs from 'fs';
 
 export enum LogLevel {
   ERROR = 0,
@@ -14,6 +15,9 @@ export class Logger {
   private static level: LogLevel = Logger.parseLogLevel(
     process.env.LOG_LEVEL || 'INFO'
   );
+  private static logFileStream: fs.WriteStream | null = null;
+  private static logHistory: string[] = [];
+  private static readonly MAX_HISTORY_SIZE = 10000;
 
   private static parseLogLevel(level: string): LogLevel {
     switch (level.toUpperCase()) {
@@ -44,33 +48,87 @@ export class Logger {
     return `${timestamp}[${level}] [${service}] ${message}`;
   }
 
+  static initializeLiveLogging(logFilePath: string): void {
+    try {
+      Logger.logFileStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+      Logger.logHistory = []; // Reset history when starting new log file
+    } catch (error) {
+      console.error(`Failed to initialize log file: ${error}`);
+      Logger.logFileStream = null;
+    }
+  }
+
+  static closeLiveLogging(): void {
+    if (Logger.logFileStream) {
+      Logger.logFileStream.end();
+      Logger.logFileStream = null;
+    }
+  }
+
+  static getLogHistory(): string {
+    return Logger.logHistory.join('\n');
+  }
+
+  static clearLogHistory(): void {
+    Logger.logHistory = [];
+  }
+
+  private static writeToLog(formattedMessage: string): void {
+    // Add to history buffer
+    Logger.logHistory.push(formattedMessage);
+    
+    // Maintain history size limit
+    if (Logger.logHistory.length > Logger.MAX_HISTORY_SIZE) {
+      Logger.logHistory.shift();
+    }
+
+    // Write to live log file if available
+    if (Logger.logFileStream) {
+      try {
+        Logger.logFileStream.write(formattedMessage + '\n');
+      } catch (error) {
+        console.error(`Failed to write to log file: ${error}`);
+      }
+    }
+  }
+
   static error(service: string, message: string): void {
     if (Logger.level >= LogLevel.ERROR) {
-      console.error(Logger.formatMessage('ERROR', service, message));
+      const formatted = Logger.formatMessage('ERROR', service, message);
+      console.error(formatted);
+      Logger.writeToLog(formatted);
     }
   }
 
   static warn(service: string, message: string): void {
     if (Logger.level >= LogLevel.WARN) {
-      console.warn(Logger.formatMessage('WARN', service, message));
+      const formatted = Logger.formatMessage('WARN', service, message);
+      console.warn(formatted);
+      Logger.writeToLog(formatted);
     }
   }
 
   static info(service: string, message: string): void {
     if (Logger.level >= LogLevel.INFO) {
-      console.log(Logger.formatMessage('INFO', service, message));
+      const formatted = Logger.formatMessage('INFO', service, message);
+      console.log(formatted);
+      Logger.writeToLog(formatted);
     }
   }
 
   static debug(service: string, message: string): void {
     if (Logger.level >= LogLevel.DEBUG) {
-      console.log(Logger.formatMessage('DEBUG', service, message));
+      const formatted = Logger.formatMessage('DEBUG', service, message);
+      console.log(formatted);
+      Logger.writeToLog(formatted);
     }
   }
 
   static trace(service: string, message: string): void {
     if (Logger.level >= LogLevel.TRACE) {
-      console.log(Logger.formatMessage('TRACE', service, message));
+      const formatted = Logger.formatMessage('TRACE', service, message);
+      console.log(formatted);
+      Logger.writeToLog(formatted);
     }
   }
 

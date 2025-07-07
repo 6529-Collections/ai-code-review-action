@@ -29975,15 +29975,23 @@ function isLocalTesting() {
         process.env.NODE_ENV === 'development';
 }
 async function run() {
+    const isLocal = isLocalTesting();
+    let logFilePath = null;
     try {
+        // Initialize live logging for local testing
+        if (isLocal) {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            logFilePath = await output_saver_1.OutputSaver.initializeLogFile(timestamp);
+            logger_1.Logger.initializeLiveLogging(logFilePath);
+            logger_1.logger.info('MAIN', 'Live logging initialized for local testing');
+        }
         // Reset performance tracker for this run
         performance_tracker_1.performanceTracker.reset();
         performance_tracker_1.performanceTracker.startTiming('Total AI Code Review');
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
-        // Detect environment and log mode
-        const isLocal = isLocalTesting();
+        // Log mode (isLocal already defined above)
         (0, utils_1.logInfo)(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
         performance_tracker_1.performanceTracker.startTiming('Setup');
         // Install Claude Code CLI (only in production or when explicitly needed)
@@ -30118,6 +30126,13 @@ async function run() {
     }
     catch (error) {
         (0, utils_1.handleError)(error);
+    }
+    finally {
+        // Close live logging if it was initialized
+        if (isLocal && logFilePath) {
+            logger_1.Logger.closeLiveLogging();
+            logger_1.logger.info('MAIN', 'Live logging closed');
+        }
     }
 }
 if (require.main === require.cache[eval('__filename')]) {
@@ -30734,6 +30749,29 @@ class OutputSaver {
         return filepath;
     }
     /**
+     * Generate log file path with timestamp
+     */
+    static generateLogFilePath(timestamp) {
+        const ts = timestamp || new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `analysis-${ts}.log`;
+        return path.join(this.LOCAL_DIR, filename);
+    }
+    /**
+     * Initialize log file for live streaming
+     */
+    static async initializeLogFile(timestamp) {
+        await this.ensureDirectoryExists();
+        const logPath = this.generateLogFilePath(timestamp);
+        // Create empty log file
+        try {
+            fs.writeFileSync(logPath, '');
+        }
+        catch (error) {
+            console.error(`Failed to create log file: ${error}`);
+        }
+        return logPath;
+    }
+    /**
      * Get list of saved analysis files
      */
     static getSavedAnalyses() {
@@ -30741,7 +30779,7 @@ class OutputSaver {
             return [];
         }
         return fs.readdirSync(this.LOCAL_DIR)
-            .filter(file => file.endsWith('.json') && file.startsWith('analysis-'))
+            .filter(file => (file.endsWith('.json') || file.endsWith('.log')) && file.startsWith('analysis-'))
             .sort()
             .reverse(); // Most recent first
     }
@@ -30765,19 +30803,39 @@ class OutputSaver {
      * Clean up old analysis files (keep last N files)
      */
     static cleanupOldAnalyses(keepCount = 10) {
-        const files = this.getSavedAnalyses();
-        if (files.length <= keepCount) {
+        if (!fs.existsSync(this.LOCAL_DIR)) {
             return;
         }
-        const filesToDelete = files.slice(keepCount);
-        let deletedCount = 0;
-        for (const filename of filesToDelete) {
-            try {
-                const filepath = path.join(this.LOCAL_DIR, filename);
-                fs.unlinkSync(filepath);
-                deletedCount++;
+        // Get all analysis files (both JSON and log)
+        const allFiles = fs.readdirSync(this.LOCAL_DIR)
+            .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')))
+            .sort()
+            .reverse(); // Most recent first
+        // Group files by timestamp (extract timestamp from filename)
+        const fileGroups = new Map();
+        for (const file of allFiles) {
+            const timestamp = file.replace('analysis-', '').replace(/\.(json|log)$/, '');
+            if (!fileGroups.has(timestamp)) {
+                fileGroups.set(timestamp, []);
             }
-            catch (error) {
+            fileGroups.get(timestamp).push(file);
+        }
+        // Convert to array and sort by timestamp (most recent first)
+        const sortedGroups = Array.from(fileGroups.entries())
+            .sort((a, b) => b[0].localeCompare(a[0]));
+        // Keep only the most recent N groups
+        const groupsToDelete = sortedGroups.slice(keepCount);
+        let deletedCount = 0;
+        for (const [timestamp, files] of groupsToDelete) {
+            for (const filename of files) {
+                try {
+                    const filepath = path.join(this.LOCAL_DIR, filename);
+                    fs.unlinkSync(filepath);
+                    deletedCount++;
+                }
+                catch (error) {
+                    // Ignore errors, continue cleanup
+                }
             }
         }
     }
@@ -37592,15 +37650,49 @@ exports.JsonExtractor = JsonExtractor;
 /***/ }),
 
 /***/ 411:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
 "use strict";
 
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logger = exports.Logger = exports.LogLevel = void 0;
 /**
  * Logging utility with configurable levels
  */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.logger = exports.Logger = exports.LogLevel = void 0;
+const fs = __importStar(__nccwpck_require__(9896));
 var LogLevel;
 (function (LogLevel) {
     LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
@@ -37632,29 +37724,78 @@ class Logger {
             : '';
         return `${timestamp}[${level}] [${service}] ${message}`;
     }
+    static initializeLiveLogging(logFilePath) {
+        try {
+            Logger.logFileStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+            Logger.logHistory = []; // Reset history when starting new log file
+        }
+        catch (error) {
+            console.error(`Failed to initialize log file: ${error}`);
+            Logger.logFileStream = null;
+        }
+    }
+    static closeLiveLogging() {
+        if (Logger.logFileStream) {
+            Logger.logFileStream.end();
+            Logger.logFileStream = null;
+        }
+    }
+    static getLogHistory() {
+        return Logger.logHistory.join('\n');
+    }
+    static clearLogHistory() {
+        Logger.logHistory = [];
+    }
+    static writeToLog(formattedMessage) {
+        // Add to history buffer
+        Logger.logHistory.push(formattedMessage);
+        // Maintain history size limit
+        if (Logger.logHistory.length > Logger.MAX_HISTORY_SIZE) {
+            Logger.logHistory.shift();
+        }
+        // Write to live log file if available
+        if (Logger.logFileStream) {
+            try {
+                Logger.logFileStream.write(formattedMessage + '\n');
+            }
+            catch (error) {
+                console.error(`Failed to write to log file: ${error}`);
+            }
+        }
+    }
     static error(service, message) {
         if (Logger.level >= LogLevel.ERROR) {
-            console.error(Logger.formatMessage('ERROR', service, message));
+            const formatted = Logger.formatMessage('ERROR', service, message);
+            console.error(formatted);
+            Logger.writeToLog(formatted);
         }
     }
     static warn(service, message) {
         if (Logger.level >= LogLevel.WARN) {
-            console.warn(Logger.formatMessage('WARN', service, message));
+            const formatted = Logger.formatMessage('WARN', service, message);
+            console.warn(formatted);
+            Logger.writeToLog(formatted);
         }
     }
     static info(service, message) {
         if (Logger.level >= LogLevel.INFO) {
-            console.log(Logger.formatMessage('INFO', service, message));
+            const formatted = Logger.formatMessage('INFO', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
         }
     }
     static debug(service, message) {
         if (Logger.level >= LogLevel.DEBUG) {
-            console.log(Logger.formatMessage('DEBUG', service, message));
+            const formatted = Logger.formatMessage('DEBUG', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
         }
     }
     static trace(service, message) {
         if (Logger.level >= LogLevel.TRACE) {
-            console.log(Logger.formatMessage('TRACE', service, message));
+            const formatted = Logger.formatMessage('TRACE', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
         }
     }
     static setLevel(level) {
@@ -37666,6 +37807,9 @@ class Logger {
 }
 exports.Logger = Logger;
 Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
+Logger.logFileStream = null;
+Logger.logHistory = [];
+Logger.MAX_HISTORY_SIZE = 10000;
 // Export convenience functions
 exports.logger = {
     error: (service, message) => Logger.error(service, message),

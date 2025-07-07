@@ -8,7 +8,7 @@ import { IGitService } from '@/shared/interfaces/git-service-interface';
 import { OutputSaver } from '@/local-testing/services/output-saver';
 import { ThemeService } from '@/mindmap/services/theme-service';
 import { ThemeFormatter } from '@/mindmap/utils/theme-formatter';
-import { logger } from '@/shared/utils/logger';
+import { logger, Logger } from '@/shared/utils/logger';
 import { performanceTracker } from '@/shared/utils/performance-tracker';
 
 /**
@@ -21,7 +21,18 @@ function isLocalTesting(): boolean {
 }
 
 export async function run(): Promise<void> {
+  const isLocal = isLocalTesting();
+  let logFilePath: string | null = null;
+
   try {
+    // Initialize live logging for local testing
+    if (isLocal) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      logFilePath = await OutputSaver.initializeLogFile(timestamp);
+      Logger.initializeLiveLogging(logFilePath);
+      logger.info('MAIN', 'Live logging initialized for local testing');
+    }
+
     // Reset performance tracker for this run
     performanceTracker.reset();
     performanceTracker.startTiming('Total AI Code Review');
@@ -31,8 +42,7 @@ export async function run(): Promise<void> {
     // Set Anthropic API key for Claude CLI
     process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
 
-    // Detect environment and log mode
-    const isLocal = isLocalTesting();
+    // Log mode (isLocal already defined above)
     logInfo(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
 
     performanceTracker.startTiming('Setup');
@@ -207,6 +217,12 @@ export async function run(): Promise<void> {
 
   } catch (error) {
     handleError(error);
+  } finally {
+    // Close live logging if it was initialized
+    if (isLocal && logFilePath) {
+      Logger.closeLiveLogging();
+      logger.info('MAIN', 'Live logging closed');
+    }
   }
 }
 

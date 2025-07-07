@@ -1,6 +1,3 @@
-/**
- * Logging utility with configurable levels
- */
 export declare enum LogLevel {
     ERROR = 0,
     WARN = 1,
@@ -10,8 +7,16 @@ export declare enum LogLevel {
 }
 export declare class Logger {
     private static level;
+    private static logFileStream;
+    private static logHistory;
+    private static readonly MAX_HISTORY_SIZE;
     private static parseLogLevel;
     private static formatMessage;
+    static initializeLiveLogging(logFilePath: string): void;
+    static closeLiveLogging(): void;
+    static getLogHistory(): string;
+    static clearLogHistory(): void;
+    private static writeToLog;
     static error(service: string, message: string): void;
     static warn(service: string, message: string): void;
     static info(service: string, message: string): void;

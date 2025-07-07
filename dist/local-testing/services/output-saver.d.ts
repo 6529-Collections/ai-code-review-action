@@ -25,6 +25,14 @@ export declare class OutputSaver {
      */
     static saveAnalysis(themes: any, summary: string, rawAnalysis: ThemeAnalysisResult, mode: string): Promise<string>;
     /**
+     * Generate log file path with timestamp
+     */
+    static generateLogFilePath(timestamp?: string): string;
+    /**
+     * Initialize log file for live streaming
+     */
+    static initializeLogFile(timestamp?: string): Promise<string>;
+    /**
      * Get list of saved analysis files
      */
     static getSavedAnalyses(): string[];
