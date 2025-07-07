@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { GenericCache } from './generic-cache';
 import { CodeChange } from '../utils/ai-code-analyzer';
 import { logger } from '../logger/logger';
+import { LoggerServices } from '../logger/constants';
 import { performanceTracker } from '../utils/performance-tracker';
 
 /**
@@ -75,8 +76,9 @@ export class CodeAnalysisCache extends GenericCache {
   preWarm(filename: string, diffContent: string, result: CodeChange): void {
     const key = this.generateCacheKey(filename, diffContent);
     this.set(key, result);
-    console.log(
-      `[CODE-ANALYSIS-CACHE] Pre-warmed cache for ${filename} (key: ${key})`
+    logger.debug(
+      LoggerServices.CACHE_ANALYSIS,
+      `Pre-warmed cache for ${filename} (key: ${key})`
     );
   }
 }

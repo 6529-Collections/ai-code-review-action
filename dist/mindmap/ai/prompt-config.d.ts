@@ -121,14 +121,14 @@ export declare const ResponseSchemas: {
             affectedComponents: z.ZodArray<z.ZodString, "many">;
             relatedFiles: z.ZodArray<z.ZodString, "many">;
         }, "strip", z.ZodTypeAny, {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
         }, {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
@@ -138,8 +138,8 @@ export declare const ResponseSchemas: {
         confidence: number;
         reasoning: string;
         subThemes: {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
@@ -149,8 +149,8 @@ export declare const ResponseSchemas: {
         confidence: number;
         reasoning: string;
         subThemes: {
-            description: string;
             name: string;
+            description: string;
             businessValue: string;
             affectedComponents: string[];
             relatedFiles: string[];
@@ -214,14 +214,14 @@ export declare const ResponseSchemas: {
                 business: z.ZodNumber;
                 semantic: z.ZodNumber;
             }, "strip", z.ZodTypeAny, {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
             }, {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -231,8 +231,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -242,8 +242,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -255,8 +255,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
@@ -268,8 +268,8 @@ export declare const ResponseSchemas: {
             pairId: string;
             shouldMerge: boolean;
             scores: {
-                description: number;
                 name: number;
+                description: number;
                 pattern: number;
                 business: number;
                 semantic: number;
