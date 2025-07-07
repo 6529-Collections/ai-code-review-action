@@ -29964,7 +29964,7 @@ const local_testing_1 = __nccwpck_require__(7354);
 const output_saver_1 = __nccwpck_require__(2090);
 const theme_service_1 = __nccwpck_require__(884);
 const theme_formatter_1 = __nccwpck_require__(2542);
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 const performance_tracker_1 = __nccwpck_require__(9600);
 /**
  * Detect if we're running in local testing mode
@@ -29980,6 +29980,8 @@ async function run() {
     try {
         // Initialize live logging for local testing
         if (isLocal) {
+            // Clean all previous analysis files for fresh start
+            output_saver_1.OutputSaver.cleanAllAnalyses();
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             logFilePath = await output_saver_1.OutputSaver.initializeLogFile(timestamp);
             logger_1.Logger.initializeLiveLogging(logFilePath);
@@ -30087,8 +30089,6 @@ async function run() {
                     const modeInfo = gitService.getCurrentMode();
                     const savedPath = await output_saver_1.OutputSaver.saveAnalysis(detailedThemes, safeSummary, themeAnalysis, modeInfo.name);
                     (0, utils_1.logInfo)(`Analysis saved to: ${savedPath}`);
-                    // Clean up old files (keep last 10)
-                    output_saver_1.OutputSaver.cleanupOldAnalyses(10);
                 }
                 catch (saveError) {
                     logger_1.logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
@@ -30800,42 +30800,23 @@ class OutputSaver {
         }
     }
     /**
-     * Clean up old analysis files (keep last N files)
+     * Clean up all analysis files for fresh start
      */
-    static cleanupOldAnalyses(keepCount = 10) {
+    static cleanAllAnalyses() {
         if (!fs.existsSync(this.LOCAL_DIR)) {
             return;
         }
         // Get all analysis files (both JSON and log)
         const allFiles = fs.readdirSync(this.LOCAL_DIR)
-            .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')))
-            .sort()
-            .reverse(); // Most recent first
-        // Group files by timestamp (extract timestamp from filename)
-        const fileGroups = new Map();
-        for (const file of allFiles) {
-            const timestamp = file.replace('analysis-', '').replace(/\.(json|log)$/, '');
-            if (!fileGroups.has(timestamp)) {
-                fileGroups.set(timestamp, []);
+            .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')));
+        // Delete all analysis files
+        for (const filename of allFiles) {
+            try {
+                const filepath = path.join(this.LOCAL_DIR, filename);
+                fs.unlinkSync(filepath);
             }
-            fileGroups.get(timestamp).push(file);
-        }
-        // Convert to array and sort by timestamp (most recent first)
-        const sortedGroups = Array.from(fileGroups.entries())
-            .sort((a, b) => b[0].localeCompare(a[0]));
-        // Keep only the most recent N groups
-        const groupsToDelete = sortedGroups.slice(keepCount);
-        let deletedCount = 0;
-        for (const [timestamp, files] of groupsToDelete) {
-            for (const filename of files) {
-                try {
-                    const filepath = path.join(this.LOCAL_DIR, filename);
-                    fs.unlinkSync(filepath);
-                    deletedCount++;
-                }
-                catch (error) {
-                    // Ignore errors, continue cleanup
-                }
+            catch (error) {
+                // Ignore errors, continue cleanup
             }
         }
     }
@@ -32381,7 +32362,7 @@ const generic_cache_1 = __nccwpck_require__(282);
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 /**
  * Enhanced similarity service for multi-level theme hierarchies
  * Handles cross-level duplicate detection and hierarchy optimization
@@ -33037,7 +33018,7 @@ const json_extractor_1 = __nccwpck_require__(8168);
 const secure_file_namer_1 = __nccwpck_require__(5584);
 const ai_mindmap_service_1 = __nccwpck_require__(3555);
 const theme_mindmap_converter_1 = __nccwpck_require__(3936);
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 exports.DEFAULT_EXPANSION_CONFIG = {
     maxDepth: 20, // Allow very deep natural expansion
     enableProgressLogging: false,
@@ -35070,7 +35051,7 @@ const similarity_calculator_1 = __nccwpck_require__(241);
 const ai_similarity_1 = __nccwpck_require__(5776);
 const business_domain_1 = __nccwpck_require__(6);
 const theme_naming_1 = __nccwpck_require__(3111);
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 class ThemeSimilarityService {
     constructor(anthropicApiKey, config) {
         this.pendingCalculations = new Map();
@@ -36044,7 +36025,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CodeAnalysisCache = void 0;
 const crypto = __importStar(__nccwpck_require__(6982));
 const generic_cache_1 = __nccwpck_require__(282);
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 const performance_tracker_1 = __nccwpck_require__(9600);
 /**
  * Specialized cache for AI-based code analysis results
@@ -36189,6 +36170,179 @@ class GenericCache {
     }
 }
 exports.GenericCache = GenericCache;
+
+
+/***/ }),
+
+/***/ 9000:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.logger = exports.Logger = exports.LogLevel = void 0;
+/**
+ * Logging utility with configurable levels
+ */
+const fs = __importStar(__nccwpck_require__(9896));
+var LogLevel;
+(function (LogLevel) {
+    LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
+    LogLevel[LogLevel["WARN"] = 1] = "WARN";
+    LogLevel[LogLevel["INFO"] = 2] = "INFO";
+    LogLevel[LogLevel["DEBUG"] = 3] = "DEBUG";
+    LogLevel[LogLevel["TRACE"] = 4] = "TRACE";
+})(LogLevel || (exports.LogLevel = LogLevel = {}));
+class Logger {
+    static parseLogLevel(level) {
+        switch (level.toUpperCase()) {
+            case 'ERROR':
+                return LogLevel.ERROR;
+            case 'WARN':
+                return LogLevel.WARN;
+            case 'INFO':
+                return LogLevel.INFO;
+            case 'DEBUG':
+                return LogLevel.DEBUG;
+            case 'TRACE':
+                return LogLevel.TRACE;
+            default:
+                return LogLevel.INFO;
+        }
+    }
+    static formatMessage(level, service, message) {
+        const timestamp = process.env.LOG_TIMESTAMPS === 'true'
+            ? `[${new Date().toISOString()}] `
+            : '';
+        return `${timestamp}[${level}] [${service}] ${message}`;
+    }
+    static initializeLiveLogging(logFilePath) {
+        try {
+            Logger.logFileStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+            Logger.logHistory = []; // Reset history when starting new log file
+        }
+        catch (error) {
+            console.error(`Failed to initialize log file: ${error}`);
+            Logger.logFileStream = null;
+        }
+    }
+    static closeLiveLogging() {
+        if (Logger.logFileStream) {
+            Logger.logFileStream.end();
+            Logger.logFileStream = null;
+        }
+    }
+    static getLogHistory() {
+        return Logger.logHistory.join('\n');
+    }
+    static clearLogHistory() {
+        Logger.logHistory = [];
+    }
+    static writeToLog(formattedMessage) {
+        // Add to history buffer
+        Logger.logHistory.push(formattedMessage);
+        // Maintain history size limit
+        if (Logger.logHistory.length > Logger.MAX_HISTORY_SIZE) {
+            Logger.logHistory.shift();
+        }
+        // Write to live log file if available
+        if (Logger.logFileStream) {
+            try {
+                Logger.logFileStream.write(formattedMessage + '\n');
+            }
+            catch (error) {
+                console.error(`Failed to write to log file: ${error}`);
+            }
+        }
+    }
+    static error(service, message) {
+        if (Logger.level >= LogLevel.ERROR) {
+            const formatted = Logger.formatMessage('ERROR', service, message);
+            console.error(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static warn(service, message) {
+        if (Logger.level >= LogLevel.WARN) {
+            const formatted = Logger.formatMessage('WARN', service, message);
+            console.warn(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static info(service, message) {
+        if (Logger.level >= LogLevel.INFO) {
+            const formatted = Logger.formatMessage('INFO', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static debug(service, message) {
+        if (Logger.level >= LogLevel.DEBUG) {
+            const formatted = Logger.formatMessage('DEBUG', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static trace(service, message) {
+        if (Logger.level >= LogLevel.TRACE) {
+            const formatted = Logger.formatMessage('TRACE', service, message);
+            console.log(formatted);
+            Logger.writeToLog(formatted);
+        }
+    }
+    static setLevel(level) {
+        Logger.level = level;
+    }
+    static getLevel() {
+        return Logger.level;
+    }
+}
+exports.Logger = Logger;
+Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
+Logger.logFileStream = null;
+Logger.logHistory = [];
+Logger.MAX_HISTORY_SIZE = 10000;
+// Export convenience functions
+exports.logger = {
+    error: (service, message) => Logger.error(service, message),
+    warn: (service, message) => Logger.warn(service, message),
+    info: (service, message) => Logger.info(service, message),
+    debug: (service, message) => Logger.debug(service, message),
+    trace: (service, message) => Logger.trace(service, message),
+};
 
 
 /***/ }),
@@ -36438,7 +36592,7 @@ const path = __importStar(__nccwpck_require__(6928));
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const code_analysis_cache_1 = __nccwpck_require__(5061);
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 /**
  * AI-powered code analyzer that replaces regex-based analysis
  * Uses Claude to understand code structure across all programming languages
@@ -37550,179 +37704,6 @@ exports.JsonExtractor = JsonExtractor;
 
 /***/ }),
 
-/***/ 411:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.logger = exports.Logger = exports.LogLevel = void 0;
-/**
- * Logging utility with configurable levels
- */
-const fs = __importStar(__nccwpck_require__(9896));
-var LogLevel;
-(function (LogLevel) {
-    LogLevel[LogLevel["ERROR"] = 0] = "ERROR";
-    LogLevel[LogLevel["WARN"] = 1] = "WARN";
-    LogLevel[LogLevel["INFO"] = 2] = "INFO";
-    LogLevel[LogLevel["DEBUG"] = 3] = "DEBUG";
-    LogLevel[LogLevel["TRACE"] = 4] = "TRACE";
-})(LogLevel || (exports.LogLevel = LogLevel = {}));
-class Logger {
-    static parseLogLevel(level) {
-        switch (level.toUpperCase()) {
-            case 'ERROR':
-                return LogLevel.ERROR;
-            case 'WARN':
-                return LogLevel.WARN;
-            case 'INFO':
-                return LogLevel.INFO;
-            case 'DEBUG':
-                return LogLevel.DEBUG;
-            case 'TRACE':
-                return LogLevel.TRACE;
-            default:
-                return LogLevel.INFO;
-        }
-    }
-    static formatMessage(level, service, message) {
-        const timestamp = process.env.LOG_TIMESTAMPS === 'true'
-            ? `[${new Date().toISOString()}] `
-            : '';
-        return `${timestamp}[${level}] [${service}] ${message}`;
-    }
-    static initializeLiveLogging(logFilePath) {
-        try {
-            Logger.logFileStream = fs.createWriteStream(logFilePath, { flags: 'a' });
-            Logger.logHistory = []; // Reset history when starting new log file
-        }
-        catch (error) {
-            console.error(`Failed to initialize log file: ${error}`);
-            Logger.logFileStream = null;
-        }
-    }
-    static closeLiveLogging() {
-        if (Logger.logFileStream) {
-            Logger.logFileStream.end();
-            Logger.logFileStream = null;
-        }
-    }
-    static getLogHistory() {
-        return Logger.logHistory.join('\n');
-    }
-    static clearLogHistory() {
-        Logger.logHistory = [];
-    }
-    static writeToLog(formattedMessage) {
-        // Add to history buffer
-        Logger.logHistory.push(formattedMessage);
-        // Maintain history size limit
-        if (Logger.logHistory.length > Logger.MAX_HISTORY_SIZE) {
-            Logger.logHistory.shift();
-        }
-        // Write to live log file if available
-        if (Logger.logFileStream) {
-            try {
-                Logger.logFileStream.write(formattedMessage + '\n');
-            }
-            catch (error) {
-                console.error(`Failed to write to log file: ${error}`);
-            }
-        }
-    }
-    static error(service, message) {
-        if (Logger.level >= LogLevel.ERROR) {
-            const formatted = Logger.formatMessage('ERROR', service, message);
-            console.error(formatted);
-            Logger.writeToLog(formatted);
-        }
-    }
-    static warn(service, message) {
-        if (Logger.level >= LogLevel.WARN) {
-            const formatted = Logger.formatMessage('WARN', service, message);
-            console.warn(formatted);
-            Logger.writeToLog(formatted);
-        }
-    }
-    static info(service, message) {
-        if (Logger.level >= LogLevel.INFO) {
-            const formatted = Logger.formatMessage('INFO', service, message);
-            console.log(formatted);
-            Logger.writeToLog(formatted);
-        }
-    }
-    static debug(service, message) {
-        if (Logger.level >= LogLevel.DEBUG) {
-            const formatted = Logger.formatMessage('DEBUG', service, message);
-            console.log(formatted);
-            Logger.writeToLog(formatted);
-        }
-    }
-    static trace(service, message) {
-        if (Logger.level >= LogLevel.TRACE) {
-            const formatted = Logger.formatMessage('TRACE', service, message);
-            console.log(formatted);
-            Logger.writeToLog(formatted);
-        }
-    }
-    static setLevel(level) {
-        Logger.level = level;
-    }
-    static getLevel() {
-        return Logger.level;
-    }
-}
-exports.Logger = Logger;
-Logger.level = Logger.parseLogLevel(process.env.LOG_LEVEL || 'INFO');
-Logger.logFileStream = null;
-Logger.logHistory = [];
-Logger.MAX_HISTORY_SIZE = 10000;
-// Export convenience functions
-exports.logger = {
-    error: (service, message) => Logger.error(service, message),
-    warn: (service, message) => Logger.warn(service, message),
-    info: (service, message) => Logger.info(service, message),
-    debug: (service, message) => Logger.debug(service, message),
-    trace: (service, message) => Logger.trace(service, message),
-};
-
-
-/***/ }),
-
 /***/ 9600:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -37730,7 +37711,7 @@ exports.logger = {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.performanceTracker = exports.PerformanceTracker = void 0;
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 class PerformanceTracker {
     constructor() {
         this.timingStack = [];
@@ -38229,7 +38210,7 @@ function setOutput(name, value) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.logTrace = exports.logDebug = exports.logInfo = exports.logWarning = exports.logError = void 0;
-const logger_1 = __nccwpck_require__(411);
+const logger_1 = __nccwpck_require__(9000);
 // Export logging functions with consistent interface
 const logError = (message) => {
     logger_1.Logger.error('ai-code-review', message);

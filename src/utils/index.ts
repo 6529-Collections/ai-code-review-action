@@ -1,4 +1,4 @@
-import { Logger } from '../shared/utils/logger';
+import { Logger } from '../shared/logger/logger';
 
 // Export logging functions with consistent interface
 export const logError = (message: string): void => {

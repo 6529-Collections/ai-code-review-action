@@ -2,7 +2,7 @@ import * as path from 'path';
 import { ClaudeClient } from './claude-client';
 import { JsonExtractor } from './json-extractor';
 import { CodeAnalysisCache } from '../cache/code-analysis-cache';
-import { logger } from './logger';
+import { logger } from '../logger/logger';
 
 // Re-export interfaces for compatibility
 export interface CodeChange {

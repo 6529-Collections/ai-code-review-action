@@ -8,7 +8,7 @@ import { IGitService } from '@/shared/interfaces/git-service-interface';
 import { OutputSaver } from '@/local-testing/services/output-saver';
 import { ThemeService } from '@/mindmap/services/theme-service';
 import { ThemeFormatter } from '@/mindmap/utils/theme-formatter';
-import { logger, Logger } from '@/shared/utils/logger';
+import { logger, Logger } from '@/shared/logger/logger';
 import { performanceTracker } from '@/shared/utils/performance-tracker';
 
 /**
@@ -27,6 +27,9 @@ export async function run(): Promise<void> {
   try {
     // Initialize live logging for local testing
     if (isLocal) {
+      // Clean all previous analysis files for fresh start
+      OutputSaver.cleanAllAnalyses();
+      
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       logFilePath = await OutputSaver.initializeLogFile(timestamp);
       Logger.initializeLiveLogging(logFilePath);
@@ -169,9 +172,6 @@ export async function run(): Promise<void> {
             modeInfo.name
           );
           logInfo(`Analysis saved to: ${savedPath}`);
-          
-          // Clean up old files (keep last 10)
-          OutputSaver.cleanupOldAnalyses(10);
         } catch (saveError) {
           logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
         }

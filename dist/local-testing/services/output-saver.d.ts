@@ -41,9 +41,9 @@ export declare class OutputSaver {
      */
     static loadAnalysis(filename: string): SavedAnalysis | null;
     /**
-     * Clean up old analysis files (keep last N files)
+     * Clean up all analysis files for fresh start
      */
-    static cleanupOldAnalyses(keepCount?: number): void;
+    static cleanAllAnalyses(): void;
     /**
      * Ensure output directories exist
      */

@@ -127,50 +127,26 @@ export class OutputSaver {
   }
 
   /**
-   * Clean up old analysis files (keep last N files)
+   * Clean up all analysis files for fresh start
    */
-  static cleanupOldAnalyses(keepCount: number = 10): void {
+  static cleanAllAnalyses(): void {
     if (!fs.existsSync(this.LOCAL_DIR)) {
       return;
     }
 
     // Get all analysis files (both JSON and log)
     const allFiles = fs.readdirSync(this.LOCAL_DIR)
-      .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')))
-      .sort()
-      .reverse(); // Most recent first
+      .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')));
 
-    // Group files by timestamp (extract timestamp from filename)
-    const fileGroups = new Map<string, string[]>();
-    
-    for (const file of allFiles) {
-      const timestamp = file.replace('analysis-', '').replace(/\.(json|log)$/, '');
-      if (!fileGroups.has(timestamp)) {
-        fileGroups.set(timestamp, []);
-      }
-      fileGroups.get(timestamp)!.push(file);
-    }
-
-    // Convert to array and sort by timestamp (most recent first)
-    const sortedGroups = Array.from(fileGroups.entries())
-      .sort((a, b) => b[0].localeCompare(a[0]));
-
-    // Keep only the most recent N groups
-    const groupsToDelete = sortedGroups.slice(keepCount);
-    let deletedCount = 0;
-
-    for (const [timestamp, files] of groupsToDelete) {
-      for (const filename of files) {
-        try {
-          const filepath = path.join(this.LOCAL_DIR, filename);
-          fs.unlinkSync(filepath);
-          deletedCount++;
-        } catch (error) {
-          // Ignore errors, continue cleanup
-        }
+    // Delete all analysis files
+    for (const filename of allFiles) {
+      try {
+        const filepath = path.join(this.LOCAL_DIR, filename);
+        fs.unlinkSync(filepath);
+      } catch (error) {
+        // Ignore errors, continue cleanup
       }
     }
-
   }
 
   /**

@@ -6,7 +6,7 @@ import { SecureFileNamer } from '../utils/secure-file-namer';
 import { AIMindmapService } from './ai/ai-mindmap-service';
 import { ThemeMindmapConverter } from './theme-mindmap-converter';
 import { ExpansionDecision as AIMindmapExpansionDecision } from '../types/mindmap-types';
-import { logger } from '@/shared/utils/logger';
+import { logger } from '@/shared/logger/logger';
 
 // Configuration for theme expansion
 export interface ExpansionConfig {

@@ -10,7 +10,7 @@ import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
 import { AISimilarityService } from './ai/ai-similarity';
 import { BusinessDomainService } from './business-domain';
 import { ThemeNamingService } from './theme-naming';
-import { logger } from '@/shared/utils/logger';
+import { logger } from '@/shared/logger/logger';
 
 /**
  * Effectiveness tracking for similarity analysis

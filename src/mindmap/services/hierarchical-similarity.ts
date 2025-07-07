@@ -7,7 +7,7 @@ import { GenericCache } from '@/shared/cache/generic-cache';
 import { ClaudeClient } from '@/shared/utils/claude-client';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { logInfo } from '../../utils';
-import { logger } from '@/shared/utils/logger';
+import { logger } from '@/shared/logger/logger';
 
 /**
  * Effectiveness tracking for hierarchical similarity analysis

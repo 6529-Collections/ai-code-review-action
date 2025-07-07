@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { GenericCache } from '@/shared/cache/generic-cache';
-import { logger } from '@/shared/utils/logger';
+import { logger } from '@/shared/logger/logger';
 
 /**
  * Semantic Cache Service for AI Analysis Results

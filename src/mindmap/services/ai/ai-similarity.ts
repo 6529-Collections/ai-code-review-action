@@ -3,7 +3,7 @@ import { AISimilarityResult } from '../../types/similarity-types';
 import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { ClaudeClient } from '@/shared/utils/claude-client';
-import { logger } from '@/shared/utils/logger';
+import { logger } from '@/shared/logger/logger';
 
 export class AISimilarityService {
   private similarityCalculator: SimilarityCalculator;
