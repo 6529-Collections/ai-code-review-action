@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { GenericCache } from '@/shared/cache/generic-cache';
+import { logger } from '@/shared/utils/logger';
 
 /**
  * Semantic Cache Service for AI Analysis Results
@@ -29,18 +30,18 @@ export class SemanticCacheService {
     // Try exact match first (fastest)
     const exactMatch = this.cache.get<T>(`${contextType}:${cacheKey}`);
     if (exactMatch) {
-      console.log(`[SEMANTIC-CACHE] Exact cache hit for ${contextType}`);
+      logger.info('CACHE_SEMANTIC', `Exact cache hit for ${contextType}`);
       return exactMatch;
     }
 
     // Try semantic similarity matching
     const semanticMatch = await this.findSemanticMatch<T>(input, contextType);
     if (semanticMatch) {
-      console.log(`[SEMANTIC-CACHE] Semantic cache hit for ${contextType}`);
+      logger.info('CACHE_SEMANTIC', `Semantic cache hit for ${contextType}`);
       return semanticMatch;
     }
 
-    console.log(`[SEMANTIC-CACHE] Cache miss for ${contextType}`);
+    logger.debug('CACHE_SEMANTIC', `Cache miss for ${contextType}`);
     return null;
   }
 
@@ -70,9 +71,7 @@ export class SemanticCacheService {
     this.cache.set(fullKey, result, ttl);
     this.cache.set(`${fullKey}:meta`, cacheEntry, ttl);
 
-    console.log(
-      `[SEMANTIC-CACHE] Stored result for ${contextType} with ${ttl}ms TTL`
-    );
+    logger.debug('CACHE_SEMANTIC', `Stored result for ${contextType} with ${ttl}ms TTL`);
   }
 
   /**
@@ -105,9 +104,7 @@ export class SemanticCacheService {
         const cachedResult = this.cache.get<T>(resultKey);
 
         if (cachedResult) {
-          console.log(
-            `[SEMANTIC-CACHE] Found semantic match with ${(similarity * 100).toFixed(1)}% similarity`
-          );
+          logger.info('CACHE_SEMANTIC', `Found semantic match with ${(similarity * 100).toFixed(1)}% similarity`);
           return cachedResult;
         }
       }
@@ -331,9 +328,7 @@ export class SemanticCacheService {
       contextType: string;
     }>
   ): void {
-    console.log(
-      `[SEMANTIC-CACHE] Warming cache with ${commonPatterns.length} common patterns`
-    );
+    logger.info('CACHE_SEMANTIC', `Warming cache with ${commonPatterns.length} common patterns`);
 
     for (const pattern of commonPatterns) {
       const cacheKey = this.generateCacheKey(pattern.input);
@@ -352,9 +347,7 @@ export class SemanticCacheService {
    * PRD: "Smart invalidation: Clear cache selectively based on file modifications"
    */
   invalidateByFiles(modifiedFiles: string[]): void {
-    console.log(
-      `[SEMANTIC-CACHE] Invalidating cache for ${modifiedFiles.length} modified files`
-    );
+    logger.info('CACHE_SEMANTIC', `Invalidating cache for ${modifiedFiles.length} modified files`);
 
     const modifiedSet = new Set(modifiedFiles);
     const allKeys = this.cache.getKeysWithPrefix('') || [];
@@ -377,9 +370,7 @@ export class SemanticCacheService {
             const resultKey = key.replace(':meta', '');
             this.cache.delete(key);
             this.cache.delete(resultKey);
-            console.log(
-              `[SEMANTIC-CACHE] Invalidated cache entry for ${resultKey}`
-            );
+            logger.debug('CACHE_SEMANTIC', `Invalidated cache entry for ${resultKey}`);
           }
         }
       }
@@ -431,7 +422,7 @@ export class SemanticCacheService {
    */
   clear(): void {
     this.cache.clear();
-    console.log('[SEMANTIC-CACHE] Cache cleared');
+    logger.info('CACHE_SEMANTIC', 'Cache cleared');
   }
 }
 
