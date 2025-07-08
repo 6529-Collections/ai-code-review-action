@@ -32530,28 +32530,9 @@ class HierarchicalSimilarityService {
     async deduplicateHierarchy(hierarchy) {
         const crossLevelSimilarities = await this.analyzeCrossLevelSimilarity(hierarchy);
         // Filter for high-similarity themes that should be merged
-        // Use environment variable to control threshold (default: more strict 0.95 vs original 0.85)
-        const similarityThreshold = parseFloat(process.env.CROSS_LEVEL_DEDUP_THRESHOLD || '0.95');
-        const allowOverlapMerging = process.env.ALLOW_OVERLAP_MERGING !== 'false';
-        const duplicates = crossLevelSimilarities.filter((similarity) => {
-            const meetsThreshold = similarity.similarityScore > similarityThreshold;
-            const isStrictDuplicate = similarity.relationshipType === 'duplicate';
-            const isOverlap = similarity.relationshipType === 'overlap';
-            const shouldMerge = meetsThreshold &&
-                (isStrictDuplicate || (allowOverlapMerging && isOverlap));
-            // Log detailed deduplication decisions
-            if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
-                console.log(`[CROSS-LEVEL-DEDUP] Similarity: ${similarity.similarityScore.toFixed(3)} (threshold: ${similarityThreshold})`);
-                console.log(`[CROSS-LEVEL-DEDUP] Relationship: ${similarity.relationshipType}`);
-                console.log(`[CROSS-LEVEL-DEDUP] Theme1: "${similarity.theme1.name}"`);
-                console.log(`[CROSS-LEVEL-DEDUP] Theme2: "${similarity.theme2.name}"`);
-                console.log(`[CROSS-LEVEL-DEDUP] Decision: ${shouldMerge ? 'MERGE' : 'KEEP_SEPARATE'}`);
-                console.log(`[CROSS-LEVEL-DEDUP] Reasoning: ${similarity.reasoning}`);
-                console.log('---');
-            }
-            return shouldMerge;
-        });
-        console.log(`[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (threshold: ${similarityThreshold}, allowOverlap: ${allowOverlapMerging})`);
+        // Since cross-level deduplication is disabled, this filter returns empty array
+        const duplicates = crossLevelSimilarities.filter(() => false);
+        console.log(`[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (deduplication disabled)`);
         const mergedThemes = [];
         const processedIds = new Set();
         let duplicatesRemoved = 0;
@@ -33403,13 +33384,12 @@ class ThemeExpansionService {
         }
         // Check if batch deduplication is disabled
         const skipBatchDedup = process.env.SKIP_BATCH_DEDUP === 'true';
-        const minThemesForBatchDedup = parseInt(process.env.MIN_THEMES_FOR_BATCH_DEDUP || '5');
         if (skipBatchDedup) {
             logger_1.logger.info('EXPANSION', `Skipping batch deduplication (SKIP_BATCH_DEDUP=true)`);
             return subThemes;
         }
-        if (subThemes.length < minThemesForBatchDedup) {
-            logger_1.logger.info('EXPANSION', `Skipping batch deduplication: ${subThemes.length} themes < minimum ${minThemesForBatchDedup}`);
+        if (subThemes.length < 5) {
+            logger_1.logger.info('EXPANSION', `Skipping batch deduplication: ${subThemes.length} themes < minimum 5`);
             return subThemes;
         }
         // Pre-deduplication state logging
@@ -33468,10 +33448,9 @@ class ThemeExpansionService {
         // This handles cases where duplicates were in different batches
         // Skip if disabled via environment variable or theme count is too small
         const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
-        const minThemesForSecondPass = parseInt(process.env.MIN_THEMES_FOR_SECOND_PASS_DEDUP || '10');
         if (finalThemes.length > 1 &&
             !skipSecondPass &&
-            finalThemes.length >= minThemesForSecondPass) {
+            finalThemes.length >= 10) {
             logger_1.logger.info('EXPANSION', `Running second pass deduplication on ${finalThemes.length} themes`);
             const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
@@ -33490,8 +33469,8 @@ class ThemeExpansionService {
         else if (skipSecondPass) {
             logger_1.logger.info('EXPANSION', `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`);
         }
-        else if (finalThemes.length < minThemesForSecondPass) {
-            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`);
+        else if (finalThemes.length < 10) {
+            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication: ${finalThemes.length} themes < minimum 10`);
         }
         // Post-deduplication state logging (no second pass)
         logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after first pass deduplication:`);
@@ -34891,9 +34870,8 @@ class ThemeService {
                     const beforeExpansionCount = consolidatedThemes.length;
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
                     // Apply cross-level deduplication
-                    const minThemesForCrossLevel = parseInt(process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20');
                     if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
-                        expandedThemes.length >= minThemesForCrossLevel) {
+                        expandedThemes.length >= 20) {
                         performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
                         const beforeDedup = expandedThemes.length;
                         const dedupStartTime = Date.now();
@@ -39307,12 +39285,6 @@ function setDeduplicationEnvironmentVariables() {
         'skip-batch-dedup': 'SKIP_BATCH_DEDUP',
         'skip-second-pass-dedup': 'SKIP_SECOND_PASS_DEDUP',
         'skip-cross-level-dedup': 'SKIP_CROSS_LEVEL_DEDUP',
-        'cross-level-dedup-threshold': 'CROSS_LEVEL_DEDUP_THRESHOLD',
-        'allow-overlap-merging': 'ALLOW_OVERLAP_MERGING',
-        'min-themes-for-batch-dedup': 'MIN_THEMES_FOR_BATCH_DEDUP',
-        'min-themes-for-second-pass-dedup': 'MIN_THEMES_FOR_SECOND_PASS_DEDUP',
-        'min-themes-for-cross-level-dedup': 'MIN_THEMES_FOR_CROSS_LEVEL_DEDUP',
-        'verbose-dedup-logging': 'VERBOSE_DEDUP_LOGGING',
         // PRD Compliance Controls
         're-evaluate-after-merge': 'RE_EVALUATE_AFTER_MERGE',
         'strict-atomic-limits': 'STRICT_ATOMIC_LIMITS'

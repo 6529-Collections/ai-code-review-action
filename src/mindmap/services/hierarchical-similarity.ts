@@ -167,42 +167,11 @@ export class HierarchicalSimilarityService {
       await this.analyzeCrossLevelSimilarity(hierarchy);
 
     // Filter for high-similarity themes that should be merged
-    // Use environment variable to control threshold (default: more strict 0.95 vs original 0.85)
-    const similarityThreshold = parseFloat(
-      process.env.CROSS_LEVEL_DEDUP_THRESHOLD || '0.95'
-    );
-    const allowOverlapMerging = process.env.ALLOW_OVERLAP_MERGING !== 'false';
-
-    const duplicates = crossLevelSimilarities.filter((similarity) => {
-      const meetsThreshold = similarity.similarityScore > similarityThreshold;
-      const isStrictDuplicate = similarity.relationshipType === 'duplicate';
-      const isOverlap = similarity.relationshipType === 'overlap';
-      const shouldMerge =
-        meetsThreshold &&
-        (isStrictDuplicate || (allowOverlapMerging && isOverlap));
-
-      // Log detailed deduplication decisions
-      if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
-        console.log(
-          `[CROSS-LEVEL-DEDUP] Similarity: ${similarity.similarityScore.toFixed(3)} (threshold: ${similarityThreshold})`
-        );
-        console.log(
-          `[CROSS-LEVEL-DEDUP] Relationship: ${similarity.relationshipType}`
-        );
-        console.log(`[CROSS-LEVEL-DEDUP] Theme1: "${similarity.theme1.name}"`);
-        console.log(`[CROSS-LEVEL-DEDUP] Theme2: "${similarity.theme2.name}"`);
-        console.log(
-          `[CROSS-LEVEL-DEDUP] Decision: ${shouldMerge ? 'MERGE' : 'KEEP_SEPARATE'}`
-        );
-        console.log(`[CROSS-LEVEL-DEDUP] Reasoning: ${similarity.reasoning}`);
-        console.log('---');
-      }
-
-      return shouldMerge;
-    });
+    // Since cross-level deduplication is disabled, this filter returns empty array
+    const duplicates = crossLevelSimilarities.filter(() => false);
 
     console.log(
-      `[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (threshold: ${similarityThreshold}, allowOverlap: ${allowOverlapMerging})`
+      `[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (deduplication disabled)`
     );
 
     const mergedThemes: DeduplicationResult['mergedThemes'] = [];

@@ -584,9 +584,6 @@ export class ThemeExpansionService {
 
     // Check if batch deduplication is disabled
     const skipBatchDedup = process.env.SKIP_BATCH_DEDUP === 'true';
-    const minThemesForBatchDedup = parseInt(
-      process.env.MIN_THEMES_FOR_BATCH_DEDUP || '5'
-    );
 
     if (skipBatchDedup) {
       logger.info(
@@ -596,10 +593,10 @@ export class ThemeExpansionService {
       return subThemes;
     }
 
-    if (subThemes.length < minThemesForBatchDedup) {
+    if (subThemes.length < 5) {
       logger.info(
         'EXPANSION',
-        `Skipping batch deduplication: ${subThemes.length} themes < minimum ${minThemesForBatchDedup}`
+        `Skipping batch deduplication: ${subThemes.length} themes < minimum 5`
       );
       return subThemes;
     }
@@ -684,14 +681,11 @@ export class ThemeExpansionService {
     // This handles cases where duplicates were in different batches
     // Skip if disabled via environment variable or theme count is too small
     const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
-    const minThemesForSecondPass = parseInt(
-      process.env.MIN_THEMES_FOR_SECOND_PASS_DEDUP || '10'
-    );
 
     if (
       finalThemes.length > 1 &&
       !skipSecondPass &&
-      finalThemes.length >= minThemesForSecondPass
+      finalThemes.length >= 10
     ) {
       logger.info(
         'EXPANSION',
@@ -729,10 +723,10 @@ export class ThemeExpansionService {
         'EXPANSION',
         `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`
       );
-    } else if (finalThemes.length < minThemesForSecondPass) {
+    } else if (finalThemes.length < 10) {
       logger.info(
         'EXPANSION',
-        `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`
+        `Skipping second pass deduplication: ${finalThemes.length} themes < minimum 10`
       );
     }
 

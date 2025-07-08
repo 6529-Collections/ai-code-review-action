@@ -23,31 +23,8 @@ inputs:
   skip-cross-level-dedup:
     description: 'Skip cross-level hierarchical deduplication'
     required: false
-    default: 'false'
-  
-  # Threshold Controls
-  cross-level-dedup-threshold:
-    description: 'Similarity threshold for cross-level deduplication (0.0-1.0)'
-    required: false
-    default: '0.95'
-  allow-overlap-merging:
-    description: 'Allow merging themes with overlap relationship (not just duplicates)'
-    required: false
     default: 'true'
   
-  # Minimum Theme Count Controls
-  min-themes-for-batch-dedup:
-    description: 'Minimum theme count to trigger batch deduplication'
-    required: false
-    default: '5'
-  min-themes-for-second-pass-dedup:
-    description: 'Minimum theme count to trigger second-pass deduplication'
-    required: false
-    default: '10'
-  min-themes-for-cross-level-dedup:
-    description: 'Minimum theme count to trigger cross-level deduplication'
-    required: false
-    default: '20'
   
   # PRD Compliance Controls
   max-atomic-size:
@@ -65,11 +42,6 @@ inputs:
     required: false
     default: 'true'
   
-  # Logging Controls
-  verbose-dedup-logging:
-    description: 'Enable detailed logging of deduplication decisions'
-    required: false
-    default: 'false'
 
 outputs:
   themes:

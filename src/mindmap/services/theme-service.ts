@@ -647,12 +647,9 @@ export class ThemeService {
             );
 
           // Apply cross-level deduplication
-          const minThemesForCrossLevel = parseInt(
-            process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20'
-          );
           if (
             process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
-            expandedThemes.length >= minThemesForCrossLevel
+            expandedThemes.length >= 20
           ) {
             performanceTracker.startTiming('Cross-Level Deduplication');
             const beforeDedup = expandedThemes.length;

@@ -26,13 +26,7 @@ function setDeduplicationEnvironmentVariables(): void {
     'skip-batch-dedup': 'SKIP_BATCH_DEDUP',
     'skip-second-pass-dedup': 'SKIP_SECOND_PASS_DEDUP', 
     'skip-cross-level-dedup': 'SKIP_CROSS_LEVEL_DEDUP',
-    'cross-level-dedup-threshold': 'CROSS_LEVEL_DEDUP_THRESHOLD',
-    'allow-overlap-merging': 'ALLOW_OVERLAP_MERGING',
-    'min-themes-for-batch-dedup': 'MIN_THEMES_FOR_BATCH_DEDUP',
-    'min-themes-for-second-pass-dedup': 'MIN_THEMES_FOR_SECOND_PASS_DEDUP',
-    'min-themes-for-cross-level-dedup': 'MIN_THEMES_FOR_CROSS_LEVEL_DEDUP',
-    'verbose-dedup-logging': 'VERBOSE_DEDUP_LOGGING',
-    // PRD Compliance Controls
+      // PRD Compliance Controls
     're-evaluate-after-merge': 'RE_EVALUATE_AFTER_MERGE',
     'strict-atomic-limits': 'STRICT_ATOMIC_LIMITS'
   };
