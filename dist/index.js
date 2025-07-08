@@ -33464,9 +33464,6 @@ class ThemeExpansionService {
         else if (skipSecondPass) {
             logger_1.logger.info('EXPANSION', `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`);
         }
-        else if (finalThemes.length < 10) {
-            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication: ${finalThemes.length} themes < minimum 10`);
-        }
         // Post-deduplication state logging (no second pass)
         logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after first pass deduplication:`);
         finalThemes.forEach((t) => {
