@@ -36505,6 +36505,7 @@ const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const code_analysis_cache_1 = __nccwpck_require__(5061);
 const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
 /**
  * AI-powered code analyzer that replaces regex-based analysis
  * Uses Claude to understand code structure across all programming languages
@@ -36558,7 +36559,7 @@ class AICodeAnalyzer {
             }
             catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                console.warn(`[AI-CODE-ANALYZER] AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`);
+                logger_1.logger.warn(constants_1.LoggerServices.AI_ANALYZER, `AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`);
                 return this.createMinimalAnalysis(filename, diffPatch, changeType);
             }
         });

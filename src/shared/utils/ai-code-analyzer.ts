@@ -3,6 +3,7 @@ import { ClaudeClient } from './claude-client';
 import { JsonExtractor } from './json-extractor';
 import { CodeAnalysisCache } from '../cache/code-analysis-cache';
 import { logger } from '../logger/logger';
+import { LoggerServices } from '../logger/constants';
 
 // Re-export interfaces for compatibility
 export interface CodeChange {
@@ -138,8 +139,9 @@ export class AICodeAnalyzer {
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-        console.warn(
-          `[AI-CODE-ANALYZER] AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`
+        logger.warn(
+          LoggerServices.AI_ANALYZER,
+          `AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`
         );
         return this.createMinimalAnalysis(
           filename,
