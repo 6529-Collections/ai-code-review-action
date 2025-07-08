@@ -54,7 +54,7 @@ The original aggressive deduplication caused a **3→3 theme problem**:
 Most deduplication was disabled by default to preserve expansion work, but the infrastructure remained.
 
 ## Current State Analysis
-*Last updated: 2025-01-08*
+*Last updated: 2025-01-08 (Session 2)*
 
 ### Action.yml Configuration Status
 - `skip-batch-dedup`: **true** ✓ (disabled)
@@ -62,11 +62,12 @@ Most deduplication was disabled by default to preserve expansion work, but the i
 - `skip-cross-level-dedup`: **true** ✓ (disabled)
 
 ### Remaining Components
-- [x] ~~Minimum theme count controls (3 inputs)~~ **REMOVED**
-- [ ] PRD compliance controls (3 inputs)
+- [x] ~~Minimum theme count controls~~ **REMOVED**
+- [ ] PRD compliance controls (2 inputs)
 - [ ] Environment variable processing in `src/validation.ts`
 - [ ] Deduplication service implementations
 - [ ] Documentation files
+- [ ] Hardcoded theme count check remnant
 
 ### Current Status: ALL DEDUPLICATION DISABLED
 All three deduplication levels are now turned off by default.
@@ -77,32 +78,34 @@ All three deduplication levels are now turned off by default.
 1. ✅ **Verbose Logging Infrastructure** - Removed `verbose-dedup-logging` input and implementation code
 2. ✅ **Threshold Controls** - Removed `cross-level-dedup-threshold` and `allow-overlap-merging` inputs and usage
 3. ✅ **Cross-Level Deduplication Toggle** - Changed `skip-cross-level-dedup` default from `false` to `true`
-4. ✅ **Minimum Theme Count Controls** - Removed hardcoded minimum theme count checks from implementation files:
-   - Removed 5-theme minimum for batch deduplication in theme-expansion.ts:596-602 (7 lines)
-   - Removed 10-theme minimum for second-pass deduplication in theme-expansion.ts:681 (modified condition)
-   - Removed 20-theme minimum for cross-level deduplication in theme-service.ts:652 (modified condition)
-   - Note: The inputs were already removed from action.yml and validation.ts in a previous session
 
-**Total Lines Removed**: ~75 lines across 5 files
+**Total Lines Removed**: ~50 lines across 3 files
+
+### 2025-01-08 Session 2:
+4. ✅ **Minimum Theme Count Controls** - Completed removal of remaining hardcoded check:
+   - Removed hardcoded 10-theme minimum for second-pass deduplication in theme-expansion.ts:718-722 (5 lines)
+   - Note: The min-themes inputs were already removed from action.yml and validation.ts in a previous session
+
+**Total Lines Removed**: ~55 lines across 4 files
 **Impact**: Eliminated unused logging, threshold, and minimum count infrastructure. Deduplication now runs regardless of theme count when enabled.
 
 ## Next Safe Removal Target
 
-**Priority**: PRD Compliance Controls
+**Priority**: Deduplication Toggle Inputs
 
 **Target Components**:
-- `max-atomic-size` (action.yml:30-33)
-- `re-evaluate-after-merge` (action.yml:35-38)  
-- `strict-atomic-limits` (action.yml:40-43)
+- `skip-batch-dedup` (action.yml - already defaulting to 'true')
+- `skip-second-pass-dedup` (action.yml - already defaulting to 'true')  
+- `skip-cross-level-dedup` (action.yml - already defaulting to 'true')
 
-**Rationale**: These controls are related to PRD compliance and atomic theme size limits, which may be unused if the expansion system is being simplified. Need to verify usage before removal.
+**Rationale**: Since all deduplication is now disabled by default and the minimum theme checks are removed, these toggle inputs serve no purpose. Users cannot meaningfully enable deduplication without the supporting infrastructure.
 
 **Files to modify**:
-1. `action.yml` - Remove the 3 PRD compliance inputs (~12 lines)
-2. `src/validation.ts` - Remove environment variable mappings for PRD controls
-3. Implementation files - Remove PRD compliance checking logic
+1. `action.yml` - Remove the 3 skip-dedup inputs (~12 lines)
+2. `src/validation.ts` - Remove environment variable mappings for skip flags (3 entries)
+3. Implementation files - Remove checks for skip flags
 
-**Risk Level**: MEDIUM - These controls may still be used in the expansion system, requires verification.
+**Risk Level**: LOW - These are simple boolean flags for already-disabled features.
 
 ## 🛑 STOP CONDITIONS - Do Not Proceed If:
 

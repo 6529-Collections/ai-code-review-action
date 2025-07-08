@@ -715,11 +715,6 @@ export class ThemeExpansionService {
         'EXPANSION',
         `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`
       );
-    } else if (finalThemes.length < 10) {
-      logger.info(
-        'EXPANSION',
-        `Skipping second pass deduplication: ${finalThemes.length} themes < minimum 10`
-      );
     }
 
     // Post-deduplication state logging (no second pass)
