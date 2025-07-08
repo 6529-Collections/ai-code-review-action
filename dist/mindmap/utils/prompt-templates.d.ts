@@ -21,10 +21,6 @@ export declare class PromptTemplates {
      */
     static createSubThemeAnalysisPrompt(themeName: string, themeDescription: string, businessImpact: string, level: number, affectedFiles: string[], parentContext?: string): string;
     /**
-     * Template for cross-level similarity analysis
-     */
-    static createCrossLevelSimilarityPrompt(theme1Name: string, theme1Description: string, theme1Level: number, theme1Files: string[], theme2Name: string, theme2Description: string, theme2Level: number, theme2Files: string[], levelDifference: number): string;
-    /**
      * Template for theme naming
      */
     static createThemeNamingPrompt(description: string, businessImpact: string, codeSnippets: string[]): string;

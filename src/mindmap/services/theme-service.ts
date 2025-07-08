@@ -650,8 +650,8 @@ export class ThemeService {
             Date.now() - expansionStartTime
           );
 
-          // Update consolidated themes with expanded and deduplicated results
-          consolidatedThemes = expandedThemes; // For now, use expanded themes directly
+          // Update consolidated themes with expanded results
+          consolidatedThemes = expandedThemes;
 
           // Calculate expansion statistics
           expansionStats = this.calculateExpansionStats(consolidatedThemes);

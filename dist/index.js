@@ -33879,8 +33879,8 @@ class ThemeService {
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
                     // Track expansion effectiveness
                     performance_tracker_1.performanceTracker.trackEffectiveness('Theme Expansion', beforeExpansionCount, expandedThemes.length, Date.now() - expansionStartTime);
-                    // Update consolidated themes with expanded and deduplicated results
-                    consolidatedThemes = expandedThemes; // For now, use expanded themes directly
+                    // Update consolidated themes with expanded results
+                    consolidatedThemes = expandedThemes;
                     // Calculate expansion statistics
                     expansionStats = this.calculateExpansionStats(consolidatedThemes);
                 }
@@ -35175,74 +35175,6 @@ Only create sub-themes if there are genuinely distinct business concerns.`,
                 'Each sub-theme must have confidence >= 0.6',
                 'Sub-themes must be distinct from each other',
                 'Maintain business focus over technical details',
-            ],
-        });
-    }
-    /**
-     * Template for cross-level similarity analysis
-     */
-    static createCrossLevelSimilarityPrompt(theme1Name, theme1Description, theme1Level, theme1Files, theme2Name, theme2Description, theme2Level, theme2Files, levelDifference) {
-        return this.createJsonPrompt({
-            instruction: `Analyze these two themes from different hierarchy levels for similarity and relationship:
-
-THEME 1:
-Level: ${theme1Level}
-Name: ${theme1Name}
-Description: ${theme1Description}
-Files: ${theme1Files.join(', ')}
-
-THEME 2:
-Level: ${theme2Level}
-Name: ${theme2Name}
-Description: ${theme2Description}
-Files: ${theme2Files.join(', ')}
-
-Level Difference: ${levelDifference}
-
-Determine the relationship between these themes across hierarchy levels:
-
-1. SIMILARITY SCORE (0-1): How similar are these themes in business purpose?
-2. RELATIONSHIP TYPE: 
-   - "duplicate": Essentially the same theme (should be merged)
-   - "overlap": Significant overlap in scope (should be consolidated)
-   - "related": Related but distinct (keep separate)
-   - "distinct": Completely different themes
-
-3. MERGE ACTION:
-   - "merge_up": Merge into higher-level theme
-   - "merge_down": Merge into lower-level theme
-   - "merge_sibling": Merge at same level under common parent
-   - "keep_separate": Keep as separate themes
-
-Focus on business value and avoid merging themes with distinct business purposes.`,
-            jsonSchema: `{
-  "similarityScore": number,
-  "relationshipType": "duplicate|overlap|related|distinct",
-  "action": "merge_up|merge_down|merge_sibling|keep_separate",
-  "confidence": number,
-  "reasoning": "detailed explanation"
-}`,
-            examples: [
-                `{
-  "similarityScore": 0.85,
-  "relationshipType": "duplicate",
-  "action": "merge_up",
-  "confidence": 0.9,
-  "reasoning": "Both themes handle user authentication with nearly identical scope and files"
-}`,
-                `{
-  "similarityScore": 0.3,
-  "relationshipType": "distinct",
-  "action": "keep_separate",
-  "confidence": 0.95,
-  "reasoning": "Themes address completely different business concerns - authentication vs data processing"
-}`,
-            ],
-            constraints: [
-                'Similarity score must be between 0 and 1',
-                'Confidence must be between 0 and 1',
-                'Reasoning must explain the decision clearly',
-                'Consider file overlap and business purpose',
             ],
         });
     }
