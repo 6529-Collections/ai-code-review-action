@@ -2,6 +2,8 @@ import * as github from '@actions/github';
 import * as exec from '@actions/exec';
 import { AICodeAnalyzer, CodeChange } from '../utils/ai-code-analyzer';
 import { IGitService } from '../interfaces/git-service-interface';
+import { logger } from '@/shared/logger/logger';
+import { LoggerServices } from '@/shared/logger/constants';
 
 export interface ChangedFile {
   filename: string;
@@ -36,9 +38,7 @@ export class GitService implements IGitService {
     const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) =>
       pattern.test(filename)
     );
-    console.log(
-      `[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`
-    );
+    logger.debug(LoggerServices.GIT_SERVICE, `${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
     return !isExcluded;
   }
 
@@ -51,10 +51,7 @@ export class GitService implements IGitService {
       try {
         this.octokit = github.getOctokit(this.githubToken);
       } catch (error) {
-        console.warn(
-          '[GIT-SERVICE] Failed to initialize GitHub API client:',
-          error
-        );
+        logger.warn(LoggerServices.GIT_SERVICE, `Failed to initialize GitHub API client: ${error}`);
       }
     }
 
@@ -69,15 +66,13 @@ export class GitService implements IGitService {
   }
 
   async getEnhancedChangedFiles(): Promise<CodeChange[]> {
-    console.log(
-      '[GIT-SERVICE] Getting enhanced changed files with AI code analysis'
-    );
+    logger.info(LoggerServices.GIT_SERVICE, 'Getting enhanced changed files with AI code analysis');
 
     // Get basic changed files first
     const changedFiles = await this.getChangedFiles();
 
     if (changedFiles.length === 0) {
-      console.log('[GIT-SERVICE] No changed files to analyze');
+      logger.info(LoggerServices.GIT_SERVICE, 'No changed files to analyze');
       return [];
     }
 
@@ -91,23 +86,17 @@ export class GitService implements IGitService {
           : (file.status as 'added' | 'modified' | 'renamed'),
     }));
 
-    console.log(
-      `[GIT-SERVICE] Starting AI analysis of ${filesToAnalyze.length} files`
-    );
+    logger.info(LoggerServices.GIT_SERVICE, `Starting AI analysis of ${filesToAnalyze.length} files`);
 
     // Use AICodeAnalyzer for processing changed files
     const codeChanges =
       await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
 
-    console.log(
-      `[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`
-    );
+    logger.info(LoggerServices.GIT_SERVICE, `AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
 
     // Log cache statistics
     const cacheStats = this.aiAnalyzer.getCacheStats();
-    console.log(
-      `[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`
-    );
+    logger.info(LoggerServices.GIT_SERVICE, `Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
 
     return codeChanges;
   }
@@ -117,9 +106,7 @@ export class GitService implements IGitService {
     if (github.context.eventName === 'pull_request') {
       const pr = github.context.payload.pull_request;
       if (pr) {
-        console.log(
-          `[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`
-        );
+        logger.info(LoggerServices.GIT_SERVICE, `Using GitHub Actions PR context: #${pr.number}`);
         return {
           number: pr.number,
           title: pr.title,
@@ -133,7 +120,7 @@ export class GitService implements IGitService {
     }
 
     // Fallback for manual runs: Try to detect PR from current branch
-    console.log(`[GIT-SERVICE] Event: ${github.context.eventName}, attempting PR detection for current branch`);
+    logger.info(LoggerServices.GIT_SERVICE, `Event: ${github.context.eventName}, attempting PR detection for current branch`);
     return await this.detectCurrentBranchPR();
   }
 
@@ -143,30 +130,28 @@ export class GitService implements IGitService {
     
     // Try GitHub API first if we have PR context
     if (prContext && prContext.number > 0 && this.octokit) {
-      console.log(
-        `[GIT-SERVICE] PR Context: #${prContext.number}, event=${github.context.eventName}`
-      );
-      console.log(`[GIT-SERVICE] Using GitHub API for PR #${prContext.number}`);
+      logger.info(LoggerServices.GIT_SERVICE, `PR Context: #${prContext.number}, event=${github.context.eventName}`);
+      logger.info(LoggerServices.GIT_SERVICE, `Using GitHub API for PR #${prContext.number}`);
       return await this.getChangedFilesFromGitHub(prContext.number);
     }
 
     // Fallback to git-based diff if we have PR context but no GitHub API access
     if (prContext) {
-      console.log('[GIT-SERVICE] PR context found but no GitHub API access, using git diff');
+      logger.info(LoggerServices.GIT_SERVICE, 'PR context found but no GitHub API access, using git diff');
       return await this.getChangedFilesFromGit(prContext.baseBranch, prContext.headBranch);
     }
 
     // Last resort: try to compare current branch against common base branches
-    console.log('[GIT-SERVICE] No PR context available, attempting git-based detection');
+    logger.info(LoggerServices.GIT_SERVICE, 'No PR context available, attempting git-based detection');
     const currentBranch = await this.getCurrentBranch();
     if (currentBranch) {
-      console.log(`[GIT-SERVICE] Current branch: ${currentBranch}`);
+      logger.info(LoggerServices.GIT_SERVICE, `Current branch: ${currentBranch}`);
       
       // Try common base branches
       const baseBranches = ['main', 'master', 'develop'];
       for (const baseBranch of baseBranches) {
         if (await this.branchExists(baseBranch) && currentBranch !== baseBranch) {
-          console.log(`[GIT-SERVICE] Comparing ${currentBranch} against ${baseBranch}`);
+          logger.info(LoggerServices.GIT_SERVICE, `Comparing ${currentBranch} against ${baseBranch}`);
           const files = await this.getChangedFilesFromGit(baseBranch, currentBranch);
           if (files.length > 0) {
             return files;
@@ -175,7 +160,7 @@ export class GitService implements IGitService {
       }
     }
 
-    console.log('[GIT-SERVICE] No changed files found using any method');
+    logger.info(LoggerServices.GIT_SERVICE, 'No changed files found using any method');
     return [];
   }
 
@@ -208,9 +193,7 @@ export class GitService implements IGitService {
 
         // Safety limit to prevent infinite loops
         if (page > 10) {
-          console.warn(
-            '[GIT-SERVICE] Reached pagination limit, stopping at 1000 files'
-          );
+          logger.warn(LoggerServices.GIT_SERVICE, 'Reached pagination limit, stopping at 1000 files');
           break;
         }
       }
@@ -225,12 +208,10 @@ export class GitService implements IGitService {
           patch: file.patch,
         }));
 
-      console.log(
-        `[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`
-      );
+      logger.info(LoggerServices.GIT_SERVICE, `GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
       return changedFiles;
     } catch (error) {
-      console.error('Failed to get changed files from GitHub:', error);
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get changed files from GitHub: ${error}`);
       return [];
     }
   }
@@ -248,7 +229,7 @@ export class GitService implements IGitService {
         },
       });
     } catch (error) {
-      console.error('Failed to get diff content:', error);
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get diff content: ${error}`);
     }
 
     return diffOutput;
@@ -270,10 +251,10 @@ export class GitService implements IGitService {
       });
       
       const branch = branchOutput.trim();
-      console.log(`[GIT-SERVICE] Current branch: ${branch}`);
+      logger.debug(LoggerServices.GIT_SERVICE, `Current branch: ${branch}`);
       return branch || null;
     } catch (error) {
-      console.error('[GIT-SERVICE] Failed to get current branch:', error);
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get current branch: ${error}`);
       return null;
     }
   }
@@ -301,18 +282,18 @@ export class GitService implements IGitService {
    */
   private async detectCurrentBranchPR(): Promise<PullRequestContext | null> {
     if (!this.octokit) {
-      console.log('[GIT-SERVICE] No GitHub API client available for PR detection');
+      logger.info(LoggerServices.GIT_SERVICE, 'No GitHub API client available for PR detection');
       return null;
     }
 
     const currentBranch = await this.getCurrentBranch();
     if (!currentBranch) {
-      console.log('[GIT-SERVICE] Could not determine current branch');
+      logger.warn(LoggerServices.GIT_SERVICE, 'Could not determine current branch');
       return null;
     }
 
     try {
-      console.log(`[GIT-SERVICE] Searching for open PRs from branch: ${currentBranch}`);
+      logger.info(LoggerServices.GIT_SERVICE, `Searching for open PRs from branch: ${currentBranch}`);
       
       // Search for open PRs from current branch
       const { data: pullRequests } = await this.octokit.rest.pulls.list({
@@ -323,7 +304,7 @@ export class GitService implements IGitService {
 
       if (pullRequests.length > 0) {
         const pr = pullRequests[0]; // Use the first matching PR
-        console.log(`[GIT-SERVICE] Found PR #${pr.number} for branch ${currentBranch}`);
+        logger.info(LoggerServices.GIT_SERVICE, `Found PR #${pr.number} for branch ${currentBranch}`);
         
         return {
           number: pr.number,
@@ -336,10 +317,10 @@ export class GitService implements IGitService {
         };
       }
 
-      console.log(`[GIT-SERVICE] No open PR found for branch: ${currentBranch}`);
+      logger.info(LoggerServices.GIT_SERVICE, `No open PR found for branch: ${currentBranch}`);
       return null;
     } catch (error) {
-      console.error('[GIT-SERVICE] Failed to search for PRs:', error);
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to search for PRs: ${error}`);
       return null;
     }
   }
@@ -352,7 +333,7 @@ export class GitService implements IGitService {
     headBranch: string
   ): Promise<ChangedFile[]> {
     try {
-      console.log(`[GIT-SERVICE] Getting changed files via git diff: ${baseBranch}...${headBranch}`);
+      logger.info(LoggerServices.GIT_SERVICE, `Getting changed files via git diff: ${baseBranch}...${headBranch}`);
       
       // Get list of changed files with status
       let filesOutput = '';
@@ -365,7 +346,7 @@ export class GitService implements IGitService {
       });
 
       if (!filesOutput.trim()) {
-        console.log('[GIT-SERVICE] No files changed according to git diff');
+        logger.info(LoggerServices.GIT_SERVICE, 'No files changed according to git diff');
         return [];
       }
 
@@ -396,7 +377,7 @@ export class GitService implements IGitService {
               },
             });
           } catch (patchError) {
-            console.warn(`[GIT-SERVICE] Failed to get patch for ${filename}:`, patchError);
+            logger.warn(LoggerServices.GIT_SERVICE, `Failed to get patch for ${filename}: ${patchError}`);
           }
 
           changedFiles.push({
@@ -407,12 +388,10 @@ export class GitService implements IGitService {
         }
       }
 
-      console.log(
-        `[GIT-SERVICE] Git diff: Found ${changedFiles.length} changed files`
-      );
+      logger.info(LoggerServices.GIT_SERVICE, `Git diff: Found ${changedFiles.length} changed files`);
       return changedFiles;
     } catch (error) {
-      console.error('[GIT-SERVICE] Failed to get changed files from git:', error);
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get changed files from git: ${error}`);
       return [];
     }
   }

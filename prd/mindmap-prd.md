@@ -105,6 +105,7 @@ Reusable Component:
 ### Analysis Scope
 - **Code files only**: Analysis focuses on executable code changes (.ts, .js, .py, .java, etc.)
 - **Documentation excluded**: Documentation files (.md, .txt, .rst) are intentionally excluded from theme analysis
+- **Build artifacts excluded**: Distribution folders (dist/, build/, target/) are intentionally excluded as they contain generated code
 - **Configuration included**: Config files (.json, .yaml, .toml) are included as they affect system behavior
 - **Tests included**: Test files are analyzed as they represent verifiable business requirements
 
