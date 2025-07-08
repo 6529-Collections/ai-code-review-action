@@ -30893,6 +30893,7 @@ const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
 const business_prompt_templates_1 = __nccwpck_require__(2813);
+const complexity_analyzer_1 = __nccwpck_require__(1981);
 /**
  * AI-driven business domain analyzer
  * Replaces mechanical keyword matching with semantic understanding
@@ -30903,11 +30904,13 @@ class AIDomainAnalyzer {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
     }
     /**
-     * Classify business capability using AI semantic understanding
+     * Classify business capability using AI semantic understanding with complexity awareness
      * PRD: Root level represents "distinct user flow, story, or business capability"
      */
     async classifyBusinessDomain(context, semanticDiff) {
-        const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
+        // Generate complexity profile to inform naming strategy
+        const complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+        const prompt = this.buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile);
         try {
             const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
@@ -31177,6 +31180,47 @@ RESPOND WITH ONLY VALID JSON:
     }
   ]
 }`;
+    }
+    /**
+     * Generate complexity profile for the given context
+     */
+    generateComplexityProfile(context, semanticDiff) {
+        const themeCount = semanticDiff?.totalComplexity || 1;
+        const affectedFiles = semanticDiff?.files.map(f => f.path) || [context.filePath];
+        // Extract theme-like information from context
+        const fileName = context.filePath.split('/').pop() || '';
+        const themeName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
+        const themeDescription = context.commitMessage || context.prDescription || '';
+        return complexity_analyzer_1.ComplexityAnalyzer.generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, context.completeDiff, context.surroundingContext);
+    }
+    /**
+     * Build complexity-aware domain classification prompt
+     */
+    buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile) {
+        // If no complexity profile provided, generate one
+        if (!complexityProfile) {
+            complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+        }
+        const additionalContext = semanticDiff
+            ? this.formatSemanticDiffContext(semanticDiff)
+            : '';
+        // Enhanced functional context with complexity information
+        const functionalContext = `
+${context.surroundingContext}
+
+${additionalContext}
+
+COMPLEXITY ANALYSIS:
+Complexity Level: ${complexityProfile.complexity.toUpperCase()}
+Recommended Approach: ${complexityProfile.recommendedApproach}
+Reasoning: ${complexityProfile.reasoning}
+Detected Patterns: ${complexityProfile.detectedPatterns.join(', ')}
+
+COMMIT CONTEXT:
+${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
+${context.prDescription ? `PR Description: ${context.prDescription}` : ''}`;
+        // Use the enhanced business prompt templates with complexity awareness
+        return business_prompt_templates_1.BusinessPromptTemplates.createBusinessImpactPrompt(context.filePath, context.completeDiff, functionalContext, complexityProfile.complexity);
     }
     /**
      * Trim text to word limit
@@ -33186,7 +33230,8 @@ const exec = __importStar(__nccwpck_require__(5236));
 const secure_file_namer_1 = __nccwpck_require__(5584);
 class ThemeNamingService {
     async generateMergedThemeNameAndDescription(themes) {
-        const prompt = this.buildMergedThemeNamingPrompt(themes);
+        const complexity = this.assessChangeComplexity(themes);
+        const prompt = this.buildComplexityAwareMergedThemeNamingPrompt(themes, complexity);
         return this.executeMergedThemeNaming(prompt);
     }
     async executeMergedThemeNaming(prompt) {
@@ -33253,6 +33298,11 @@ class ThemeNamingService {
         };
     }
     generateMergedThemeNameWithContext(themes, enhancedContext) {
+        const complexity = this.assessChangeComplexityWithContext(themes, enhancedContext);
+        const prompt = this.buildEnhancedComplexityAwareMergedThemeNamingPrompt(themes, enhancedContext, complexity);
+        return this.executeMergedThemeNaming(prompt);
+    }
+    generateMergedThemeNameWithContextLegacy(themes, enhancedContext) {
         // Build enhanced context if available
         let codeContext = '';
         if (enhancedContext?.codeChanges &&
@@ -33375,6 +33425,238 @@ Respond in this exact JSON format (no other text):
             description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
         };
     }
+    /**
+     * Assess change complexity for naming strategy
+     */
+    assessChangeComplexity(themes) {
+        // Simple: Single theme, basic technical changes
+        if (themes.length === 1) {
+            const theme = themes[0];
+            const files = theme.affectedFiles || [];
+            const isSimple = files.length <= 2 && this.isSimpleTechnicalPattern(theme.name, theme.description);
+            if (isSimple) {
+                return {
+                    complexity: 'simple',
+                    confidence: 0.9,
+                    reasoning: 'Single theme with simple technical change',
+                    recommendedApproach: 'technical-specific'
+                };
+            }
+        }
+        // Complex: Multiple themes or business features
+        if (themes.length >= 3 || this.hasBusinessFeaturePatterns(themes)) {
+            return {
+                complexity: 'complex',
+                confidence: 0.8,
+                reasoning: 'Multiple themes or business feature detected',
+                recommendedApproach: 'business-focused'
+            };
+        }
+        // Moderate: Default middle ground
+        return {
+            complexity: 'moderate',
+            confidence: 0.7,
+            reasoning: 'Moderate complexity change requiring hybrid approach',
+            recommendedApproach: 'hybrid'
+        };
+    }
+    /**
+     * Assess complexity with enhanced context
+     */
+    assessChangeComplexityWithContext(themes, enhancedContext) {
+        const baseComplexity = this.assessChangeComplexity(themes);
+        if (!enhancedContext?.contextSummary) {
+            return baseComplexity;
+        }
+        const contextText = enhancedContext.contextSummary.toLowerCase();
+        // Simple technical patterns in context
+        const simplePatterns = [
+            /replaced console\.warn with/,
+            /add.*import/,
+            /logger.*service/,
+            /structured logging/,
+            /fix.*typo/,
+            /update.*comment/
+        ];
+        if (simplePatterns.some(pattern => pattern.test(contextText))) {
+            return {
+                complexity: 'simple',
+                confidence: 0.95,
+                reasoning: 'Simple technical change pattern detected in context',
+                recommendedApproach: 'technical-specific'
+            };
+        }
+        return baseComplexity;
+    }
+    /**
+     * Check for simple technical patterns
+     */
+    isSimpleTechnicalPattern(name, description) {
+        const text = (name + ' ' + description).toLowerCase();
+        const patterns = [
+            /console\.warn/,
+            /logger/,
+            /import/,
+            /logging/,
+            /replace.*with/,
+            /add.*import/,
+            /fix.*typo/,
+            /update.*comment/
+        ];
+        return patterns.some(pattern => pattern.test(text));
+    }
+    /**
+     * Check for business feature patterns
+     */
+    hasBusinessFeaturePatterns(themes) {
+        const allText = themes.map(t => t.name + ' ' + t.description).join(' ').toLowerCase();
+        const patterns = [
+            /authentication/,
+            /authorization/,
+            /user.*flow/,
+            /business.*logic/,
+            /workflow/,
+            /onboarding/,
+            /payment/,
+            /checkout/
+        ];
+        return patterns.some(pattern => pattern.test(allText));
+    }
+    /**
+     * Build complexity-aware merged theme naming prompt
+     */
+    buildComplexityAwareMergedThemeNamingPrompt(themes, complexity) {
+        const themeDetails = themes
+            .map((theme) => `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles.join(', ')})`)
+            .join('\n');
+        const namingGuidelines = this.getNamingGuidelines(complexity);
+        return `You are analyzing related code changes with ${complexity.recommendedApproach.toUpperCase()} naming approach.
+
+COMPLEXITY: ${complexity.complexity.toUpperCase()} (${complexity.confidence} confidence)
+REASONING: ${complexity.reasoning}
+APPROACH: ${complexity.recommendedApproach}
+
+These ${themes.length} themes will be consolidated:
+
+${themeDetails}
+
+${namingGuidelines.instructions}
+
+Examples for ${complexity.complexity} changes:
+${namingGuidelines.examples.map(ex => `- ${ex}`).join('\n')}
+
+Respond in this exact JSON format (no other text):
+{
+  "name": "${namingGuidelines.namePrompt}",
+  "description": "${namingGuidelines.descriptionPrompt}"
+}`;
+    }
+    /**
+     * Build enhanced complexity-aware prompt with context
+     */
+    buildEnhancedComplexityAwareMergedThemeNamingPrompt(themes, enhancedContext, complexity) {
+        if (!complexity) {
+            complexity = this.assessChangeComplexityWithContext(themes, enhancedContext);
+        }
+        const themeDetails = themes
+            .map((theme) => `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles?.join(', ') || 'unknown'})`)
+            .join('\n');
+        // Build enhanced context if available
+        let codeContext = '';
+        if (enhancedContext?.codeChanges &&
+            enhancedContext.codeChanges.length > 0) {
+            const changes = enhancedContext.codeChanges;
+            codeContext = `\nACTUAL CODE CHANGES:\n`;
+            codeContext += `- Files: ${changes.length} files affected\n`;
+            codeContext += `- Types: ${[...new Set(changes.map((c) => c.fileType))].join(', ')}\n`;
+            const functions = changes.flatMap((c) => c.functionsChanged);
+            if (functions.length > 0) {
+                codeContext += `- Functions added/modified: ${functions.slice(0, 5).join(', ')}${functions.length > 5 ? '...' : ''}\n`;
+            }
+            const imports = changes.flatMap((c) => c.importsChanged);
+            if (imports.length > 0) {
+                codeContext += `- Dependencies: ${imports.slice(0, 3).join(', ')}${imports.length > 3 ? '...' : ''}\n`;
+            }
+            if (enhancedContext?.contextSummary) {
+                codeContext += `- Summary: ${enhancedContext.contextSummary}\n`;
+            }
+        }
+        const namingGuidelines = this.getNamingGuidelines(complexity);
+        return `You are analyzing related code changes with ${complexity.recommendedApproach.toUpperCase()} naming approach.
+
+COMPLEXITY: ${complexity.complexity.toUpperCase()} (${complexity.confidence} confidence)
+REASONING: ${complexity.reasoning}
+APPROACH: ${complexity.recommendedApproach}
+
+These ${themes.length} themes will be consolidated:
+
+${themeDetails}
+${codeContext}
+
+${namingGuidelines.instructions}
+
+Examples for ${complexity.complexity} changes:
+${namingGuidelines.examples.map(ex => `- ${ex}`).join('\n')}
+
+Respond in this exact JSON format (no other text):
+{
+  "name": "${namingGuidelines.namePrompt}",
+  "description": "${namingGuidelines.descriptionPrompt}"
+}`;
+    }
+    /**
+     * Get naming guidelines based on complexity
+     */
+    getNamingGuidelines(complexity) {
+        const guidelines = {
+            simple: {
+                instructions: `TECHNICAL-SPECIFIC NAMING GUIDELINES:
+- Describe the specific technical action taken (max 12 words)
+- Use precise technical terms that clarify what changed
+- Mention specific functions, methods, or patterns modified
+- Focus on WHAT changed, not just WHY
+- Example: "Replace console.warn with structured logger calls"`,
+                examples: [
+                    '"Replace console.warn with logger.warn calls"',
+                    '"Add LoggerServices import for centralized logging"',
+                    '"Update error handling to use structured logging"'
+                ],
+                namePrompt: 'Specific technical action description (max 12 words)',
+                descriptionPrompt: 'Detailed explanation of technical change made'
+            },
+            complex: {
+                instructions: `BUSINESS-FOCUSED NAMING GUIDELINES:
+- Focus on user value and business capability (max 8 words)
+- Use business language avoiding technical implementation details
+- Emphasize business outcomes and user benefits
+- Think from product manager perspective explaining to executives
+- Example: "Enhance User Authentication Security"`,
+                examples: [
+                    '"Enable Secure User Authentication"',
+                    '"Streamline Customer Onboarding Process"',
+                    '"Improve Error Resolution Workflow"'
+                ],
+                namePrompt: 'Business capability or user value created (max 8 words)',
+                descriptionPrompt: 'Business value and user benefit explanation'
+            },
+            moderate: {
+                instructions: `HYBRID NAMING GUIDELINES:
+- Balance technical specificity with business context (max 10 words)
+- Include both technical action and business value
+- Use technical terms when they add clarity
+- Connect technical change to business outcome
+- Example: "Implement Structured Logging for Better Error Diagnosis"`,
+                examples: [
+                    '"Implement Structured Logging for Error Diagnosis"',
+                    '"Add OAuth2 Integration for User Security"',
+                    '"Enhance API Validation for Data Integrity"'
+                ],
+                namePrompt: 'Technical change with business context (max 10 words)',
+                descriptionPrompt: 'Technical change explanation with business value'
+            }
+        };
+        return guidelines[complexity.complexity] || guidelines.moderate;
+    }
 }
 exports.ThemeNamingService = ThemeNamingService;
 
@@ -33429,6 +33711,7 @@ const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const json_extractor_1 = __nccwpck_require__(8168);
 const performance_tracker_1 = __nccwpck_require__(9600);
 const business_prompt_templates_1 = __nccwpck_require__(2813);
+const logger_1 = __nccwpck_require__(9000);
 // Processing configuration
 const PROCESSING_CONFIG = {
     CHUNK_TIMEOUT: 120000, // 2 minutes
@@ -33463,8 +33746,27 @@ class ClaudeService {
         }
         catch (err) {
             const error = err instanceof Error ? err.message : String(err);
-            return this.createFallbackAnalysis(chunk);
+            throw new Error(`Theme analysis failed for ${chunk.filename}: ${error}`);
         }
+    }
+    async analyzeChunkWithRetry(chunk, context, codeChange) {
+        const MAX_RETRIES = 5;
+        let lastError;
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return await this.analyzeChunk(chunk, context, codeChange);
+            }
+            catch (error) {
+                lastError = error instanceof Error ? error : new Error(String(error));
+                logger_1.logger.warn('THEME_SERVICE', `AI analysis attempt ${attempt}/${MAX_RETRIES} failed for ${chunk.filename}: ${lastError.message}`);
+                if (attempt === MAX_RETRIES) {
+                    throw new Error(`AI theme analysis failed after ${MAX_RETRIES} attempts for ${chunk.filename}: ${lastError.message}`);
+                }
+                // Brief delay before retry (exponential backoff)
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 500));
+            }
+        }
+        throw lastError;
     }
     buildAnalysisPrompt(chunk, context, codeChange) {
         // Use full content - modern context windows can handle it
@@ -33533,45 +33835,8 @@ class ClaudeService {
                 mainClassesChanged: codeChange?.classesChanged || data.mainClassesChanged || [],
             };
         }
-        // Use the better fallback that includes filename
-        return this.createFallbackAnalysis(chunk);
-    }
-    createFallbackAnalysis(chunk) {
-        // Try to infer business capability from filename
-        const fileName = chunk.filename.toLowerCase();
-        let businessCapability = 'User Experience Enhancement';
-        let userValue = 'Users benefit from improved system functionality';
-        let businessProcess = 'General system improvement and optimization';
-        if (fileName.includes('auth') || fileName.includes('login')) {
-            businessCapability = 'User Account Management';
-            userValue = 'Users access their accounts securely and efficiently';
-            businessProcess = 'Secure user authentication and access control';
-        }
-        else if (fileName.includes('test') || fileName.includes('spec')) {
-            businessCapability = 'Development Workflow Optimization';
-            userValue = 'Developers catch issues before users experience them';
-            businessProcess = 'Quality assurance and automated testing';
-        }
-        else if (fileName.includes('config') || fileName.includes('setting')) {
-            businessCapability = 'Development Workflow Optimization';
-            userValue = 'Developers deploy and maintain systems reliably';
-            businessProcess = 'System configuration and deployment management';
-        }
-        else if (fileName.includes('ui') || fileName.includes('component')) {
-            businessCapability = 'User Experience Enhancement';
-            userValue = 'Users accomplish tasks intuitively and efficiently';
-            businessProcess = 'Intuitive user interface and interaction design';
-        }
-        return {
-            themeName: businessCapability,
-            description: userValue,
-            businessImpact: businessProcess,
-            confidence: 0.4,
-            codePattern: 'User Experience Enhancement',
-            suggestedParent: undefined,
-            detailedDescription: `Business analysis unavailable - inferred from file: ${chunk.filename}`,
-            technicalSummary: `Modifications in ${chunk.filename}`,
-        };
+        // PRD-compliant: Hard error instead of algorithmic fallback
+        throw new Error(`Failed to parse Claude response for ${chunk.filename}. Raw output: ${output.substring(0, 200)}...`);
     }
 }
 class ChunkProcessor {
@@ -33596,22 +33861,18 @@ class ThemeContextManager {
     }
     async processChunk(chunk) {
         const contextString = this.buildContextForClaude();
-        const analysis = await this.claudeService.analyzeChunk(chunk, contextString);
+        const analysis = await this.claudeService.analyzeChunkWithRetry(chunk, contextString);
         const placement = this.determineThemePlacement(analysis);
         this.updateContext(placement, analysis, chunk);
     }
     async analyzeChunkOnly(chunk, codeChange) {
         try {
             const contextString = this.buildContextForClaude();
-            const analysis = await this.claudeService.analyzeChunk(chunk, contextString, codeChange);
+            const analysis = await this.claudeService.analyzeChunkWithRetry(chunk, contextString, codeChange);
             return { chunk, analysis };
         }
         catch (error) {
-            return {
-                chunk,
-                analysis: this.createFallbackAnalysis(chunk),
-                error: error instanceof Error ? error.message : String(error),
-            };
+            throw new Error(`Batch analysis failed for ${chunk.filename}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
     processBatchResults(results, codeChangeMap) {
@@ -33622,16 +33883,6 @@ class ThemeContextManager {
             const codeChange = codeChangeMap.get(result.chunk.filename);
             this.updateContext(placement, result.analysis, result.chunk, codeChange);
         }
-    }
-    createFallbackAnalysis(chunk) {
-        return {
-            themeName: `Changes in ${chunk.filename}`,
-            description: 'Analysis unavailable - using fallback',
-            businessImpact: 'Unknown impact',
-            confidence: 0.3,
-            codePattern: 'File modification',
-            suggestedParent: undefined,
-        };
     }
     buildContextForClaude() {
         const existingThemes = Array.from(this.context.themes.values())
@@ -34610,37 +34861,36 @@ const prompt_templates_1 = __nccwpck_require__(1958);
 class BusinessPromptTemplates extends prompt_templates_1.PromptTemplates {
     /**
      * Business capability identification prompt - transforms technical changes to user value
+     * Now includes complexity-aware naming strategy
      */
-    static createBusinessImpactPrompt(filePath, codeChanges, technicalContext) {
+    static createBusinessImpactPrompt(filePath, codeChanges, technicalContext, changeComplexity) {
+        const strategy = this.determineNamingStrategy(changeComplexity, codeChanges, filePath);
+        return this.createComplexityAwarePrompt(filePath, codeChanges, technicalContext, strategy);
+    }
+    /**
+     * Create prompt based on naming strategy
+     */
+    static createComplexityAwarePrompt(filePath, codeChanges, technicalContext, strategy) {
         return this.createJsonPrompt({
-            instruction: `You are a product manager analyzing code changes for business impact and user value.
+            instruction: `You are analyzing code changes with ${strategy.namingApproach.toUpperCase()} naming approach.
 
-PERSPECTIVE: Focus on USER VALUE and BUSINESS CAPABILITY, not technical implementation.
+NAMING STRATEGY: ${strategy.namingApproach} (${strategy.changeComplexity} complexity)
+${this.getNamingInstructions(strategy)}
 
 CONTEXT:
 File: ${filePath}
 Code Changes: ${codeChanges}
 Technical Context: ${technicalContext}
 
-CRITICAL QUESTIONS TO ANSWER:
-1. What user problem does this solve or improve?
-2. What business process does this enable or enhance?
-3. What user journey or workflow does this affect?
-4. How does this create value for end users?
-5. What can users now DO that they couldn't before (or do BETTER)?
-
-BUSINESS-FIRST ANALYSIS:
-Think like a product manager explaining this change to an executive board.
-Focus on user outcomes, business processes, and customer value.
-Avoid technical jargon - use business language.`,
+${this.getAnalysisQuestions(strategy)}`,
             jsonSchema: `{
-  "businessCapability": "What user capability this creates (max 8 words)",
+  "businessCapability": "${this.getNamePrompt(strategy)}",
   "userValue": "Direct benefit to end users (max 12 words)",
   "businessProcess": "Business workflow this improves (max 15 words)",
-  "userScenarios": ["When users will experience this benefit"],
+  "userScenarios": ["Specific user scenarios this enables (array)"],
   "businessDomain": "Primary business area affected",
-  "executiveSummary": "One-sentence business value for executives",
-  "technicalImplementation": "How it's implemented (max 10 words)",
+  "executiveSummary": "Executive summary of business impact (max 25 words)",
+  "technicalImplementation": "Technical approach and implementation details",
   "confidence": 0.0-1.0
 }`,
             examples: [
@@ -34674,6 +34924,156 @@ Avoid technical jargon - use business language.`,
                 'Confidence reflects certainty of business impact assessment'
             ]
         });
+    }
+    /**
+     * Determine naming strategy based on change complexity and patterns
+     */
+    static determineNamingStrategy(complexity = 'moderate', codeChanges, filePath) {
+        const analysis = this.analyzeChangeComplexity(codeChanges, filePath);
+        // Simple technical changes get technical-specific naming
+        if (complexity === 'simple' || analysis.isSimpleTechnicalChange) {
+            return {
+                changeComplexity: 'simple',
+                namingApproach: 'technical-specific',
+                maxWords: 12,
+                allowTechnicalTerms: true
+            };
+        }
+        // Complex business features get business-focused naming
+        if (complexity === 'complex' || analysis.isComplexBusinessFeature) {
+            return {
+                changeComplexity: 'complex',
+                namingApproach: 'business-focused',
+                maxWords: 8,
+                allowTechnicalTerms: false
+            };
+        }
+        // Moderate changes get hybrid approach
+        return {
+            changeComplexity: 'moderate',
+            namingApproach: 'hybrid',
+            maxWords: 10,
+            allowTechnicalTerms: true
+        };
+    }
+    /**
+     * Analyze code changes to determine complexity
+     */
+    static analyzeChangeComplexity(codeChanges, filePath) {
+        const changeText = codeChanges.toLowerCase();
+        const pathText = filePath.toLowerCase();
+        // Simple technical change patterns
+        const simplePatterns = [
+            /console\.(log|warn|error)/,
+            /import.*logger/i,
+            /logger\.(info|warn|error)/,
+            /\.warn\(/,
+            /console\.warn.*replaced.*logger/,
+            /add.*import/,
+            /replace.*console/,
+            /fix.*typo/,
+            /update.*comment/,
+            /rename.*variable/,
+            /add.*semicolon/
+        ];
+        // Complex business feature patterns  
+        const complexPatterns = [
+            /authentication/,
+            /authorization/,
+            /payment/,
+            /checkout/,
+            /registration/,
+            /onboarding/,
+            /workflow/,
+            /business.*logic/,
+            /user.*flow/,
+            /feature.*flag/
+        ];
+        const isSimple = simplePatterns.some(pattern => pattern.test(changeText)) ||
+            pathText.includes('test') ||
+            pathText.includes('spec') ||
+            (changeText.includes('import') && changeText.split('\n').length < 5);
+        const isComplex = complexPatterns.some(pattern => pattern.test(changeText)) ||
+            changeText.split('file').length > 3 ||
+            changeText.includes('new feature') ||
+            changeText.includes('business requirement');
+        return {
+            isSimpleTechnicalChange: isSimple,
+            isComplexBusinessFeature: isComplex,
+            confidence: isSimple || isComplex ? 0.9 : 0.6,
+            reasoning: isSimple ? 'Simple technical change detected' :
+                isComplex ? 'Complex business feature detected' :
+                    'Moderate complexity change'
+        };
+    }
+    /**
+     * Get naming instructions based on strategy
+     */
+    static getNamingInstructions(strategy) {
+        switch (strategy.namingApproach) {
+            case 'technical-specific':
+                return `FOCUS: Describe the specific technical action taken
+- Use precise technical terms that clarify what changed
+- Mention specific functions, methods, or patterns modified
+- Aim for clarity over business abstraction
+- Example: "Replace console.warn with structured logger calls"`;
+            case 'business-focused':
+                return `FOCUS: Emphasize user value and business capability
+- Use business language avoiding technical implementation details
+- Focus on user outcomes and business processes
+- Think from product manager perspective
+- Example: "Enhance System Reliability and User Experience"`;
+            case 'hybrid':
+                return `FOCUS: Balance technical specificity with business context
+- Include both what technically changed and why it matters
+- Use technical terms when they add clarity
+- Connect technical action to business value
+- Example: "Implement Structured Logging for Better Error Diagnosis"`;
+            default:
+                return 'FOCUS: Analyze the change and provide appropriate naming';
+        }
+    }
+    /**
+     * Get analysis questions based on strategy
+     */
+    static getAnalysisQuestions(strategy) {
+        switch (strategy.namingApproach) {
+            case 'technical-specific':
+                return `ANALYSIS QUESTIONS:
+1. What specific technical change was made?
+2. Which functions, methods, or patterns were modified?
+3. What was replaced, added, or removed?
+4. How would a developer describe this change?`;
+            case 'business-focused':
+                return `ANALYSIS QUESTIONS:
+1. What user problem does this solve or improve?
+2. What business process does this enable or enhance?
+3. What user journey or workflow does this affect?
+4. How does this create value for end users?`;
+            case 'hybrid':
+                return `ANALYSIS QUESTIONS:
+1. What technical change was made and why?
+2. How does this technical change improve user experience?
+3. What business capability does this technical improvement enable?
+4. What would both a developer and product manager find valuable about this change?`;
+            default:
+                return 'Analyze the change for appropriate naming approach.';
+        }
+    }
+    /**
+     * Get name prompt based on strategy
+     */
+    static getNamePrompt(strategy) {
+        switch (strategy.namingApproach) {
+            case 'technical-specific':
+                return `Specific technical action description (max ${strategy.maxWords} words)`;
+            case 'business-focused':
+                return `Business capability or user value created (max ${strategy.maxWords} words)`;
+            case 'hybrid':
+                return `Technical change with business context (max ${strategy.maxWords} words)`;
+            default:
+                return `Change description (max ${strategy.maxWords} words)`;
+        }
     }
     /**
      * Business domain classification - maps code to business capabilities
@@ -35023,6 +35423,232 @@ CONSOLIDATION RULES:
     }
 }
 exports.BusinessPromptTemplates = BusinessPromptTemplates;
+
+
+/***/ }),
+
+/***/ 1981:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Utility for analyzing code change complexity for theme naming strategy
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ComplexityAnalyzer = void 0;
+class ComplexityAnalyzer {
+    /**
+     * Analyze code changes and file patterns to determine complexity
+     */
+    static analyzeChangeComplexity(codeChanges, filePath, contextSummary) {
+        const changeText = codeChanges.toLowerCase();
+        const pathText = filePath.toLowerCase();
+        const contextText = contextSummary?.toLowerCase() || '';
+        // Simple technical change patterns
+        const simplePatterns = [
+            /console\.(log|warn|error)/,
+            /import.*logger/i,
+            /logger\.(info|warn|error)/,
+            /\.warn\(/,
+            /console\.warn.*replaced.*logger/,
+            /add.*import/,
+            /replace.*console/,
+            /fix.*typo/,
+            /update.*comment/,
+            /rename.*variable/,
+            /add.*semicolon/,
+            /structured logging/,
+            /logger.*service/
+        ];
+        // Complex business feature patterns  
+        const complexPatterns = [
+            /authentication/,
+            /authorization/,
+            /payment/,
+            /checkout/,
+            /registration/,
+            /onboarding/,
+            /workflow/,
+            /business.*logic/,
+            /user.*flow/,
+            /feature.*flag/,
+            /user.*journey/,
+            /business.*process/
+        ];
+        const isSimple = simplePatterns.some(pattern => pattern.test(changeText) || pattern.test(contextText)) || pathText.includes('test') ||
+            pathText.includes('spec') ||
+            (changeText.includes('import') && changeText.split('\n').length < 5);
+        const isComplex = complexPatterns.some(pattern => pattern.test(changeText) || pattern.test(contextText)) || changeText.split('file').length > 3 ||
+            changeText.includes('new feature') ||
+            changeText.includes('business requirement');
+        return {
+            isSimpleTechnicalChange: isSimple,
+            isComplexBusinessFeature: isComplex,
+            confidence: isSimple || isComplex ? 0.9 : 0.6,
+            reasoning: isSimple ? 'Simple technical change detected' :
+                isComplex ? 'Complex business feature detected' :
+                    'Moderate complexity change'
+        };
+    }
+    /**
+     * Generate comprehensive complexity profile with recommendations
+     */
+    static generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, codeChanges, contextSummary) {
+        const detectedPatterns = [];
+        // Single theme analysis
+        if (themeCount === 1 && affectedFiles.length <= 2) {
+            const isSimple = this.isSimpleTechnicalPattern(themeName || '', themeDescription || '', codeChanges, contextSummary);
+            if (isSimple) {
+                detectedPatterns.push('single-file-technical-change');
+                return {
+                    complexity: 'simple',
+                    confidence: 0.9,
+                    reasoning: 'Single theme with simple technical change',
+                    recommendedApproach: 'technical-specific',
+                    detectedPatterns
+                };
+            }
+        }
+        // Multiple themes or business features
+        if (themeCount >= 3 || this.hasBusinessFeaturePatterns(themeName, themeDescription, codeChanges)) {
+            detectedPatterns.push('multiple-themes-or-business-feature');
+            return {
+                complexity: 'complex',
+                confidence: 0.8,
+                reasoning: 'Multiple themes or business feature detected',
+                recommendedApproach: 'business-focused',
+                detectedPatterns
+            };
+        }
+        // Context-aware analysis
+        if (contextSummary) {
+            const contextAnalysis = this.analyzeContextPatterns(contextSummary);
+            if (contextAnalysis.isSimple) {
+                detectedPatterns.push('simple-context-pattern');
+                return {
+                    complexity: 'simple',
+                    confidence: 0.95,
+                    reasoning: 'Simple technical change pattern detected in context',
+                    recommendedApproach: 'technical-specific',
+                    detectedPatterns
+                };
+            }
+        }
+        // Default moderate complexity
+        detectedPatterns.push('moderate-complexity-default');
+        return {
+            complexity: 'moderate',
+            confidence: 0.7,
+            reasoning: 'Moderate complexity change requiring hybrid approach',
+            recommendedApproach: 'hybrid',
+            detectedPatterns
+        };
+    }
+    /**
+     * Check for simple technical patterns
+     */
+    static isSimpleTechnicalPattern(name, description, codeChanges, contextSummary) {
+        const text = (name + ' ' + description + ' ' + (codeChanges || '') + ' ' + (contextSummary || '')).toLowerCase();
+        const patterns = [
+            /console\.warn/,
+            /logger/,
+            /import/,
+            /logging/,
+            /replace.*with/,
+            /add.*import/,
+            /fix.*typo/,
+            /update.*comment/,
+            /structured logging/,
+            /replaced.*console.*warn/
+        ];
+        return patterns.some(pattern => pattern.test(text));
+    }
+    /**
+     * Check for business feature patterns
+     */
+    static hasBusinessFeaturePatterns(name, description, codeChanges) {
+        const allText = (name + ' ' + description + ' ' + (codeChanges || '')).toLowerCase();
+        const patterns = [
+            /authentication/,
+            /authorization/,
+            /user.*flow/,
+            /business.*logic/,
+            /workflow/,
+            /onboarding/,
+            /payment/,
+            /checkout/,
+            /user.*journey/,
+            /business.*process/
+        ];
+        return patterns.some(pattern => pattern.test(allText));
+    }
+    /**
+     * Analyze context summary for complexity indicators
+     */
+    static analyzeContextPatterns(contextSummary) {
+        const contextText = contextSummary.toLowerCase();
+        // Simple technical patterns in context
+        const simplePatterns = [
+            /replaced console\.warn with/,
+            /add.*import/,
+            /logger.*service/,
+            /structured logging/,
+            /fix.*typo/,
+            /update.*comment/,
+            /single.*file.*change/,
+            /minor.*refactor/
+        ];
+        // Complex patterns in context
+        const complexPatterns = [
+            /multiple.*components/,
+            /business.*feature/,
+            /user.*workflow/,
+            /new.*functionality/,
+            /feature.*implementation/,
+            /system.*integration/
+        ];
+        return {
+            isSimple: simplePatterns.some(pattern => pattern.test(contextText)),
+            isComplex: complexPatterns.some(pattern => pattern.test(contextText))
+        };
+    }
+    /**
+     * Get examples for detected complexity patterns
+     */
+    static getPatternExamples(detectedPatterns) {
+        const examples = {
+            'single-file-technical-change': [
+                'Replace console.warn with logger.warn calls',
+                'Add LoggerServices import for centralized logging',
+                'Update error handling to use structured logging'
+            ],
+            'multiple-themes-or-business-feature': [
+                'Enable Secure User Authentication',
+                'Streamline Customer Onboarding Process',
+                'Improve Error Resolution Workflow'
+            ],
+            'simple-context-pattern': [
+                'Replace console.warn with structured logging',
+                'Add import statement for logger service',
+                'Update logging call to use centralized system'
+            ],
+            'moderate-complexity-default': [
+                'Implement Structured Logging for Error Diagnosis',
+                'Add OAuth2 Integration for User Security',
+                'Enhance API Validation for Data Integrity'
+            ]
+        };
+        const allExamples = [];
+        detectedPatterns.forEach(pattern => {
+            if (examples[pattern]) {
+                allExamples.push(...examples[pattern]);
+            }
+        });
+        return allExamples.length > 0 ? allExamples : examples['moderate-complexity-default'];
+    }
+}
+exports.ComplexityAnalyzer = ComplexityAnalyzer;
 
 
 /***/ }),
@@ -37115,10 +37741,10 @@ class ClaudeClient {
                 logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, 'Circuit breaker activated for 30s');
             }
             // Retry with exponential backoff
-            if (queueItem.retryCount < 3) {
+            if (queueItem.retryCount < 5) {
                 queueItem.retryCount++;
-                const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s
-                logger_1.logger.warn(constants_1.LoggerServices.CLAUDE_CLIENT, `Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/3)`);
+                const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s, 16s, 32s
+                logger_1.logger.warn(constants_1.LoggerServices.CLAUDE_CLIENT, `Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/5)`);
                 setTimeout(() => {
                     ClaudeClient.requestQueue.unshift(queueItem); // Add back to front of queue
                 }, backoffDelay);

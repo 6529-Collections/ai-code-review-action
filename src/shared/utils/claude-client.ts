@@ -320,11 +320,11 @@ export class ClaudeClient {
       }
 
       // Retry with exponential backoff
-      if (queueItem.retryCount < 3) {
+      if (queueItem.retryCount < 5) {
         queueItem.retryCount++;
-        const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s
+        const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s, 16s, 32s
 
-        logger.warn(LoggerServices.CLAUDE_CLIENT, `Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/3)`);
+        logger.warn(LoggerServices.CLAUDE_CLIENT, `Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/5)`);
 
         setTimeout(() => {
           ClaudeClient.requestQueue.unshift(queueItem); // Add back to front of queue

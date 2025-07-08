@@ -21,46 +21,66 @@ export interface ProgressiveLanguageConfig {
   forbiddenTerms: string[];
 }
 
+export interface NamingStrategy {
+  changeComplexity: 'simple' | 'moderate' | 'complex';
+  namingApproach: 'technical-specific' | 'hybrid' | 'business-focused';
+  maxWords: number;
+  allowTechnicalTerms: boolean;
+}
+
+export interface ComplexityAnalysis {
+  isSimpleTechnicalChange: boolean;
+  isComplexBusinessFeature: boolean;
+  confidence: number;
+  reasoning: string;
+}
+
 export class BusinessPromptTemplates extends PromptTemplates {
   
   /**
    * Business capability identification prompt - transforms technical changes to user value
+   * Now includes complexity-aware naming strategy
    */
   static createBusinessImpactPrompt(
     filePath: string,
     codeChanges: string,
-    technicalContext: string
+    technicalContext: string,
+    changeComplexity?: 'simple' | 'moderate' | 'complex'
+  ): string {
+    const strategy = this.determineNamingStrategy(changeComplexity, codeChanges, filePath);
+    return this.createComplexityAwarePrompt(filePath, codeChanges, technicalContext, strategy);
+  }
+
+  /**
+   * Create prompt based on naming strategy
+   */
+  private static createComplexityAwarePrompt(
+    filePath: string,
+    codeChanges: string,
+    technicalContext: string,
+    strategy: NamingStrategy
   ): string {
     return this.createJsonPrompt({
-      instruction: `You are a product manager analyzing code changes for business impact and user value.
+      instruction: `You are analyzing code changes with ${strategy.namingApproach.toUpperCase()} naming approach.
 
-PERSPECTIVE: Focus on USER VALUE and BUSINESS CAPABILITY, not technical implementation.
+NAMING STRATEGY: ${strategy.namingApproach} (${strategy.changeComplexity} complexity)
+${this.getNamingInstructions(strategy)}
 
 CONTEXT:
 File: ${filePath}
 Code Changes: ${codeChanges}
 Technical Context: ${technicalContext}
 
-CRITICAL QUESTIONS TO ANSWER:
-1. What user problem does this solve or improve?
-2. What business process does this enable or enhance?
-3. What user journey or workflow does this affect?
-4. How does this create value for end users?
-5. What can users now DO that they couldn't before (or do BETTER)?
-
-BUSINESS-FIRST ANALYSIS:
-Think like a product manager explaining this change to an executive board.
-Focus on user outcomes, business processes, and customer value.
-Avoid technical jargon - use business language.`,
+${this.getAnalysisQuestions(strategy)}`,
       
       jsonSchema: `{
-  "businessCapability": "What user capability this creates (max 8 words)",
+  "businessCapability": "${this.getNamePrompt(strategy)}",
   "userValue": "Direct benefit to end users (max 12 words)",
   "businessProcess": "Business workflow this improves (max 15 words)",
-  "userScenarios": ["When users will experience this benefit"],
+  "userScenarios": ["Specific user scenarios this enables (array)"],
   "businessDomain": "Primary business area affected",
-  "executiveSummary": "One-sentence business value for executives",
-  "technicalImplementation": "How it's implemented (max 10 words)",
+  "executiveSummary": "Executive summary of business impact (max 25 words)",
+  "technicalImplementation": "Technical approach and implementation details",
   "confidence": 0.0-1.0
 }`,
       
@@ -96,6 +116,182 @@ Avoid technical jargon - use business language.`,
         'Confidence reflects certainty of business impact assessment'
       ]
     });
+  }
+
+  /**
+   * Determine naming strategy based on change complexity and patterns
+   */
+  private static determineNamingStrategy(
+    complexity: string = 'moderate',
+    codeChanges: string,
+    filePath: string
+  ): NamingStrategy {
+    const analysis = this.analyzeChangeComplexity(codeChanges, filePath);
+    
+    // Simple technical changes get technical-specific naming
+    if (complexity === 'simple' || analysis.isSimpleTechnicalChange) {
+      return {
+        changeComplexity: 'simple',
+        namingApproach: 'technical-specific',
+        maxWords: 12,
+        allowTechnicalTerms: true
+      };
+    }
+    
+    // Complex business features get business-focused naming
+    if (complexity === 'complex' || analysis.isComplexBusinessFeature) {
+      return {
+        changeComplexity: 'complex', 
+        namingApproach: 'business-focused',
+        maxWords: 8,
+        allowTechnicalTerms: false
+      };
+    }
+    
+    // Moderate changes get hybrid approach
+    return {
+      changeComplexity: 'moderate',
+      namingApproach: 'hybrid',
+      maxWords: 10,
+      allowTechnicalTerms: true
+    };
+  }
+
+  /**
+   * Analyze code changes to determine complexity
+   */
+  private static analyzeChangeComplexity(
+    codeChanges: string,
+    filePath: string
+  ): ComplexityAnalysis {
+    const changeText = codeChanges.toLowerCase();
+    const pathText = filePath.toLowerCase();
+    
+    // Simple technical change patterns
+    const simplePatterns = [
+      /console\.(log|warn|error)/,
+      /import.*logger/i,
+      /logger\.(info|warn|error)/,
+      /\.warn\(/,
+      /console\.warn.*replaced.*logger/,
+      /add.*import/,
+      /replace.*console/,
+      /fix.*typo/,
+      /update.*comment/,
+      /rename.*variable/,
+      /add.*semicolon/
+    ];
+    
+    // Complex business feature patterns  
+    const complexPatterns = [
+      /authentication/,
+      /authorization/,
+      /payment/,
+      /checkout/,
+      /registration/,
+      /onboarding/,
+      /workflow/,
+      /business.*logic/,
+      /user.*flow/,
+      /feature.*flag/
+    ];
+    
+    const isSimple = simplePatterns.some(pattern => pattern.test(changeText)) ||
+                    pathText.includes('test') ||
+                    pathText.includes('spec') ||
+                    (changeText.includes('import') && changeText.split('\n').length < 5);
+    
+    const isComplex = complexPatterns.some(pattern => pattern.test(changeText)) ||
+                     changeText.split('file').length > 3 ||
+                     changeText.includes('new feature') ||
+                     changeText.includes('business requirement');
+    
+    return {
+      isSimpleTechnicalChange: isSimple,
+      isComplexBusinessFeature: isComplex,
+      confidence: isSimple || isComplex ? 0.9 : 0.6,
+      reasoning: isSimple ? 'Simple technical change detected' : 
+                isComplex ? 'Complex business feature detected' : 
+                'Moderate complexity change'
+    };
+  }
+
+  /**
+   * Get naming instructions based on strategy
+   */
+  private static getNamingInstructions(strategy: NamingStrategy): string {
+    switch (strategy.namingApproach) {
+      case 'technical-specific':
+        return `FOCUS: Describe the specific technical action taken
+- Use precise technical terms that clarify what changed
+- Mention specific functions, methods, or patterns modified
+- Aim for clarity over business abstraction
+- Example: "Replace console.warn with structured logger calls"`;
+        
+      case 'business-focused':
+        return `FOCUS: Emphasize user value and business capability
+- Use business language avoiding technical implementation details
+- Focus on user outcomes and business processes
+- Think from product manager perspective
+- Example: "Enhance System Reliability and User Experience"`;
+        
+      case 'hybrid':
+        return `FOCUS: Balance technical specificity with business context
+- Include both what technically changed and why it matters
+- Use technical terms when they add clarity
+- Connect technical action to business value
+- Example: "Implement Structured Logging for Better Error Diagnosis"`;
+        
+      default:
+        return 'FOCUS: Analyze the change and provide appropriate naming';
+    }
+  }
+
+  /**
+   * Get analysis questions based on strategy
+   */
+  private static getAnalysisQuestions(strategy: NamingStrategy): string {
+    switch (strategy.namingApproach) {
+      case 'technical-specific':
+        return `ANALYSIS QUESTIONS:
+1. What specific technical change was made?
+2. Which functions, methods, or patterns were modified?
+3. What was replaced, added, or removed?
+4. How would a developer describe this change?`;
+        
+      case 'business-focused':
+        return `ANALYSIS QUESTIONS:
+1. What user problem does this solve or improve?
+2. What business process does this enable or enhance?
+3. What user journey or workflow does this affect?
+4. How does this create value for end users?`;
+        
+      case 'hybrid':
+        return `ANALYSIS QUESTIONS:
+1. What technical change was made and why?
+2. How does this technical change improve user experience?
+3. What business capability does this technical improvement enable?
+4. What would both a developer and product manager find valuable about this change?`;
+        
+      default:
+        return 'Analyze the change for appropriate naming approach.';
+    }
+  }
+
+  /**
+   * Get name prompt based on strategy
+   */
+  private static getNamePrompt(strategy: NamingStrategy): string {
+    switch (strategy.namingApproach) {
+      case 'technical-specific':
+        return `Specific technical action description (max ${strategy.maxWords} words)`;
+      case 'business-focused':
+        return `Business capability or user value created (max ${strategy.maxWords} words)`;
+      case 'hybrid':
+        return `Technical change with business context (max ${strategy.maxWords} words)`;
+      default:
+        return `Change description (max ${strategy.maxWords} words)`;
+    }
   }
 
   /**

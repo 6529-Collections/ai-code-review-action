@@ -8,7 +8,7 @@ export declare class AIDomainAnalyzer {
     private claudeClient;
     constructor(anthropicApiKey: string);
     /**
-     * Classify business capability using AI semantic understanding
+     * Classify business capability using AI semantic understanding with complexity awareness
      * PRD: Root level represents "distinct user flow, story, or business capability"
      */
     classifyBusinessDomain(context: AIAnalysisContext, semanticDiff?: SemanticDiff): Promise<AIDomainClassification>;
@@ -52,6 +52,14 @@ export declare class AIDomainAnalyzer {
      * Build prompt for multi-domain analysis
      */
     private buildMultiDomainAnalysisPrompt;
+    /**
+     * Generate complexity profile for the given context
+     */
+    private generateComplexityProfile;
+    /**
+     * Build complexity-aware domain classification prompt
+     */
+    private buildComplexityAwareDomainClassificationPrompt;
     /**
      * Trim text to word limit
      */
