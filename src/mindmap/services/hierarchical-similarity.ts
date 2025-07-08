@@ -1,7 +1,6 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
 import {
   CrossLevelSimilarity,
-  DeduplicationResult,
 } from '../types/expansion-types';
 import { GenericCache } from '@/shared/cache/generic-cache';
 import { ClaudeClient } from '@/shared/utils/claude-client';
@@ -157,72 +156,6 @@ export class HierarchicalSimilarityService {
     return successfulResults;
   }
 
-  /**
-   * Deduplicate themes across hierarchy levels
-   */
-  async deduplicateHierarchy(
-    hierarchy: ConsolidatedTheme[]
-  ): Promise<DeduplicationResult> {
-    const crossLevelSimilarities =
-      await this.analyzeCrossLevelSimilarity(hierarchy);
-
-    // Filter for high-similarity themes that should be merged
-    // Since cross-level deduplication is disabled, this filter returns empty array
-    const duplicates = crossLevelSimilarities.filter(() => false);
-
-    console.log(
-      `[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (deduplication disabled)`
-    );
-
-    const mergedThemes: DeduplicationResult['mergedThemes'] = [];
-    const processedIds = new Set<string>();
-    let duplicatesRemoved = 0;
-    let overlapsResolved = 0;
-
-    for (const duplicate of duplicates) {
-      if (
-        processedIds.has(duplicate.theme1.id) ||
-        processedIds.has(duplicate.theme2.id)
-      ) {
-        continue; // Already processed
-      }
-
-      const mergedTheme = this.mergeThemes(
-        duplicate.theme1,
-        duplicate.theme2,
-        duplicate.action
-      );
-
-      mergedThemes.push({
-        sourceIds: [duplicate.theme1.id, duplicate.theme2.id],
-        targetTheme: mergedTheme,
-        mergeReason: duplicate.reasoning,
-      });
-
-      processedIds.add(duplicate.theme1.id);
-      processedIds.add(duplicate.theme2.id);
-
-      if (duplicate.relationshipType === 'duplicate') {
-        duplicatesRemoved++;
-        this.effectiveness.duplicatesFound++;
-      } else {
-        overlapsResolved++;
-        this.effectiveness.overlapsResolved++;
-      }
-    }
-
-    const originalCount = this.countThemes(hierarchy);
-    const deduplicatedHierarchy = this.applyMerges(hierarchy);
-    const deduplicatedCount = this.countThemes(deduplicatedHierarchy);
-
-    return {
-      originalCount,
-      deduplicatedCount,
-      mergedThemes,
-      duplicatesRemoved,
-      overlapsResolved,
-    };
-  }
 
   /**
    * Validate hierarchy integrity after expansion
@@ -733,16 +666,6 @@ Focus on business value and avoid merging themes with distinct business purposes
     };
   }
 
-  private countThemes(hierarchy: ConsolidatedTheme[]): number {
-    return this.flattenHierarchy(hierarchy).length;
-  }
-
-  private applyMerges(hierarchy: ConsolidatedTheme[]): ConsolidatedTheme[] {
-    // This would implement the actual merge logic
-    // For now, return the original hierarchy
-    // In a full implementation, this would rebuild the hierarchy with merged themes
-    return hierarchy;
-  }
 
   private hasCircularReference(
     theme: ConsolidatedTheme,

@@ -32525,52 +32525,6 @@ class HierarchicalSimilarityService {
         return successfulResults;
     }
     /**
-     * Deduplicate themes across hierarchy levels
-     */
-    async deduplicateHierarchy(hierarchy) {
-        const crossLevelSimilarities = await this.analyzeCrossLevelSimilarity(hierarchy);
-        // Filter for high-similarity themes that should be merged
-        // Since cross-level deduplication is disabled, this filter returns empty array
-        const duplicates = crossLevelSimilarities.filter(() => false);
-        console.log(`[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (deduplication disabled)`);
-        const mergedThemes = [];
-        const processedIds = new Set();
-        let duplicatesRemoved = 0;
-        let overlapsResolved = 0;
-        for (const duplicate of duplicates) {
-            if (processedIds.has(duplicate.theme1.id) ||
-                processedIds.has(duplicate.theme2.id)) {
-                continue; // Already processed
-            }
-            const mergedTheme = this.mergeThemes(duplicate.theme1, duplicate.theme2, duplicate.action);
-            mergedThemes.push({
-                sourceIds: [duplicate.theme1.id, duplicate.theme2.id],
-                targetTheme: mergedTheme,
-                mergeReason: duplicate.reasoning,
-            });
-            processedIds.add(duplicate.theme1.id);
-            processedIds.add(duplicate.theme2.id);
-            if (duplicate.relationshipType === 'duplicate') {
-                duplicatesRemoved++;
-                this.effectiveness.duplicatesFound++;
-            }
-            else {
-                overlapsResolved++;
-                this.effectiveness.overlapsResolved++;
-            }
-        }
-        const originalCount = this.countThemes(hierarchy);
-        const deduplicatedHierarchy = this.applyMerges(hierarchy);
-        const deduplicatedCount = this.countThemes(deduplicatedHierarchy);
-        return {
-            originalCount,
-            deduplicatedCount,
-            mergedThemes,
-            duplicatesRemoved,
-            overlapsResolved,
-        };
-    }
-    /**
      * Validate hierarchy integrity after expansion
      */
     validateHierarchyIntegrity(hierarchy) {
@@ -32948,15 +32902,6 @@ Focus on business value and avoid merging themes with distinct business purposes
             lastAnalysis: new Date(),
         };
     }
-    countThemes(hierarchy) {
-        return this.flattenHierarchy(hierarchy).length;
-    }
-    applyMerges(hierarchy) {
-        // This would implement the actual merge logic
-        // For now, return the original hierarchy
-        // In a full implementation, this would rebuild the hierarchy with merged themes
-        return hierarchy;
-    }
     hasCircularReference(theme, allThemes, visited = new Set()) {
         if (visited.has(theme.id)) {
             return true; // Found a cycle
@@ -33061,7 +33006,6 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
 const generic_cache_1 = __nccwpck_require__(282);
 const claude_client_1 = __nccwpck_require__(3861);
-const json_extractor_1 = __nccwpck_require__(8168);
 const secure_file_namer_1 = __nccwpck_require__(5584);
 const ai_mindmap_service_1 = __nccwpck_require__(3555);
 const theme_mindmap_converter_1 = __nccwpck_require__(3936);
@@ -33279,10 +33223,8 @@ class ThemeExpansionService {
         }
         // Combine all child themes
         const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
-        // Deduplicate child themes using AI
-        const deduplicatedChildren = await this.deduplicateSubThemes(allChildThemes);
-        // NEW: Re-evaluate merged themes for potential expansion (PRD compliance)
-        const finalChildren = await this.reEvaluateMergedThemes(deduplicatedChildren, currentDepth + 1, result.expandedTheme);
+        // Re-evaluate merged themes for potential expansion (PRD compliance)
+        const finalChildren = await this.reEvaluateMergedThemes(allChildThemes, currentDepth + 1, result.expandedTheme);
         return {
             ...result.expandedTheme,
             childThemes: finalChildren,
@@ -33332,14 +33274,11 @@ class ThemeExpansionService {
      * PRD: Ensure merged themes still follow atomic guidelines
      */
     async reEvaluateMergedThemes(themes, currentDepth, parentTheme) {
-        // Check if re-evaluation is disabled
-        const reEvaluateAfterMerge = process.env.RE_EVALUATE_AFTER_MERGE !== 'false';
-        if (!reEvaluateAfterMerge) {
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`);
-            return themes;
-        }
+        // Re-evaluation is disabled by default
+        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Re-evaluation disabled (disabled by default)`);
+        return themes;
         const reEvaluatedThemes = [];
-        const strictAtomicLimits = process.env.STRICT_ATOMIC_LIMITS !== 'false';
+        const strictAtomicLimits = true;
         for (const theme of themes) {
             // Check if this was a merged theme (has multiple source themes)
             if (theme.sourceThemes && theme.sourceThemes.length > 1) {
@@ -33373,358 +33312,6 @@ class ThemeExpansionService {
             }
         }
         return reEvaluatedThemes;
-    }
-    /**
-     * Deduplicate sub-themes using AI to identify duplicates
-     */
-    async deduplicateSubThemes(subThemes) {
-        if (subThemes.length <= 1) {
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
-            return subThemes;
-        }
-        // Check if batch deduplication is disabled
-        const skipBatchDedup = process.env.SKIP_BATCH_DEDUP === 'true';
-        if (skipBatchDedup) {
-            logger_1.logger.info('EXPANSION', `Skipping batch deduplication (SKIP_BATCH_DEDUP=true)`);
-            return subThemes;
-        }
-        // Pre-deduplication state logging
-        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Themes before deduplication:`);
-        subThemes.forEach((t) => {
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
-        });
-        logger_1.logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
-        // Calculate optimal batch size based on theme count
-        const batchSize = this.calculateOptimalBatchSize(subThemes.length);
-        const batches = [];
-        for (let i = 0; i < subThemes.length; i += batchSize) {
-            batches.push(subThemes.slice(i, i + batchSize));
-        }
-        // Process each batch sequentially
-        // ClaudeClient handles rate limiting and queuing
-        const successfulResults = [];
-        for (let i = 0; i < batches.length; i++) {
-            const batch = batches[i];
-            try {
-                const result = await this.deduplicateBatch(batch);
-                successfulResults.push(result);
-                if (this.config.enableProgressLogging && batches.length > 1) {
-                    logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`);
-                }
-            }
-            catch (error) {
-                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            }
-        }
-        // Flatten and combine results
-        const allGroups = successfulResults.flat();
-        // Merge groups that span batches
-        const finalThemes = [];
-        const processedIds = new Set();
-        for (const group of allGroups) {
-            if (group.length === 1) {
-                // Single theme, no duplicates
-                if (!processedIds.has(group[0].id)) {
-                    finalThemes.push(group[0]);
-                    processedIds.add(group[0].id);
-                }
-            }
-            else {
-                // Multiple themes to merge
-                const unprocessedThemes = group.filter((t) => !processedIds.has(t.id));
-                if (unprocessedThemes.length > 0) {
-                    const mergedTheme = await this.mergeSubThemes(unprocessedThemes);
-                    finalThemes.push(mergedTheme);
-                    unprocessedThemes.forEach((t) => processedIds.add(t.id));
-                }
-            }
-        }
-        logger_1.logger.info('EXPANSION', `Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`);
-        // Second pass: check if any of the final themes are still duplicates
-        // This handles cases where duplicates were in different batches
-        // Skip if disabled via environment variable or theme count is too small
-        const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
-        if (finalThemes.length > 1 &&
-            !skipSecondPass) {
-            logger_1.logger.info('EXPANSION', `Running second pass deduplication on ${finalThemes.length} themes`);
-            const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
-            logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
-            // Post-deduplication state logging (after second pass)
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after second pass deduplication:`);
-            secondPassResult.forEach((t) => {
-                if (t.sourceThemes && t.sourceThemes.length > 1) {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
-                }
-                else {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
-                }
-            });
-            return secondPassResult;
-        }
-        else if (skipSecondPass) {
-            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`);
-        }
-        // Post-deduplication state logging (no second pass)
-        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after first pass deduplication:`);
-        finalThemes.forEach((t) => {
-            if (t.sourceThemes && t.sourceThemes.length > 1) {
-                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
-            }
-            else {
-                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
-            }
-        });
-        // DEBUG: Log deduplication output
-        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${finalThemes.length} sub-themes:`);
-        finalThemes.forEach((theme, i) => logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  [${i}] "${theme.name}" (ID: ${theme.id})`));
-        return finalThemes;
-    }
-    /**
-     * Run a second pass to catch duplicates that were in different batches
-     */
-    async runSecondPassDeduplication(themes) {
-        // Create a single batch with all themes for comprehensive comparison
-        const prompt = `
-These themes have already been deduplicated within their groups. Only identify EXACT duplicates across groups.
-
-CRITICAL REQUIREMENTS for identifying duplicates:
-- Themes must represent IDENTICAL code changes (not just similar)
-- Themes must affect the exact same files AND same functionality
-- Themes must have the same business purpose
-- When in doubt, DO NOT merge - preserving granularity is more important than consolidation
-
-${themes
-            .map((theme, index) => `
-Theme ${index + 1}: "${theme.name}"
-Description: ${theme.description}
-${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
-Files: ${theme.affectedFiles.join(', ')}
-Business Impact: ${theme.businessImpact || 'N/A'}
-`)
-            .join('\n')}
-
-Only identify themes that are EXACT duplicates. Be extremely conservative.
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "duplicateGroups": [
-    {
-      "themeIndices": [1, 4],
-      "reasoning": "Both implement the exact same testing configuration change"
-    }
-  ]
-}
-
-If no duplicates found, return: {"duplicateGroups": []}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['duplicateGroups']);
-            if (!extractionResult.success) {
-                // No duplicates found or parsing failed
-                return themes;
-            }
-            const data = extractionResult.data;
-            if (!data.duplicateGroups || data.duplicateGroups.length === 0) {
-                return themes;
-            }
-            // Process duplicate groups
-            const finalThemes = [];
-            const processedIndices = new Set();
-            for (const group of data.duplicateGroups) {
-                const duplicateThemes = [];
-                for (const index of group.themeIndices) {
-                    if (index >= 1 &&
-                        index <= themes.length &&
-                        !processedIndices.has(index - 1)) {
-                        duplicateThemes.push(themes[index - 1]);
-                        processedIndices.add(index - 1);
-                    }
-                }
-                if (duplicateThemes.length > 1) {
-                    const mergedTheme = await this.mergeSubThemes(duplicateThemes);
-                    finalThemes.push(mergedTheme);
-                }
-                else if (duplicateThemes.length === 1) {
-                    finalThemes.push(duplicateThemes[0]);
-                }
-            }
-            // Add themes that weren't in any duplicate group
-            themes.forEach((theme, index) => {
-                if (!processedIndices.has(index)) {
-                    finalThemes.push(theme);
-                }
-            });
-            return finalThemes;
-        }
-        catch (error) {
-            logger_1.logger.info('EXPANSION', `Second pass deduplication failed: ${error}`);
-            return themes;
-        }
-    }
-    /**
-     * Process a batch of themes for deduplication
-     */
-    async deduplicateBatch(themes) {
-        const prompt = `
-Analyze these sub-themes and identify which ones describe IDENTICAL changes (not just related functionality).
-
-IMPORTANT: Only group themes that are truly duplicates - representing exactly the same code change.
-- Themes that touch related but different functionality should NOT be merged
-- Themes with different business purposes should NOT be merged
-- Themes affecting different files or different parts of files should NOT be merged
-- When in doubt, keep themes separate to preserve granularity
-
-${themes
-            .map((theme, index) => `
-Theme ${index + 1}: "${theme.name}"
-Description: ${theme.description}
-${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
-Files: ${theme.affectedFiles.join(', ')}
-${theme.keyChanges ? `Key changes: ${theme.keyChanges.join('; ')}` : ''}
-`)
-            .join('\n')}
-
-Questions:
-1. Which themes are describing the same change (even if worded differently)?
-2. Group duplicate themes together
-3. For each group, explain why they are duplicates
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "groups": [
-    {
-      "themeIndices": [1, 3],
-      "reasoning": "Both themes describe the same CI workflow change"
-    },
-    {
-      "themeIndices": [2],
-      "reasoning": "Unique theme about type definitions"
-    }
-  ]
-}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['groups']);
-            if (!extractionResult.success) {
-                logger_1.logger.info('EXPANSION', `Failed to parse deduplication response: ${extractionResult.error}`);
-                // Return each theme as its own group
-                return themes.map((theme) => [theme]);
-            }
-            const data = extractionResult.data;
-            // Convert indices to theme groups
-            const groups = [];
-            const processedIndices = new Set();
-            if (data.groups) {
-                for (const group of data.groups) {
-                    const themeGroup = [];
-                    for (const index of group.themeIndices) {
-                        if (index >= 1 &&
-                            index <= themes.length &&
-                            !processedIndices.has(index - 1)) {
-                            themeGroup.push(themes[index - 1]);
-                            processedIndices.add(index - 1);
-                        }
-                    }
-                    if (themeGroup.length > 0) {
-                        groups.push(themeGroup);
-                    }
-                }
-            }
-            // Add any themes not in groups
-            themes.forEach((theme, index) => {
-                if (!processedIndices.has(index)) {
-                    groups.push([theme]);
-                }
-            });
-            // Log batch deduplication results
-            const mergedCount = groups.filter((g) => g.length > 1).length;
-            const keptSeparate = groups.filter((g) => g.length === 1).length;
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Processed ${themes.length} themes into ${groups.length} groups`);
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
-            groups.forEach((group, idx) => {
-                if (group.length > 1) {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`);
-                }
-            });
-            logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`);
-            return groups;
-        }
-        catch (error) {
-            logger_1.logger.info('EXPANSION', `Deduplication batch failed: ${error}`);
-            // Return each theme as its own group
-            return themes.map((theme) => [theme]);
-        }
-    }
-    /**
-     * Merge duplicate sub-themes into a single theme
-     */
-    async mergeSubThemes(themes) {
-        if (themes.length === 1) {
-            return themes[0];
-        }
-        const prompt = `
-These themes have been identified as duplicates describing the same change:
-
-${themes
-            .map((theme, index) => `
-Theme ${index + 1}: "${theme.name}"
-Description: ${theme.description}
-${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
-${theme.technicalSummary ? `Technical: ${theme.technicalSummary}` : ''}
-`)
-            .join('\n')}
-
-Create a single, unified theme that best represents this change. Combine the best aspects of each description.
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "name": "unified theme name",
-  "description": "clear, comprehensive description",
-  "detailedDescription": "detailed explanation combining all relevant details",
-  "reasoning": "why this unified version is better"
-}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['name', 'description']);
-            if (!extractionResult.success) {
-                // Use the first theme as fallback
-                return themes[0];
-            }
-            const data = extractionResult.data;
-            // Combine all data from duplicate themes
-            const allFiles = new Set();
-            const allSnippets = [];
-            const allKeyChanges = [];
-            let totalConfidence = 0;
-            themes.forEach((theme) => {
-                theme.affectedFiles.forEach((file) => allFiles.add(file));
-                allSnippets.push(...theme.codeSnippets);
-                if (theme.keyChanges)
-                    allKeyChanges.push(...theme.keyChanges);
-                totalConfidence += theme.confidence;
-            });
-            return {
-                ...themes[0], // Use first theme as base
-                id: secure_file_namer_1.SecureFileNamer.generateSecureId('dedup'),
-                name: data.name || themes[0].name,
-                description: data.description || themes[0].description,
-                detailedDescription: data.detailedDescription,
-                affectedFiles: Array.from(allFiles),
-                codeSnippets: allSnippets,
-                keyChanges: [...new Set(allKeyChanges)], // Deduplicate key changes
-                confidence: totalConfidence / themes.length,
-                sourceThemes: themes.flatMap((t) => t.sourceThemes),
-                consolidationMethod: 'merge',
-                consolidationSummary: `Merged ${themes.length} similar themes`,
-            };
-        }
-        catch (error) {
-            logger_1.logger.info('EXPANSION', `Sub-theme merge failed: ${error}`);
-            return themes[0]; // Use first theme as fallback
-        }
     }
     /**
      * Calculate optimal batch size based on total theme count
@@ -34861,16 +34448,7 @@ class ThemeService {
                     // Expand themes hierarchically using pre-identified candidates for optimization
                     const beforeExpansionCount = consolidatedThemes.length;
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
-                    // Apply cross-level deduplication
-                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
-                        performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
-                        const beforeDedup = expandedThemes.length;
-                        const dedupStartTime = Date.now();
-                        await this.hierarchicalSimilarityService.deduplicateHierarchy(expandedThemes);
-                        // Track deduplication effectiveness
-                        performance_tracker_1.performanceTracker.trackEffectiveness('Cross-Level Deduplication', beforeDedup, expandedThemes.length, Date.now() - dedupStartTime);
-                        performance_tracker_1.performanceTracker.endTiming('Cross-Level Deduplication');
-                    }
+                    // Cross-level deduplication is disabled by default
                     // Track expansion effectiveness
                     performance_tracker_1.performanceTracker.trackEffectiveness('Theme Expansion', beforeExpansionCount, expandedThemes.length, Date.now() - expansionStartTime);
                     // Update consolidated themes with expanded and deduplicated results
@@ -39263,30 +38841,10 @@ function validateInputs() {
     if (!anthropicApiKey.trim()) {
         throw new Error('Anthropic API key is required');
     }
-    // Set deduplication environment variables from inputs
-    setDeduplicationEnvironmentVariables();
     return {
         githubToken,
         anthropicApiKey,
     };
-}
-function setDeduplicationEnvironmentVariables() {
-    // Convert kebab-case input names to SCREAMING_SNAKE_CASE env var names
-    const inputToEnvMap = {
-        'skip-batch-dedup': 'SKIP_BATCH_DEDUP',
-        'skip-second-pass-dedup': 'SKIP_SECOND_PASS_DEDUP',
-        'skip-cross-level-dedup': 'SKIP_CROSS_LEVEL_DEDUP',
-        // PRD Compliance Controls
-        're-evaluate-after-merge': 'RE_EVALUATE_AFTER_MERGE',
-        'strict-atomic-limits': 'STRICT_ATOMIC_LIMITS'
-    };
-    for (const [inputName, envName] of Object.entries(inputToEnvMap)) {
-        const inputValue = core.getInput(inputName);
-        if (inputValue) {
-            process.env[envName] = inputValue;
-            core.info(`Set ${envName}=${inputValue} from input ${inputName}`);
-        }
-    }
 }
 
 

@@ -84,22 +84,6 @@ export declare class ThemeExpansionService {
      */
     private reEvaluateMergedThemes;
     /**
-     * Deduplicate sub-themes using AI to identify duplicates
-     */
-    private deduplicateSubThemes;
-    /**
-     * Run a second pass to catch duplicates that were in different batches
-     */
-    private runSecondPassDeduplication;
-    /**
-     * Process a batch of themes for deduplication
-     */
-    private deduplicateBatch;
-    /**
-     * Merge duplicate sub-themes into a single theme
-     */
-    private mergeSubThemes;
-    /**
      * Calculate optimal batch size based on total theme count
      */
     private calculateOptimalBatchSize;

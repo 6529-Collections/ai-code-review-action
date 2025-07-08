@@ -646,28 +646,7 @@ export class ThemeService {
               consolidatedThemes
             );
 
-          // Apply cross-level deduplication
-          if (
-            process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true'
-          ) {
-            performanceTracker.startTiming('Cross-Level Deduplication');
-            const beforeDedup = expandedThemes.length;
-            const dedupStartTime = Date.now();
-
-            await this.hierarchicalSimilarityService.deduplicateHierarchy(
-              expandedThemes
-            );
-
-            // Track deduplication effectiveness
-            performanceTracker.trackEffectiveness(
-              'Cross-Level Deduplication',
-              beforeDedup,
-              expandedThemes.length,
-              Date.now() - dedupStartTime
-            );
-
-            performanceTracker.endTiming('Cross-Level Deduplication');
-          }
+          // Cross-level deduplication is disabled by default
 
           // Track expansion effectiveness
           performanceTracker.trackEffectiveness(

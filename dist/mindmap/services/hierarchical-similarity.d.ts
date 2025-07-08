@@ -1,5 +1,5 @@
 import { ConsolidatedTheme } from '../types/similarity-types';
-import { CrossLevelSimilarity, DeduplicationResult } from '../types/expansion-types';
+import { CrossLevelSimilarity } from '../types/expansion-types';
 /**
  * Effectiveness tracking for hierarchical similarity analysis
  */
@@ -25,10 +25,6 @@ export declare class HierarchicalSimilarityService {
      * Identifies potential duplicates, overlaps, and optimization opportunities
      */
     analyzeCrossLevelSimilarity(hierarchy: ConsolidatedTheme[]): Promise<CrossLevelSimilarity[]>;
-    /**
-     * Deduplicate themes across hierarchy levels
-     */
-    deduplicateHierarchy(hierarchy: ConsolidatedTheme[]): Promise<DeduplicationResult>;
     /**
      * Validate hierarchy integrity after expansion
      */
@@ -68,8 +64,6 @@ export declare class HierarchicalSimilarityService {
     private inferChangeType;
     private analyzeCrossLevelSimilarityPair;
     private mergeThemes;
-    private countThemes;
-    private applyMerges;
     private hasCircularReference;
     /**
      * Get effectiveness metrics for this hierarchical analysis

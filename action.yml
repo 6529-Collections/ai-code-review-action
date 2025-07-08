@@ -11,36 +11,11 @@ inputs:
     description: 'Anthropic API key for Claude access'
     required: true
   
-  # Deduplication Controls
-  skip-batch-dedup:
-    description: 'Skip batch deduplication during theme expansion'
-    required: false
-    default: 'true'
-  skip-second-pass-dedup:
-    description: 'Skip second-pass deduplication across batches'
-    required: false
-    default: 'true'
-  skip-cross-level-dedup:
-    description: 'Skip cross-level hierarchical deduplication'
-    required: false
-    default: 'true'
-  
-  
   # PRD Compliance Controls
   max-atomic-size:
     description: 'Maximum lines for atomic theme (from PRD)'
     required: false
     default: '15'
-  
-  re-evaluate-after-merge:
-    description: 'Re-evaluate merged themes for expansion'
-    required: false
-    default: 'false'
-    
-  strict-atomic-limits:
-    description: 'Enforce PRD atomic size limits strictly'
-    required: false
-    default: 'true'
   
 
 outputs:

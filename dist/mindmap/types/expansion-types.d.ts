@@ -34,17 +34,6 @@ export interface CrossLevelSimilarity {
     confidence: number;
     reasoning: string;
 }
-export interface DeduplicationResult {
-    originalCount: number;
-    deduplicatedCount: number;
-    mergedThemes: Array<{
-        sourceIds: string[];
-        targetTheme: ConsolidatedTheme;
-        mergeReason: string;
-    }>;
-    duplicatesRemoved: number;
-    overlapsResolved: number;
-}
 export interface BusinessPattern {
     id: string;
     name: string;
