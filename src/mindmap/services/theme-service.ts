@@ -648,8 +648,7 @@ export class ThemeService {
 
           // Apply cross-level deduplication
           if (
-            process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
-            expandedThemes.length >= 20
+            process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true'
           ) {
             performanceTracker.startTiming('Cross-Level Deduplication');
             const beforeDedup = expandedThemes.length;

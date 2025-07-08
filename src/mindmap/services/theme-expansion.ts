@@ -593,13 +593,6 @@ export class ThemeExpansionService {
       return subThemes;
     }
 
-    if (subThemes.length < 5) {
-      logger.info(
-        'EXPANSION',
-        `Skipping batch deduplication: ${subThemes.length} themes < minimum 5`
-      );
-      return subThemes;
-    }
 
     // Pre-deduplication state logging
     logger.debug(LoggerServices.EXPANSION, `Themes before deduplication:`);
@@ -684,8 +677,7 @@ export class ThemeExpansionService {
 
     if (
       finalThemes.length > 1 &&
-      !skipSecondPass &&
-      finalThemes.length >= 10
+      !skipSecondPass
     ) {
       logger.info(
         'EXPANSION',

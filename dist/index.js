@@ -33388,10 +33388,6 @@ class ThemeExpansionService {
             logger_1.logger.info('EXPANSION', `Skipping batch deduplication (SKIP_BATCH_DEDUP=true)`);
             return subThemes;
         }
-        if (subThemes.length < 5) {
-            logger_1.logger.info('EXPANSION', `Skipping batch deduplication: ${subThemes.length} themes < minimum 5`);
-            return subThemes;
-        }
         // Pre-deduplication state logging
         logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Themes before deduplication:`);
         subThemes.forEach((t) => {
@@ -33449,8 +33445,7 @@ class ThemeExpansionService {
         // Skip if disabled via environment variable or theme count is too small
         const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
         if (finalThemes.length > 1 &&
-            !skipSecondPass &&
-            finalThemes.length >= 10) {
+            !skipSecondPass) {
             logger_1.logger.info('EXPANSION', `Running second pass deduplication on ${finalThemes.length} themes`);
             const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
             logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
@@ -34870,8 +34865,7 @@ class ThemeService {
                     const beforeExpansionCount = consolidatedThemes.length;
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
                     // Apply cross-level deduplication
-                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
-                        expandedThemes.length >= 20) {
+                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true') {
                         performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
                         const beforeDedup = expandedThemes.length;
                         const dedupStartTime = Date.now();

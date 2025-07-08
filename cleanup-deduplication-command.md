@@ -77,19 +77,23 @@ All three deduplication levels are now turned off by default.
 1. ✅ **Verbose Logging Infrastructure** - Removed `verbose-dedup-logging` input and implementation code
 2. ✅ **Threshold Controls** - Removed `cross-level-dedup-threshold` and `allow-overlap-merging` inputs and usage
 3. ✅ **Cross-Level Deduplication Toggle** - Changed `skip-cross-level-dedup` default from `false` to `true`
-4. ✅ **Minimum Theme Count Controls** - Removed `min-themes-for-batch-dedup`, `min-themes-for-second-pass-dedup`, and `min-themes-for-cross-level-dedup` inputs and usage
+4. ✅ **Minimum Theme Count Controls** - Removed hardcoded minimum theme count checks from implementation files:
+   - Removed 5-theme minimum for batch deduplication in theme-expansion.ts:596-602 (7 lines)
+   - Removed 10-theme minimum for second-pass deduplication in theme-expansion.ts:681 (modified condition)
+   - Removed 20-theme minimum for cross-level deduplication in theme-service.ts:652 (modified condition)
+   - Note: The inputs were already removed from action.yml and validation.ts in a previous session
 
-**Total Lines Removed**: ~65 lines across 3 files
-**Impact**: Eliminated unused logging, threshold, and minimum count infrastructure
+**Total Lines Removed**: ~75 lines across 5 files
+**Impact**: Eliminated unused logging, threshold, and minimum count infrastructure. Deduplication now runs regardless of theme count when enabled.
 
 ## Next Safe Removal Target
 
 **Priority**: PRD Compliance Controls
 
 **Target Components**:
-- `max-atomic-size` (action.yml:44-47)
-- `re-evaluate-after-merge` (action.yml:49-52)  
-- `strict-atomic-limits` (action.yml:54-57)
+- `max-atomic-size` (action.yml:30-33)
+- `re-evaluate-after-merge` (action.yml:35-38)  
+- `strict-atomic-limits` (action.yml:40-43)
 
 **Rationale**: These controls are related to PRD compliance and atomic theme size limits, which may be unused if the expansion system is being simplified. Need to verify usage before removal.
 
