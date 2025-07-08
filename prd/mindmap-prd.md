@@ -102,6 +102,12 @@ Reusable Component:
 3. **Avoid redundancy**: Don't duplicate for the sake of completeness
 4. **User value focus**: Include where it helps understand user impact
 
+### Analysis Scope
+- **Code files only**: Analysis focuses on executable code changes (.ts, .js, .py, .java, etc.)
+- **Documentation excluded**: Documentation files (.md, .txt, .rst) are intentionally excluded from theme analysis
+- **Configuration included**: Config files (.json, .yaml, .toml) are included as they affect system behavior
+- **Tests included**: Test files are analyzed as they represent verifiable business requirements
+
 ## Examples
 
 ### Simple Change (2 levels)
