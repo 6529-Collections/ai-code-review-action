@@ -401,12 +401,7 @@ export class ThemeExpansionService {
     const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
 
 
-    // Re-evaluate merged themes for potential expansion (PRD compliance)
-    const finalChildren = await this.reEvaluateMergedThemes(
-      allChildThemes,
-      currentDepth + 1,
-      result.expandedTheme
-    );
+    const finalChildren = allChildThemes;
 
 
     return {
@@ -479,85 +474,6 @@ export class ThemeExpansionService {
     };
   }
 
-  /**
-   * Re-evaluate merged themes for potential expansion after deduplication
-   * PRD: Ensure merged themes still follow atomic guidelines
-   */
-  private async reEvaluateMergedThemes(
-    themes: ConsolidatedTheme[],
-    currentDepth: number,
-    parentTheme?: ConsolidatedTheme
-  ): Promise<ConsolidatedTheme[]> {
-    // Re-evaluation is disabled by default
-    logger.debug(
-      LoggerServices.EXPANSION,
-      `Re-evaluation disabled (disabled by default)`
-    );
-    return themes;
-
-    const reEvaluatedThemes: ConsolidatedTheme[] = [];
-    const strictAtomicLimits = true;
-
-    for (const theme of themes) {
-      // Check if this was a merged theme (has multiple source themes)
-      if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-        logger.debug(
-          LoggerServices.EXPANSION,
-          `Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`
-        );
-
-        // PRD: If merged theme has complexity indicators, it should be re-evaluated
-        const exceedsFileLimit =
-          strictAtomicLimits && theme.affectedFiles.length > 1;
-        const hasMultipleSources = theme.sourceThemes.length > 2;
-
-        if (exceedsFileLimit || hasMultipleSources) {
-          logger.debug(
-            LoggerServices.EXPANSION,
-            `Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`
-          );
-
-          // Re-evaluate if it should expand
-          const expansionCandidate = await this.evaluateExpansionCandidate(
-            theme,
-            parentTheme,
-            currentDepth
-          );
-
-          if (expansionCandidate) {
-            logger.info(
-              LoggerServices.EXPANSION,
-              `Merged theme "${theme.name}" needs expansion after deduplication`
-            );
-            // Recursively expand the merged theme
-            const expanded = await this.expandThemeRecursively(
-              theme,
-              currentDepth,
-              parentTheme
-            );
-            reEvaluatedThemes.push(expanded);
-          } else {
-            logger.debug(
-              LoggerServices.EXPANSION,
-              `Merged theme "${theme.name}" remains atomic despite complexity`
-            );
-            reEvaluatedThemes.push(theme);
-          }
-        } else {
-          logger.debug(
-            LoggerServices.EXPANSION,
-            `Merged theme "${theme.name}" within atomic limits -> keeping as-is`
-          );
-          reEvaluatedThemes.push(theme);
-        }
-      } else {
-        // Not a merged theme, keep as is
-        reEvaluatedThemes.push(theme);
-      }
-    }
-
-    return reEvaluatedThemes;
-  }
 
 
 

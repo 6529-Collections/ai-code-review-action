@@ -3,7 +3,6 @@ import * as exec from '@actions/exec';
 import { SecureFileNamer } from '../utils/secure-file-namer';
 import { ThemeSimilarityService } from './theme-similarity';
 import { ThemeExpansionService } from './theme-expansion';
-import { HierarchicalSimilarityService } from './hierarchical-similarity';
 import {
   ConsolidatedTheme,
   ConsolidationConfig,
@@ -472,7 +471,6 @@ class ThemeContextManager {
 export class ThemeService {
   private similarityService: ThemeSimilarityService;
   private expansionService: ThemeExpansionService;
-  private hierarchicalSimilarityService: HierarchicalSimilarityService;
   private expansionEnabled: boolean;
 
   constructor(
@@ -486,9 +484,6 @@ export class ThemeService {
 
     // Initialize expansion services with simplified AI-driven approach
     this.expansionService = new ThemeExpansionService(anthropicApiKey);
-    this.hierarchicalSimilarityService = new HierarchicalSimilarityService(
-      anthropicApiKey
-    );
 
     // Enable expansion by default
     this.expansionEnabled = consolidationConfig?.expansionEnabled ?? true;
@@ -646,7 +641,6 @@ export class ThemeService {
               consolidatedThemes
             );
 
-          // Cross-level deduplication is disabled by default
 
           // Track expansion effectiveness
           performanceTracker.trackEffectiveness(
@@ -909,10 +903,4 @@ export class ThemeService {
     return this.expansionService.getEffectiveness();
   }
 
-  /**
-   * Get effectiveness metrics from hierarchical similarity service
-   */
-  getHierarchicalEffectiveness(): unknown {
-    return this.hierarchicalSimilarityService.getEffectiveness();
-  }
 }

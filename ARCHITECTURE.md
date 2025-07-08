@@ -57,7 +57,6 @@ mindmap/
 │   ├── theme-expansion.ts         # Hierarchical expansion
 │   ├── theme-naming.ts            # AI-powered naming
 │   ├── business-domain.ts         # Domain classification
-│   ├── hierarchical-similarity.ts # Cross-level analysis
 │   ├── cross-reference-service.ts # Shared code handling
 │   ├── direct-code-assignment-service.ts # Code assignment
 │   ├── dynamic-prompt-builder.ts  # Context-aware prompts

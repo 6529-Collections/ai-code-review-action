@@ -9,7 +9,6 @@ export { ThemeService } from './services/theme-service';
 export { ThemeSimilarityService } from './services/theme-similarity';
 export { ThemeExpansionService } from './services/theme-expansion';
 export { ThemeNamingService } from './services/theme-naming';
-export { HierarchicalSimilarityService } from './services/hierarchical-similarity';
 
 // Re-export types for convenience
 export {

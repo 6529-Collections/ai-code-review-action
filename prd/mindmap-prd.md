@@ -209,11 +209,6 @@ Root: "Improve Error Handling"
 - **Incremental updates**: Only re-analyze changed portions during iterative development
 - **Smart invalidation**: Clear cache selectively based on file modifications
 
-### Deduplication Strategy
-- **Multi-pass approach**: First pass within batches, second pass across batches
-- **Similarity detection**: AI-driven identification of semantic duplicates
-- **Merge strategy**: Combine duplicate themes while preserving unique context
-- **Validation**: Ensure deduplication doesn't lose critical information
 
 ## Quality Assurance
 

@@ -136,7 +136,6 @@ export declare const ResponseSchemas: {
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         confidence: number;
-        reasoning: string;
         subThemes: {
             name: string;
             description: string;
@@ -145,9 +144,9 @@ export declare const ResponseSchemas: {
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
+        reasoning: string;
     }, {
         confidence: number;
-        reasoning: string;
         subThemes: {
             name: string;
             description: string;
@@ -156,6 +155,7 @@ export declare const ResponseSchemas: {
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
+        reasoning: string;
     }>;
     domain_extraction: z.ZodObject<{
         domains: z.ZodArray<z.ZodObject<{
@@ -283,14 +283,14 @@ export declare const ResponseSchemas: {
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         confidence: number;
-        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
         reasoning: string;
-        relationship: "none" | "duplicate" | "parent_child";
+        relationship: "none" | "parent_child" | "duplicate";
+        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
     }, {
         confidence: number;
-        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
         reasoning: string;
-        relationship: "none" | "duplicate" | "parent_child";
+        relationship: "none" | "parent_child" | "duplicate";
+        action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
     }>;
 };
 export declare const CacheTTLConfig: {

@@ -119,14 +119,64 @@ If any of these conditions are met, STOP and seek clarification.
 
 ## Your Task
 
-### 1. **Execute Next Removal**
-Remove the identified "Next Safe Removal Target" components:
-- Remove inputs from action.yml
-- Remove environment variable mappings  
-- Remove usage in implementation code
+### 1. **Comprehensive Codebase Search**
+Perform a thorough search across the ENTIRE codebase for ANY legacy deduplication leftovers. 
+
+**IMPORTANT: Ignore the `dist/` folder** - it contains build output and will be regenerated.
+
+Search for ALL variations including but not limited to:
+- **Terms**: dedup, deduplicate, deduplication, duplicate, merge (in theme context)
+- **Skip flags**: skip-batch-dedup, skip-second-pass-dedup, skip-cross-level-dedup, SKIP_*_DEDUP
+- **Methods**: deduplicateThemes, mergeDuplicates, findDuplicates, consolidateSubThemes, deduplicateBatch, runSecondPassDeduplication
+- **Types**: DeduplicationConfig, DuplicateTheme, MergeResult, CrossLevelSimilarity
+- **Comments**: Any mentions of deduplication, merging duplicates, or similarity thresholds
+- **Environment variables**: Any *_DEDUP_* patterns
+- **Constants**: Deduplication thresholds, minimum counts, similarity scores
+- **Legacy references**: Batch deduplication, second-pass deduplication, cross-level deduplication
+
+Search across ALL file types:
+- Source code (`*.ts`, `*.js`)
+- Type definitions (`*.d.ts`) - but ignore those in `dist/`
+- Documentation (`*.md`)
+- Configuration (`*.yml`, `*.json`)
+- Test files (`*.test.ts`, `*.spec.ts`)
+- Any other text files
+
+### 2. **Analyze Findings**
+For each finding, determine:
+- Is this legacy deduplication (removable) or core consolidation (protected)?
+- Is this actively used or just a leftover reference?
+- Would removing it break anything?
+- Are there any unexpected deduplication implementations?
+
+Remember the distinction:
+- **LEGACY DEDUPLICATION (removable)**: Sub-theme merging DURING/AFTER expansion
+- **CORE CONSOLIDATION (protected)**: Root theme merging BEFORE expansion
+
+### 3. **Identify ALL Removal Targets**
+Don't assume certain files are already clean. Check everything and identify:
+- Dead code that references deduplication
+- Unused type definitions
+- Obsolete documentation
+- Commented-out deduplication code
+- Configuration options that no longer work
+- Any other deduplication artifacts
+
+### 4. **Execute Removal**
+For each identified component:
+- Remove the code/configuration/documentation
+- Update any references if needed
+- Ensure no broken imports or types
 - Test that nothing breaks
 
-### 2. **Update This Command**
+### 5. **Validation Steps**
+After each removal:
+- [ ] TypeScript compilation succeeds (`npm run build`)
+- [ ] No broken references in code
+- [ ] Git status shows only intended changes
+- [ ] Core consolidation still works
+
+### 6. **Update This Command**
 After successful removal, update this document:
 
 **Update "Current State Analysis"**:

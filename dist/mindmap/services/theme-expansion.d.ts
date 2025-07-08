@@ -79,11 +79,6 @@ export declare class ThemeExpansionService {
      */
     private evaluateExpansionCandidate;
     /**
-     * Re-evaluate merged themes for potential expansion after deduplication
-     * PRD: Ensure merged themes still follow atomic guidelines
-     */
-    private reEvaluateMergedThemes;
-    /**
      * Calculate optimal batch size based on total theme count
      */
     private calculateOptimalBatchSize;
