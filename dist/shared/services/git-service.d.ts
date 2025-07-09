@@ -43,6 +43,10 @@ export declare class GitService implements IGitService {
      */
     private getChangedFilesFromGit;
     /**
+     * Get changed files using git diff with specific SHAs
+     */
+    private getChangedFilesFromGitShas;
+    /**
      * Map git status characters to ChangedFile status
      */
     private mapGitStatusToChangeStatus;

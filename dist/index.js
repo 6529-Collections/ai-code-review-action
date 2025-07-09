@@ -37826,6 +37826,44 @@ class GitService {
         return codeChanges;
     }
     async getPullRequestContext() {
+        // Check for manual PR review environment variables first
+        const manualPrNumber = process.env.GITHUB_CONTEXT_ISSUE_NUMBER;
+        const manualBaseSha = process.env.GITHUB_CONTEXT_PR_BASE_SHA;
+        const manualHeadSha = process.env.GITHUB_CONTEXT_PR_HEAD_SHA;
+        if (manualPrNumber && manualBaseSha && manualHeadSha) {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Using manual PR review context: #${manualPrNumber}`);
+            // For manual PR review, we need to get PR details from GitHub API
+            if (this.octokit) {
+                try {
+                    const { data: pr } = await this.octokit.rest.pulls.get({
+                        ...github.context.repo,
+                        pull_number: parseInt(manualPrNumber),
+                    });
+                    return {
+                        number: pr.number,
+                        title: pr.title,
+                        body: pr.body || '',
+                        baseBranch: pr.base.ref,
+                        headBranch: pr.head.ref,
+                        baseSha: manualBaseSha,
+                        headSha: manualHeadSha,
+                    };
+                }
+                catch (error) {
+                    logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to fetch PR #${manualPrNumber}: ${error}`);
+                }
+            }
+            // Fallback for manual review without GitHub API
+            return {
+                number: parseInt(manualPrNumber),
+                title: `PR #${manualPrNumber}`,
+                body: '',
+                baseBranch: 'main', // Default assumption
+                headBranch: 'feature-branch', // Default assumption
+                baseSha: manualBaseSha,
+                headSha: manualHeadSha,
+            };
+        }
         // Production mode: Handle GitHub Actions PR context
         if (github.context.eventName === 'pull_request') {
             const pr = github.context.payload.pull_request;
@@ -37857,6 +37895,13 @@ class GitService {
         // Fallback to git-based diff if we have PR context but no GitHub API access
         if (prContext) {
             logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'PR context found but no GitHub API access, using git diff');
+            // For manual PR review, we prefer using SHAs for more accurate comparison
+            const manualBaseSha = process.env.GITHUB_CONTEXT_PR_BASE_SHA;
+            const manualHeadSha = process.env.GITHUB_CONTEXT_PR_HEAD_SHA;
+            if (manualBaseSha && manualHeadSha) {
+                logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Using SHA-based comparison: ${manualBaseSha}...${manualHeadSha}`);
+                return await this.getChangedFilesFromGitShas(manualBaseSha, manualHeadSha);
+            }
             return await this.getChangedFilesFromGit(prContext.baseBranch, prContext.headBranch);
         }
         // Last resort: try to compare current branch against common base branches
@@ -38078,6 +38123,66 @@ class GitService {
         }
         catch (error) {
             logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get changed files from git: ${error}`);
+            return [];
+        }
+    }
+    /**
+     * Get changed files using git diff with specific SHAs
+     */
+    async getChangedFilesFromGitShas(baseSha, headSha) {
+        try {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Getting changed files via git diff: ${baseSha}...${headSha}`);
+            // Get list of changed files with status
+            let filesOutput = '';
+            await exec.exec('git', ['diff', '--name-status', `${baseSha}...${headSha}`], {
+                listeners: {
+                    stdout: (data) => {
+                        filesOutput += data.toString();
+                    },
+                },
+            });
+            if (!filesOutput.trim()) {
+                logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'No files changed according to git diff');
+                return [];
+            }
+            // Parse the output
+            const lines = filesOutput.trim().split('\n');
+            const changedFiles = [];
+            for (const line of lines) {
+                const match = line.match(/^([AMDRT])\s+(.+)$/);
+                if (match) {
+                    const [, statusChar, filename] = match;
+                    // Skip excluded files
+                    if (!this.shouldIncludeFile(filename)) {
+                        continue;
+                    }
+                    const status = this.mapGitStatusToChangeStatus(statusChar);
+                    // Get the patch for this file
+                    let patch = '';
+                    try {
+                        await exec.exec('git', ['diff', `${baseSha}...${headSha}`, '--', filename], {
+                            listeners: {
+                                stdout: (data) => {
+                                    patch += data.toString();
+                                },
+                            },
+                        });
+                    }
+                    catch (patchError) {
+                        logger_1.logger.warn(constants_1.LoggerServices.GIT_SERVICE, `Failed to get patch for ${filename}: ${patchError}`);
+                    }
+                    changedFiles.push({
+                        filename,
+                        status,
+                        patch: patch || undefined,
+                    });
+                }
+            }
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Git diff (SHA): Found ${changedFiles.length} changed files`);
+            return changedFiles;
+        }
+        catch (error) {
+            logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get changed files from git SHAs: ${error}`);
             return [];
         }
     }
