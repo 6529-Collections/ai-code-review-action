@@ -16,6 +16,7 @@ export declare class PRCommentFormatter {
      */
     static formatInlineComment(issue: ReviewIssue, nodeContext?: string): string;
     private static getRecommendationEmoji;
+    private static getConfidenceEmoji;
     private static formatRecommendation;
     private static formatNodeType;
     private static formatRiskLevel;
