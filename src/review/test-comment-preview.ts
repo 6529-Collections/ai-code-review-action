@@ -56,7 +56,7 @@ const mockReviewResult: ReviewResult = {
           'Graceful error handling with logging for review failures',
         ],
         testRecommendations: [
-          'Integration test for development mode (SKIP_PHASE1=true) execution path',
+          'Integration test for development mode (DEV_MODE_PHASE2_ONLY=true) execution path',
           'Integration test for normal Phase 2 review execution',
           'Test error handling when ReviewService fails in both modes',
         ],
