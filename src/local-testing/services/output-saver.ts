@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ThemeAnalysisResult } from '@/shared/types/theme-types';
+import { ReviewResult } from '@/review/types/review-types';
 
 export interface SavedAnalysisMetadata {
   timestamp: string;
@@ -64,6 +65,42 @@ export class OutputSaver {
     fs.writeFileSync(filepath, jsonContent, 'utf8');
 
     
+
+    return filepath;
+  }
+
+  /**
+   * Save review results to disk
+   */
+  static async saveReviewResults(
+    reviewResult: ReviewResult,
+    mode: string
+  ): Promise<string> {
+    
+    // Ensure output directory exists
+    await this.ensureDirectoryExists();
+
+    // Generate timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `review-${timestamp}.json`;
+    const filepath = path.join(this.LOCAL_DIR, filename);
+
+    // Create review save object
+    const savedReview = {
+      metadata: {
+        timestamp: new Date().toISOString(),
+        mode,
+        totalNodes: reviewResult.metadata.totalNodes,
+        averageConfidence: reviewResult.metadata.averageConfidence,
+        overallRecommendation: reviewResult.overallRecommendation,
+        processingTime: reviewResult.processingTime
+      },
+      reviewResult
+    };
+
+    // Save to file
+    const jsonContent = JSON.stringify(savedReview, null, 2);
+    fs.writeFileSync(filepath, jsonContent, 'utf8');
 
     return filepath;
   }

@@ -29966,6 +29966,8 @@ const theme_service_1 = __nccwpck_require__(884);
 const theme_formatter_1 = __nccwpck_require__(2542);
 const logger_1 = __nccwpck_require__(9000);
 const performance_tracker_1 = __nccwpck_require__(9600);
+const review_service_1 = __nccwpck_require__(680);
+const github_comment_service_1 = __nccwpck_require__(1556);
 /**
  * Detect if we're running in local testing mode
  */
@@ -29980,8 +29982,6 @@ async function run() {
     try {
         // Initialize live logging for local testing
         if (isLocal) {
-            // Clean all previous analysis files for fresh start
-            output_saver_1.OutputSaver.cleanAllAnalyses();
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             logFilePath = await output_saver_1.OutputSaver.initializeLogFile(timestamp);
             logger_1.Logger.initializeLiveLogging(logFilePath);
@@ -29993,6 +29993,42 @@ async function run() {
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+        // Development Mode: Skip to Phase 2 review if requested
+        if (process.env.SKIP_PHASE1 === 'true') {
+            logger_1.logger.info('MAIN', 'Development mode: Skipping Phase 1, running Phase 2 review only');
+            try {
+                performance_tracker_1.performanceTracker.startTiming('Phase 2 Development Review');
+                const reviewService = new review_service_1.ReviewService(inputs.anthropicApiKey);
+                const testFile = process.env.TEST_OUTPUT_FILE;
+                const reviewResult = testFile
+                    ? await reviewService.reviewFromTestOutput(testFile)
+                    : await reviewService.reviewFromTestOutput();
+                logger_1.logger.info('MAIN', `Development review completed: ${reviewResult.overallRecommendation} (${reviewResult.nodeReviews.length} nodes)`);
+                logger_1.logger.info('MAIN', reviewResult.summary);
+                if (isLocal) {
+                    try {
+                        const savedPath = await output_saver_1.OutputSaver.saveReviewResults(reviewResult, 'development-mode');
+                        (0, utils_1.logInfo)(`Development review results saved to: ${savedPath}`);
+                    }
+                    catch (saveError) {
+                        logger_1.logger.warn('MAIN', `Failed to save development review results: ${saveError}`);
+                    }
+                }
+                performance_tracker_1.performanceTracker.endTiming('Phase 2 Development Review');
+                performance_tracker_1.performanceTracker.endTiming('Total AI Code Review');
+                performance_tracker_1.performanceTracker.generateReport();
+                return;
+            }
+            catch (devError) {
+                logger_1.logger.error('MAIN', `Development mode review failed: ${devError}`);
+                throw devError;
+            }
+        }
+        // Clean previous analysis files only for full pipeline runs (not development mode)
+        if (isLocal) {
+            logger_1.logger.info('MAIN', 'Full pipeline mode: Cleaning previous analysis files for fresh start');
+            output_saver_1.OutputSaver.cleanAllAnalyses();
+        }
         // Log mode (isLocal already defined above)
         (0, utils_1.logInfo)(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
         performance_tracker_1.performanceTracker.startTiming('Setup');
@@ -30079,10 +30115,11 @@ async function run() {
             logger_1.logger.debug('MAIN', `Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
             const safeSummary = theme_formatter_1.ThemeFormatter.createThemeSummary(themeAnalysis.themes);
             logger_1.logger.debug('MAIN', `Summary created, length: ${safeSummary?.length || 'undefined'}`);
-            logger_1.logger.debug('MAIN', 'Setting outputs...');
-            core.setOutput('themes', detailedThemes);
-            core.setOutput('summary', safeSummary);
-            logger_1.logger.debug('MAIN', 'Outputs set successfully');
+            // TODO: Remove production output writing (debugging only)
+            // logger.debug('MAIN', 'Setting outputs...');
+            // core.setOutput('themes', detailedThemes);
+            // core.setOutput('summary', safeSummary);
+            // logger.debug('MAIN', 'Outputs set successfully');
             // Save analysis results for local testing
             if (isLocal && gitService instanceof local_testing_1.LocalGitService) {
                 try {
@@ -30094,7 +30131,8 @@ async function run() {
                     logger_1.logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
                 }
             }
-            (0, utils_1.logInfo)(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
+            // TODO: Remove production output logging (debugging only)
+            // logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
                 (0, utils_1.logInfo)(`Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
@@ -30106,8 +30144,9 @@ async function run() {
                 logger_1.logger.debug('MAIN', `Error stack: ${error.stack}`);
             }
             logger_1.logger.error('MAIN', `Failed to set outputs: ${error}`);
-            core.setOutput('themes', 'No themes found');
-            core.setOutput('summary', 'Output generation failed');
+            // TODO: Remove production output writing (debugging only)
+            // core.setOutput('themes', 'No themes found');
+            // core.setOutput('summary', 'Output generation failed');
         }
         performance_tracker_1.performanceTracker.endTiming('Output Generation');
         logger_1.logger.info('MAIN', `Analysis complete: Found ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
@@ -30119,6 +30158,58 @@ async function run() {
         // Log expansion statistics if available
         if (themeAnalysis.expansionStats) {
             logger_1.logger.info('MAIN', `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
+        }
+        // Phase 2: Code Review (if not in development mode that skips Phase 1)
+        const shouldRunReview = process.env.SKIP_PHASE1 !== 'true';
+        if (shouldRunReview) {
+            performance_tracker_1.performanceTracker.startTiming('Phase 2 Review');
+            try {
+                logger_1.logger.info('MAIN', 'Starting Phase 2: AI Code Review...');
+                const reviewService = new review_service_1.ReviewService(inputs.anthropicApiKey);
+                const reviewResult = await reviewService.reviewThemes(themeAnalysis.themes);
+                logger_1.logger.info('MAIN', `Review completed: ${reviewResult.overallRecommendation} (${reviewResult.nodeReviews.length} nodes reviewed)`);
+                logger_1.logger.info('MAIN', reviewResult.summary);
+                // Handle output based on environment
+                if (isLocal && gitService instanceof local_testing_1.LocalGitService) {
+                    // Local testing: Save to files
+                    try {
+                        const modeInfo = gitService.getCurrentMode();
+                        const savedPath = await output_saver_1.OutputSaver.saveReviewResults(reviewResult, modeInfo.name);
+                        (0, utils_1.logInfo)(`Review results saved to: ${savedPath}`);
+                    }
+                    catch (saveError) {
+                        logger_1.logger.warn('MAIN', `Failed to save review results: ${saveError}`);
+                    }
+                }
+                else {
+                    // Production: Post to PR comments
+                    try {
+                        logger_1.logger.info('MAIN', 'Posting review results to PR comments...');
+                        const commentService = new github_comment_service_1.GitHubCommentService(inputs.githubToken || '');
+                        // Post main review comment
+                        await commentService.postMainReviewComment(reviewResult);
+                        // Post detailed comments for significant issues
+                        await commentService.postDetailedNodeComments(reviewResult);
+                        // Post action items summary if there are critical/major issues
+                        if (reviewResult.overallRecommendation !== 'approve') {
+                            await commentService.postActionItemsSummary(reviewResult);
+                        }
+                        logger_1.logger.info('MAIN', 'PR comments posted successfully');
+                    }
+                    catch (commentError) {
+                        logger_1.logger.error('MAIN', `Failed to post PR comments: ${commentError}`);
+                        // Don't fail the pipeline for comment errors
+                    }
+                }
+            }
+            catch (reviewError) {
+                logger_1.logger.error('MAIN', `Phase 2 review failed: ${reviewError}`);
+                // Continue execution - review failure shouldn't break the pipeline
+            }
+            performance_tracker_1.performanceTracker.endTiming('Phase 2 Review');
+        }
+        else {
+            logger_1.logger.info('MAIN', 'Skipping Phase 2 review (SKIP_PHASE1=true for development mode)');
         }
         // End total timing and generate comprehensive performance report
         performance_tracker_1.performanceTracker.endTiming('Total AI Code Review');
@@ -30523,8 +30614,8 @@ UncommittedMode.EXCLUDED_PATTERNS = [
     /node_modules\//, // Exclude dependencies
     /\.map$/, // Exclude source maps
     /package-lock\.json$/, // Exclude lock files
-    /mindmap-prd\.txt$/, // Exclude PRD files
-    /review-prd\.md$/, // Exclude PRD files
+    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
+    /command-center\/review-prd\.md$/, // Exclude PRD files
     /\.md$/, // Exclude all markdown files
     /\.txt$/, // Exclude all text files
     /\.json$/, // Exclude all json files
@@ -30745,6 +30836,33 @@ class OutputSaver {
         const filepath = path.join(this.LOCAL_DIR, filename);
         // Save to file
         const jsonContent = JSON.stringify(savedAnalysis, null, 2);
+        fs.writeFileSync(filepath, jsonContent, 'utf8');
+        return filepath;
+    }
+    /**
+     * Save review results to disk
+     */
+    static async saveReviewResults(reviewResult, mode) {
+        // Ensure output directory exists
+        await this.ensureDirectoryExists();
+        // Generate timestamp
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `review-${timestamp}.json`;
+        const filepath = path.join(this.LOCAL_DIR, filename);
+        // Create review save object
+        const savedReview = {
+            metadata: {
+                timestamp: new Date().toISOString(),
+                mode,
+                totalNodes: reviewResult.metadata.totalNodes,
+                averageConfidence: reviewResult.metadata.averageConfidence,
+                overallRecommendation: reviewResult.overallRecommendation,
+                processingTime: reviewResult.processingTime
+            },
+            reviewResult
+        };
+        // Save to file
+        const jsonContent = JSON.stringify(savedReview, null, 2);
         fs.writeFileSync(filepath, jsonContent, 'utf8');
         return filepath;
     }
@@ -36276,6 +36394,899 @@ class ThemeFormatter {
 exports.ThemeFormatter = ThemeFormatter;
 ThemeFormatter.MAX_FILES_SHOWN = 3;
 ThemeFormatter.MAX_DESCRIPTION_LENGTH = 200;
+
+
+/***/ }),
+
+/***/ 1556:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitHubCommentService = void 0;
+const github = __importStar(__nccwpck_require__(3228));
+const pr_comment_formatter_1 = __nccwpck_require__(6077);
+const logger_1 = __nccwpck_require__(9000);
+/**
+ * Service for posting AI review results as GitHub PR comments
+ */
+class GitHubCommentService {
+    constructor(githubToken) {
+        this.githubToken = githubToken;
+        this.octokit = github.getOctokit(githubToken);
+        this.context = github.context;
+    }
+    /**
+     * Post main review comment to PR
+     */
+    async postMainReviewComment(reviewResult) {
+        if (!this.isPullRequestContext()) {
+            logger_1.logger.warn('GITHUB_COMMENT', 'Not in PR context, skipping comment posting');
+            return;
+        }
+        try {
+            const comment = pr_comment_formatter_1.PRCommentFormatter.formatMainComment(reviewResult);
+            const { data: existingComments } = await this.octokit.rest.issues.listComments({
+                owner: this.context.repo.owner,
+                repo: this.context.repo.repo,
+                issue_number: this.context.issue.number,
+            });
+            // Check if we already posted a review comment (to update instead of duplicate)
+            const existingComment = existingComments.find(c => c.body?.includes('🤖 AI Code Review Results') && c.user?.login === 'github-actions[bot]');
+            if (existingComment) {
+                // Update existing comment
+                await this.octokit.rest.issues.updateComment({
+                    owner: this.context.repo.owner,
+                    repo: this.context.repo.repo,
+                    comment_id: existingComment.id,
+                    body: comment,
+                });
+                logger_1.logger.info('GITHUB_COMMENT', `Updated existing review comment (ID: ${existingComment.id})`);
+            }
+            else {
+                // Create new comment
+                const { data: newComment } = await this.octokit.rest.issues.createComment({
+                    owner: this.context.repo.owner,
+                    repo: this.context.repo.repo,
+                    issue_number: this.context.issue.number,
+                    body: comment,
+                });
+                logger_1.logger.info('GITHUB_COMMENT', `Posted new review comment (ID: ${newComment.id})`);
+            }
+        }
+        catch (error) {
+            logger_1.logger.error('GITHUB_COMMENT', `Failed to post main review comment: ${error}`);
+            throw error;
+        }
+    }
+    /**
+     * Post detailed comments for nodes with significant issues
+     */
+    async postDetailedNodeComments(reviewResult) {
+        if (!this.isPullRequestContext()) {
+            logger_1.logger.warn('GITHUB_COMMENT', 'Not in PR context, skipping detailed comments');
+            return;
+        }
+        // Only post detailed comments for nodes with critical or multiple major issues
+        const significantNodes = reviewResult.nodeReviews.filter(node => this.hasSignificantIssues(node));
+        if (significantNodes.length === 0) {
+            logger_1.logger.info('GITHUB_COMMENT', 'No nodes require detailed comments');
+            return;
+        }
+        logger_1.logger.info('GITHUB_COMMENT', `Posting detailed comments for ${significantNodes.length} nodes`);
+        for (const node of significantNodes) {
+            await this.postNodeDetailComment(node);
+        }
+    }
+    /**
+     * Post detailed comment for a specific node
+     */
+    async postNodeDetailComment(nodeReview) {
+        try {
+            const comment = pr_comment_formatter_1.PRCommentFormatter.formatNodeDetailComment(nodeReview);
+            const { data: newComment } = await this.octokit.rest.issues.createComment({
+                owner: this.context.repo.owner,
+                repo: this.context.repo.repo,
+                issue_number: this.context.issue.number,
+                body: comment,
+            });
+            logger_1.logger.info('GITHUB_COMMENT', `Posted detailed comment for node "${nodeReview.nodeName}" (ID: ${newComment.id})`);
+        }
+        catch (error) {
+            logger_1.logger.error('GITHUB_COMMENT', `Failed to post detailed comment for node "${nodeReview.nodeName}": ${error}`);
+            // Don't throw - continue with other comments
+        }
+    }
+    /**
+     * Set PR review status based on recommendation
+     */
+    async setPRReviewStatus(reviewResult) {
+        if (!this.isPullRequestContext()) {
+            logger_1.logger.warn('GITHUB_COMMENT', 'Not in PR context, skipping review status');
+            return;
+        }
+        // Skip setting review status for now - this would require special permissions
+        // and might conflict with human reviewers. We'll just post comments.
+        logger_1.logger.info('GITHUB_COMMENT', `Review recommendation: ${reviewResult.overallRecommendation}`);
+    }
+    /**
+     * Post a summary comment with key action items
+     */
+    async postActionItemsSummary(reviewResult) {
+        const actionItems = this.extractActionItems(reviewResult);
+        if (actionItems.length === 0) {
+            logger_1.logger.info('GITHUB_COMMENT', 'No action items to post');
+            return;
+        }
+        try {
+            const comment = this.formatActionItemsComment(actionItems, reviewResult.overallRecommendation);
+            const { data: newComment } = await this.octokit.rest.issues.createComment({
+                owner: this.context.repo.owner,
+                repo: this.context.repo.repo,
+                issue_number: this.context.issue.number,
+                body: comment,
+            });
+            logger_1.logger.info('GITHUB_COMMENT', `Posted action items summary (ID: ${newComment.id})`);
+        }
+        catch (error) {
+            logger_1.logger.error('GITHUB_COMMENT', `Failed to post action items summary: ${error}`);
+            // Don't throw - this is optional
+        }
+    }
+    // Helper methods
+    isPullRequestContext() {
+        return this.context.eventName === 'pull_request' ||
+            this.context.eventName === 'pull_request_target' ||
+            !!this.context.issue?.number; // For local testing with issue number
+    }
+    hasSignificantIssues(nodeReview) {
+        const criticalIssues = nodeReview.findings.issues.filter(i => i.severity === 'critical').length;
+        const majorIssues = nodeReview.findings.issues.filter(i => i.severity === 'major').length;
+        // Post detailed comment if:
+        // - Has any critical issues
+        // - Has 2+ major issues  
+        // - Has high/critical risk level
+        return criticalIssues > 0 ||
+            majorIssues >= 2 ||
+            ['high', 'critical'].includes(nodeReview.findings.riskLevel);
+    }
+    extractActionItems(reviewResult) {
+        const actionItems = [];
+        reviewResult.nodeReviews.forEach(node => {
+            node.findings.issues.forEach(issue => {
+                if (['critical', 'major'].includes(issue.severity)) {
+                    actionItems.push({
+                        priority: issue.severity,
+                        description: issue.description,
+                        nodeContext: node.nodeName,
+                        suggestedFix: issue.suggestedFix
+                    });
+                }
+            });
+        });
+        // Sort by priority: critical first, then major
+        return actionItems.sort((a, b) => {
+            const priorityOrder = { critical: 0, major: 1, minor: 2 };
+            return priorityOrder[a.priority] - priorityOrder[b.priority];
+        });
+    }
+    formatActionItemsComment(actionItems, recommendation) {
+        const sections = [];
+        sections.push('## 📋 Action Items from AI Review');
+        sections.push('');
+        if (recommendation === 'request-changes') {
+            sections.push('⚠️ **These items must be addressed before merge:**');
+        }
+        else {
+            sections.push('💡 **Recommended improvements:**');
+        }
+        sections.push('');
+        actionItems.forEach((item, index) => {
+            const emoji = item.priority === 'critical' ? '🚨' : '⚠️';
+            sections.push(`### ${index + 1}. ${emoji} ${item.priority.toUpperCase()}`);
+            sections.push(`**Context:** ${item.nodeContext}`);
+            sections.push('');
+            sections.push(item.description);
+            if (item.suggestedFix) {
+                sections.push('');
+                sections.push(`**💡 Suggested fix:** ${item.suggestedFix}`);
+            }
+            sections.push('');
+        });
+        sections.push('---');
+        sections.push('*Generated by AI Code Review Action*');
+        return sections.join('\n');
+    }
+}
+exports.GitHubCommentService = GitHubCommentService;
+
+
+/***/ }),
+
+/***/ 680:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ReviewService = void 0;
+const test_data_loader_1 = __nccwpck_require__(7080);
+const claude_client_1 = __nccwpck_require__(3861);
+const logger_1 = __nccwpck_require__(9000);
+const json_extractor_1 = __nccwpck_require__(8168);
+/**
+ * Main review service that orchestrates Phase 2 code review
+ * Implements Week 1 strategy: Basic node review with AI analysis
+ */
+class ReviewService {
+    constructor(apiKey, config = {}) {
+        this.apiKey = apiKey;
+        this.claudeClient = new claude_client_1.ClaudeClient(apiKey);
+        this.config = {
+            maxRetries: 3,
+            timeoutMs: 30000,
+            ...config
+        };
+    }
+    /**
+     * Production: Review themes from Phase 1 output
+     */
+    async reviewThemes(themes) {
+        const startTime = Date.now();
+        logger_1.logger.info('REVIEW_SERVICE', `Starting review of ${themes.length} themes`);
+        const nodeReviews = [];
+        // Review each theme node
+        for (const theme of themes) {
+            try {
+                const nodeReview = await this.reviewSingleNode(theme);
+                nodeReviews.push(nodeReview);
+            }
+            catch (error) {
+                logger_1.logger.error('REVIEW_SERVICE', `Failed to review node ${theme.id}: ${error}`);
+                // Create fallback review for failed nodes
+                const fallbackReview = {
+                    nodeId: theme.id,
+                    nodeName: theme.name,
+                    nodeType: 'integration-hybrid',
+                    findings: {
+                        issues: [{
+                                severity: 'minor',
+                                category: 'test',
+                                description: 'Review failed due to processing error',
+                                suggestedFix: 'Manual review recommended'
+                            }],
+                        strengths: [],
+                        testRecommendations: ['Manual testing recommended'],
+                        riskLevel: 'medium'
+                    },
+                    confidence: 0.1,
+                    processingTime: 0
+                };
+                nodeReviews.push(fallbackReview);
+            }
+        }
+        const overallRecommendation = this.determineOverallRecommendation(nodeReviews);
+        const summary = this.generateReviewSummary(nodeReviews);
+        const processingTime = Date.now() - startTime;
+        const averageConfidence = nodeReviews.reduce((sum, review) => sum + review.confidence, 0) / nodeReviews.length;
+        logger_1.logger.info('REVIEW_SERVICE', `Review completed in ${processingTime}ms with ${overallRecommendation} recommendation`);
+        return {
+            overallRecommendation,
+            summary,
+            nodeReviews,
+            processingTime,
+            metadata: {
+                totalNodes: themes.length,
+                averageConfidence,
+                timestamp: new Date().toISOString()
+            }
+        };
+    }
+    /**
+     * Development: Review from test-output file
+     */
+    async reviewFromTestOutput(filename) {
+        logger_1.logger.info('REVIEW_SERVICE', 'Loading themes from test-output for development mode');
+        const themes = filename
+            ? await test_data_loader_1.TestDataLoader.loadTestOutput(filename)
+            : await test_data_loader_1.TestDataLoader.loadLatestTestOutput();
+        return this.reviewThemes(themes);
+    }
+    /**
+     * Review a single theme node (Week 1 strategy: basic node review)
+     */
+    async reviewSingleNode(theme) {
+        const startTime = Date.now();
+        logger_1.logger.debug('REVIEW_SERVICE', `Reviewing node: ${theme.name}`);
+        // AI-driven node type classification
+        const nodeType = await this.classifyNodeType(theme);
+        // AI-driven review analysis
+        const findings = await this.analyzeNodeFindings(theme, nodeType);
+        // AI confidence in review
+        const confidence = this.calculateReviewConfidence(theme, findings);
+        const processingTime = Date.now() - startTime;
+        logger_1.logger.debug('REVIEW_SERVICE', `Completed review of ${theme.name} in ${processingTime}ms`);
+        return {
+            nodeId: theme.id,
+            nodeName: theme.name,
+            nodeType,
+            findings,
+            confidence,
+            processingTime
+        };
+    }
+    /**
+     * AI determines node type based on context
+     */
+    async classifyNodeType(theme) {
+        const prompt = `You are analyzing a code change to determine its review approach.
+    
+CONTEXT:
+Theme: ${theme.name}
+Description: ${theme.description || 'Not specified'}
+Business Impact: ${theme.businessImpact || 'Not specified'}
+Technical Details: ${theme.combinedTechnicalDetails || 'Not specified'}
+Files: ${theme.affectedFiles?.join(', ') || 'Not specified'}
+Has Code: ${theme.codeSnippets?.length > 0 ? 'Yes' : 'No'}
+Child Themes: ${theme.childThemes?.length || 0}
+
+TASK: Classify this change for review approach.
+
+CLASSIFICATION RULES:
+- atomic-technical: Single technical change, unit-testable, affects few files
+- business-feature: Business capability change, affects user workflows
+- integration-hybrid: Multiple components working together, architectural changes
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "nodeType": "atomic-technical|business-feature|integration-hybrid",
+  "reasoning": "Why this classification was chosen",
+  "confidence": 0.0-1.0
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'node-type-classification');
+            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const parsed = extractionResult.data;
+            if (!parsed.nodeType || !['atomic-technical', 'business-feature', 'integration-hybrid'].includes(parsed.nodeType)) {
+                throw new Error(`Invalid node type: ${parsed.nodeType}`);
+            }
+            logger_1.logger.debug('REVIEW_SERVICE', `Node type classified as: ${parsed.nodeType} (confidence: ${parsed.confidence})`);
+            return parsed.nodeType;
+        }
+        catch (error) {
+            logger_1.logger.warn('REVIEW_SERVICE', `Failed to classify node type: ${error}`);
+            return 'integration-hybrid'; // Safe fallback
+        }
+    }
+    /**
+     * AI analyzes node for review findings
+     */
+    async analyzeNodeFindings(theme, nodeType) {
+        const codeContext = theme.codeSnippets?.join('\n\n') || 'No code snippets available';
+        const prompt = `You are performing a code review with ${nodeType.toUpperCase()} focus.
+
+CONTEXT:
+Theme: ${theme.name}
+Description: ${theme.description || 'Not specified'}
+Business Impact: ${theme.businessImpact || 'Not specified'}
+Node Type: ${nodeType}
+Files Affected: ${theme.affectedFiles?.join(', ') || 'Not specified'}
+
+CODE CHANGES:
+${codeContext}
+
+TASK: Provide a thorough code review focusing on the node type.
+
+REVIEW FOCUS BY TYPE:
+- atomic-technical: Code correctness, unit testing, logic validation
+- business-feature: Business requirement validation, user impact, E2E testing
+- integration-hybrid: Component integration, architectural coherence, integration testing
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "issues": [
+    {
+      "severity": "critical|major|minor|suggestion",
+      "category": "logic|security|performance|style|test",
+      "description": "Clear description of the issue",
+      "suggestedFix": "How to fix it (optional)"
+    }
+  ],
+  "strengths": ["What was done well"],
+  "testRecommendations": ["What tests are needed"],
+  "riskLevel": "low|medium|high|critical"
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'code-review-analysis');
+            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const parsed = extractionResult.data;
+            // Validate response structure
+            if (!parsed.issues || !Array.isArray(parsed.issues)) {
+                parsed.issues = [];
+            }
+            if (!parsed.strengths || !Array.isArray(parsed.strengths)) {
+                parsed.strengths = [];
+            }
+            if (!parsed.testRecommendations || !Array.isArray(parsed.testRecommendations)) {
+                parsed.testRecommendations = [];
+            }
+            if (!parsed.riskLevel || !['low', 'medium', 'high', 'critical'].includes(parsed.riskLevel)) {
+                parsed.riskLevel = 'medium';
+            }
+            logger_1.logger.debug('REVIEW_SERVICE', `Found ${parsed.issues.length} issues, risk level: ${parsed.riskLevel}`);
+            return parsed;
+        }
+        catch (error) {
+            logger_1.logger.warn('REVIEW_SERVICE', `Failed to analyze node findings: ${error}`);
+            return {
+                issues: [],
+                strengths: [],
+                testRecommendations: [],
+                riskLevel: 'medium'
+            };
+        }
+    }
+    /**
+     * Calculate review confidence based on available context
+     */
+    calculateReviewConfidence(theme, findings) {
+        let confidence = 0.5; // Base confidence
+        // More confidence with code snippets
+        if (theme.codeSnippets?.length > 0)
+            confidence += 0.2;
+        // More confidence with business context
+        if (theme.businessImpact)
+            confidence += 0.1;
+        // More confidence with technical details
+        if (theme.combinedTechnicalDetails)
+            confidence += 0.1;
+        // More confidence with file context
+        if (theme.affectedFiles?.length > 0)
+            confidence += 0.1;
+        // Less confidence with high risk (uncertainty)
+        if (findings.riskLevel === 'critical')
+            confidence -= 0.2;
+        if (findings.riskLevel === 'high')
+            confidence -= 0.1;
+        return Math.max(0.1, Math.min(1.0, confidence));
+    }
+    /**
+     * Determine overall recommendation from node reviews
+     */
+    determineOverallRecommendation(nodeReviews) {
+        const criticalIssues = nodeReviews.some(review => review.findings.issues.some(issue => issue.severity === 'critical'));
+        const majorIssues = nodeReviews.filter(review => review.findings.issues.some(issue => issue.severity === 'major')).length;
+        const highRiskNodes = nodeReviews.filter(review => review.findings.riskLevel === 'critical' || review.findings.riskLevel === 'high').length;
+        const lowConfidenceNodes = nodeReviews.filter(review => review.confidence < 0.3).length;
+        if (criticalIssues || highRiskNodes > 0) {
+            return 'request-changes';
+        }
+        if (majorIssues > 2 || lowConfidenceNodes > nodeReviews.length / 2) {
+            return 'needs-discussion';
+        }
+        return 'approve';
+    }
+    /**
+     * Generate human-readable review summary
+     */
+    generateReviewSummary(nodeReviews) {
+        const totalIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.length, 0);
+        const criticalIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.filter(issue => issue.severity === 'critical').length, 0);
+        const majorIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.filter(issue => issue.severity === 'major').length, 0);
+        const minorIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.filter(issue => issue.severity === 'minor').length, 0);
+        const avgConfidence = nodeReviews.reduce((sum, review) => sum + review.confidence, 0) / nodeReviews.length;
+        const nodeTypes = nodeReviews.reduce((counts, review) => {
+            counts[review.nodeType] = (counts[review.nodeType] || 0) + 1;
+            return counts;
+        }, {});
+        const typesSummary = Object.entries(nodeTypes)
+            .map(([type, count]) => `${count} ${type}`)
+            .join(', ');
+        return `Reviewed ${nodeReviews.length} changes (${typesSummary}). Found ${totalIssues} issues: ${criticalIssues} critical, ${majorIssues} major, ${minorIssues} minor. Average confidence: ${(avgConfidence * 100).toFixed(1)}%`;
+    }
+}
+exports.ReviewService = ReviewService;
+
+
+/***/ }),
+
+/***/ 7080:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TestDataLoader = void 0;
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const logger_1 = __nccwpck_require__(9000);
+/**
+ * Service for loading test data from test-output directory
+ * Enables development mode by skipping Phase 1 and using saved mindmap data
+ */
+class TestDataLoader {
+    /**
+     * Load themes from latest test-output JSON file
+     */
+    static async loadLatestTestOutput() {
+        if (!fs.existsSync(this.TEST_OUTPUT_DIR)) {
+            throw new Error('test-output directory not found. Run Phase 1 first to generate test data.');
+        }
+        const files = fs.readdirSync(this.TEST_OUTPUT_DIR)
+            .filter(f => f.endsWith('.json') && f.startsWith('analysis-'))
+            .sort()
+            .reverse(); // Latest first
+        if (files.length === 0) {
+            throw new Error('No test-output JSON files found. Run Phase 1 first to generate test data.');
+        }
+        const latestFile = files[0];
+        const filePath = path.join(this.TEST_OUTPUT_DIR, latestFile);
+        logger_1.logger.info('TEST_DATA_LOADER', `Loading test data from: ${latestFile}`);
+        try {
+            const rawData = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(rawData);
+            // Extract themes from the test output structure
+            const themes = data.rawAnalysis?.themes || [];
+            if (themes.length === 0) {
+                throw new Error(`No themes found in test output file: ${latestFile}`);
+            }
+            logger_1.logger.info('TEST_DATA_LOADER', `Loaded ${themes.length} themes from test data`);
+            return themes;
+        }
+        catch (error) {
+            throw new Error(`Failed to load test output file ${latestFile}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    /**
+     * Load specific test-output file by name
+     */
+    static async loadTestOutput(filename) {
+        const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`Test output file not found: ${filename}`);
+        }
+        logger_1.logger.info('TEST_DATA_LOADER', `Loading test data from: ${filename}`);
+        try {
+            const rawData = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(rawData);
+            const themes = data.rawAnalysis?.themes || [];
+            if (themes.length === 0) {
+                throw new Error(`No themes found in test output file: ${filename}`);
+            }
+            logger_1.logger.info('TEST_DATA_LOADER', `Loaded ${themes.length} themes from ${filename}`);
+            return themes;
+        }
+        catch (error) {
+            throw new Error(`Failed to load test output file ${filename}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    /**
+     * List available test output files
+     */
+    static listTestOutputFiles() {
+        if (!fs.existsSync(this.TEST_OUTPUT_DIR)) {
+            return [];
+        }
+        return fs.readdirSync(this.TEST_OUTPUT_DIR)
+            .filter(f => f.endsWith('.json') && f.startsWith('analysis-'))
+            .sort()
+            .reverse(); // Latest first
+    }
+    /**
+     * Get metadata from test output file
+     */
+    static getTestOutputMetadata(filename) {
+        const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`Test output file not found: ${filename}`);
+        }
+        try {
+            const rawData = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(rawData);
+            return data.metadata || {};
+        }
+        catch (error) {
+            throw new Error(`Failed to read metadata from ${filename}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+}
+exports.TestDataLoader = TestDataLoader;
+TestDataLoader.TEST_OUTPUT_DIR = path.join(process.cwd(), 'test-output');
+
+
+/***/ }),
+
+/***/ 6077:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PRCommentFormatter = void 0;
+/**
+ * Formats review results into well-structured GitHub PR comments
+ */
+class PRCommentFormatter {
+    /**
+     * Generate main review comment with overall findings
+     */
+    static formatMainComment(reviewResult) {
+        const { overallRecommendation, summary, nodeReviews, metadata } = reviewResult;
+        const recommendationEmoji = this.getRecommendationEmoji(overallRecommendation);
+        const sections = [];
+        // Header with recommendation
+        sections.push(`## 🤖 AI Code Review Results ${recommendationEmoji}`);
+        sections.push('');
+        sections.push(`**Recommendation:** ${this.formatRecommendation(overallRecommendation)}`);
+        sections.push('');
+        // Summary
+        sections.push(`**Summary:** ${summary}`);
+        sections.push('');
+        // Key metrics
+        sections.push('### 📊 Review Metrics');
+        sections.push(`- **Nodes Reviewed:** ${metadata.totalNodes}`);
+        sections.push(`- **Average Confidence:** ${(metadata.averageConfidence * 100).toFixed(1)}%`);
+        sections.push(`- **Processing Time:** ${(reviewResult.processingTime / 1000).toFixed(1)}s`);
+        sections.push('');
+        // Critical/Major issues summary
+        const criticalIssues = this.countIssuesBySeverity(nodeReviews, 'critical');
+        const majorIssues = this.countIssuesBySeverity(nodeReviews, 'major');
+        if (criticalIssues > 0 || majorIssues > 0) {
+            sections.push('### ⚠️ Key Issues');
+            if (criticalIssues > 0) {
+                sections.push(`- **${criticalIssues} Critical Issue(s)** - Must be addressed before merge`);
+            }
+            if (majorIssues > 0) {
+                sections.push(`- **${majorIssues} Major Issue(s)** - Should be addressed`);
+            }
+            sections.push('');
+        }
+        // Node breakdown
+        sections.push('### 🔍 Detailed Findings');
+        sections.push('');
+        nodeReviews.forEach((nodeReview, index) => {
+            sections.push(this.formatNodeReviewSummary(nodeReview, index + 1));
+            sections.push('');
+        });
+        // Footer
+        sections.push('---');
+        sections.push('*Generated by [AI Code Review Action](https://github.com/your-org/ai-code-review-action) with Claude AI*');
+        return sections.join('\n');
+    }
+    /**
+     * Generate detailed comment for a specific node
+     */
+    static formatNodeDetailComment(nodeReview) {
+        const sections = [];
+        // Header
+        sections.push(`## 🔍 Detailed Review: ${nodeReview.nodeName}`);
+        sections.push('');
+        sections.push(`**Node Type:** ${this.formatNodeType(nodeReview.nodeType)}`);
+        sections.push(`**Confidence:** ${(nodeReview.confidence * 100).toFixed(1)}%`);
+        sections.push(`**Risk Level:** ${this.formatRiskLevel(nodeReview.findings.riskLevel)}`);
+        sections.push('');
+        // Issues
+        if (nodeReview.findings.issues.length > 0) {
+            sections.push('### 🚨 Issues Found');
+            sections.push('');
+            nodeReview.findings.issues.forEach((issue, index) => {
+                sections.push(this.formatIssue(issue, index + 1));
+                sections.push('');
+            });
+        }
+        // Strengths
+        if (nodeReview.findings.strengths.length > 0) {
+            sections.push('### ✅ Strengths');
+            sections.push('');
+            nodeReview.findings.strengths.forEach(strength => {
+                sections.push(`- ${strength}`);
+            });
+            sections.push('');
+        }
+        // Test recommendations
+        if (nodeReview.findings.testRecommendations.length > 0) {
+            sections.push('### 🧪 Test Recommendations');
+            sections.push('');
+            nodeReview.findings.testRecommendations.forEach(test => {
+                sections.push(`- [ ] ${test}`);
+            });
+            sections.push('');
+        }
+        return sections.join('\n');
+    }
+    /**
+     * Generate concise inline comment for specific issues
+     */
+    static formatInlineComment(issue, nodeContext) {
+        const severityEmoji = this.getSeverityEmoji(issue.severity);
+        const sections = [];
+        sections.push(`${severityEmoji} **${issue.severity.toUpperCase()}** (${issue.category})`);
+        sections.push('');
+        sections.push(issue.description);
+        if (issue.suggestedFix) {
+            sections.push('');
+            sections.push(`**💡 Suggested fix:** ${issue.suggestedFix}`);
+        }
+        if (nodeContext) {
+            sections.push('');
+            sections.push(`*From: ${nodeContext}*`);
+        }
+        return sections.join('\n');
+    }
+    // Helper methods
+    static getRecommendationEmoji(recommendation) {
+        switch (recommendation) {
+            case 'approve': return '✅';
+            case 'request-changes': return '🚫';
+            case 'needs-discussion': return '💬';
+            default: return '❓';
+        }
+    }
+    static formatRecommendation(recommendation) {
+        switch (recommendation) {
+            case 'approve': return '**APPROVE** - Changes look good to merge';
+            case 'request-changes': return '**REQUEST CHANGES** - Critical issues must be addressed';
+            case 'needs-discussion': return '**NEEDS DISCUSSION** - Review findings require team discussion';
+            default: return recommendation;
+        }
+    }
+    static formatNodeType(nodeType) {
+        switch (nodeType) {
+            case 'atomic-technical': return '⚛️ Atomic Technical';
+            case 'business-feature': return '🏢 Business Feature';
+            case 'integration-hybrid': return '🔗 Integration Hybrid';
+            default: return nodeType;
+        }
+    }
+    static formatRiskLevel(riskLevel) {
+        switch (riskLevel) {
+            case 'low': return '🟢 Low';
+            case 'medium': return '🟡 Medium';
+            case 'high': return '🟠 High';
+            case 'critical': return '🔴 Critical';
+            default: return riskLevel;
+        }
+    }
+    static getSeverityEmoji(severity) {
+        switch (severity) {
+            case 'critical': return '🚨';
+            case 'major': return '⚠️';
+            case 'minor': return '⚡';
+            case 'suggestion': return '💡';
+            default: return '❓';
+        }
+    }
+    static formatIssue(issue, index) {
+        const severityEmoji = this.getSeverityEmoji(issue.severity);
+        const sections = [];
+        sections.push(`#### ${index}. ${severityEmoji} ${issue.severity.toUpperCase()} - ${issue.category}`);
+        sections.push('');
+        sections.push(issue.description);
+        if (issue.suggestedFix) {
+            sections.push('');
+            sections.push(`**💡 Suggested fix:** ${issue.suggestedFix}`);
+        }
+        return sections.join('\n');
+    }
+    static formatNodeReviewSummary(nodeReview, index) {
+        const nodeTypeIcon = this.getNodeTypeIcon(nodeReview.nodeType);
+        const riskEmoji = this.getRiskEmoji(nodeReview.findings.riskLevel);
+        const issueCount = nodeReview.findings.issues.length;
+        const sections = [];
+        sections.push(`#### ${index}. ${nodeTypeIcon} ${nodeReview.nodeName}`);
+        sections.push(`**Risk:** ${riskEmoji} ${nodeReview.findings.riskLevel} | **Issues:** ${issueCount} | **Confidence:** ${(nodeReview.confidence * 100).toFixed(1)}%`);
+        if (issueCount > 0) {
+            const criticalCount = nodeReview.findings.issues.filter(i => i.severity === 'critical').length;
+            const majorCount = nodeReview.findings.issues.filter(i => i.severity === 'major').length;
+            const minorCount = nodeReview.findings.issues.filter(i => i.severity === 'minor').length;
+            const issueCounts = [];
+            if (criticalCount > 0)
+                issueCounts.push(`${criticalCount} critical`);
+            if (majorCount > 0)
+                issueCounts.push(`${majorCount} major`);
+            if (minorCount > 0)
+                issueCounts.push(`${minorCount} minor`);
+            if (issueCounts.length > 0) {
+                sections.push(`*Issues: ${issueCounts.join(', ')}*`);
+            }
+        }
+        return sections.join('\n');
+    }
+    static getNodeTypeIcon(nodeType) {
+        switch (nodeType) {
+            case 'atomic-technical': return '⚛️';
+            case 'business-feature': return '🏢';
+            case 'integration-hybrid': return '🔗';
+            default: return '📁';
+        }
+    }
+    static getRiskEmoji(riskLevel) {
+        switch (riskLevel) {
+            case 'low': return '🟢';
+            case 'medium': return '🟡';
+            case 'high': return '🟠';
+            case 'critical': return '🔴';
+            default: return '⚪';
+        }
+    }
+    static countIssuesBySeverity(nodeReviews, severity) {
+        return nodeReviews.reduce((count, review) => count + review.findings.issues.filter(issue => issue.severity === severity).length, 0);
+    }
+}
+exports.PRCommentFormatter = PRCommentFormatter;
 
 
 /***/ }),

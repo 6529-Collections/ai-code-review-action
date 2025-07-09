@@ -1,4 +1,5 @@
 import { ThemeAnalysisResult } from '@/shared/types/theme-types';
+import { ReviewResult } from '@/review/types/review-types';
 export interface SavedAnalysisMetadata {
     timestamp: string;
     mode: string;
@@ -24,6 +25,10 @@ export declare class OutputSaver {
      * Save analysis results to disk with timestamp and metadata
      */
     static saveAnalysis(themes: any, summary: string, rawAnalysis: ThemeAnalysisResult, mode: string): Promise<string>;
+    /**
+     * Save review results to disk
+     */
+    static saveReviewResults(reviewResult: ReviewResult, mode: string): Promise<string>;
     /**
      * Generate log file path with timestamp
      */
