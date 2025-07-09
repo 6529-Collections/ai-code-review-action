@@ -167,20 +167,10 @@ export class GitHubCommentService {
   // Helper methods
   
   private isPullRequestContext(): boolean {
-    const eventName = this.context.eventName;
-    const issueNumber = this.context.issue?.number;
-    const manualPrNumber = process.env.GITHUB_CONTEXT_ISSUE_NUMBER;
-    
-    logger.info('GITHUB_COMMENT', `PR context check: eventName=${eventName}, issueNumber=${issueNumber}, manualPrNumber=${manualPrNumber}`);
-    logger.info('GITHUB_COMMENT', `Full context.issue: ${JSON.stringify(this.context.issue)}`);
-    
-    const result = eventName === 'pull_request' || 
-                   eventName === 'pull_request_target' ||
-                   !!issueNumber || // For local testing with issue number
-                   !!manualPrNumber; // For manual PR review via workflow_dispatch
-    
-    logger.info('GITHUB_COMMENT', `PR context result: ${result}`);
-    return result;
+    return this.context.eventName === 'pull_request' || 
+           this.context.eventName === 'pull_request_target' ||
+           !!this.context.issue?.number || // For local testing with issue number
+           !!process.env.GITHUB_CONTEXT_ISSUE_NUMBER; // For manual PR review via workflow_dispatch
   }
   
   private getPRNumber(): number {

@@ -29954,7 +29954,6 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.testCommentPosting = testCommentPosting;
 exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const exec = __importStar(__nccwpck_require__(5236));
@@ -29970,65 +29969,6 @@ const performance_tracker_1 = __nccwpck_require__(9600);
 const review_service_1 = __nccwpck_require__(680);
 const github_comment_service_1 = __nccwpck_require__(1556);
 /**
- * Test function for PR comment posting
- */
-async function testCommentPosting() {
-    console.log('🧪 Testing PR comment posting...');
-    // Log environment variables for debugging
-    console.log('Environment check:');
-    console.log('- GITHUB_CONTEXT_ISSUE_NUMBER:', process.env.GITHUB_CONTEXT_ISSUE_NUMBER);
-    console.log('- GITHUB_CONTEXT_PR_BASE_SHA:', process.env.GITHUB_CONTEXT_PR_BASE_SHA);
-    console.log('- GITHUB_CONTEXT_PR_HEAD_SHA:', process.env.GITHUB_CONTEXT_PR_HEAD_SHA);
-    const githubToken = process.env.GITHUB_TOKEN;
-    if (!githubToken) {
-        console.error('❌ GITHUB_TOKEN not found');
-        process.exit(1);
-    }
-    // Mock review result for testing
-    const mockReviewResult = {
-        overallRecommendation: 'approve',
-        summary: 'Test comment posting - everything looks good!',
-        nodeReviews: [
-            {
-                nodeId: 'test-node-1',
-                nodeName: 'Test Node',
-                nodeType: 'atomic-technical',
-                findings: {
-                    issues: [
-                        {
-                            severity: 'minor',
-                            category: 'style',
-                            description: 'This is a test issue',
-                            suggestedFix: 'This is a test fix'
-                        }
-                    ],
-                    strengths: ['Test strength'],
-                    testRecommendations: ['Test recommendation'],
-                    riskLevel: 'low'
-                },
-                confidence: 85,
-                processingTime: 100
-            }
-        ],
-        processingTime: 200,
-        metadata: {
-            totalNodes: 1,
-            averageConfidence: 85,
-            timestamp: new Date().toISOString()
-        }
-    };
-    try {
-        const commentService = new github_comment_service_1.GitHubCommentService(githubToken);
-        console.log('📝 Posting test comment...');
-        await commentService.postMainReviewComment(mockReviewResult);
-        console.log('✅ Test comment posted successfully!');
-    }
-    catch (error) {
-        console.error('❌ Failed to post test comment:', error);
-        process.exit(1);
-    }
-}
-/**
  * Detect if we're running in local testing mode
  */
 function isLocalTesting() {
@@ -30037,11 +29977,6 @@ function isLocalTesting() {
         process.env.NODE_ENV === 'development';
 }
 async function run() {
-    // Check if we're in test mode
-    if (process.env.TEST_COMMENT_POSTING === 'true') {
-        await testCommentPosting();
-        return;
-    }
     const isLocal = isLocalTesting();
     let logFilePath = null;
     try {
