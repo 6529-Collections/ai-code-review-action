@@ -7,6 +7,11 @@ on:
         description: 'PR number to review'
         required: true
         type: string
+      action_branch:
+        description: 'Branch to use for action code (default: main)'
+        required: false
+        type: string
+        default: 'main'
 
 # Permissions needed for commenting on PRs
 permissions:
@@ -40,11 +45,17 @@ jobs:
           console.log(`Head: ${pr.data.head.sha}`);
           console.log(`Base: ${pr.data.base.sha}`);
     
-    - name: Checkout PR code
+    - name: Checkout action code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        ref: ${{ steps.pr.outputs.head_sha }}
+        ref: ${{ github.event.inputs.action_branch }}
+        
+    - name: Get PR code for analysis
+      run: |
+        echo "Fetching PR code for analysis..."
+        git fetch origin pull/${{ github.event.inputs.pr_number }}/head:pr-${{ github.event.inputs.pr_number }}
+        echo "PR code fetched, but action will run from ${{ github.event.inputs.action_branch }} branch"
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -79,5 +90,6 @@ jobs:
       run: |
         echo "🤖 AI Code Review completed for PR #${{ github.event.inputs.pr_number }}"
         echo "✅ Full pipeline executed (Phase 1 + Phase 2)"
+        echo "🔧 Action code from: ${{ github.event.inputs.action_branch }} branch"
         echo "Check the PR comments for detailed findings"
         echo "🔗 PR Link: ${{ github.server_url }}/${{ github.repository }}/pull/${{ github.event.inputs.pr_number }}"
