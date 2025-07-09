@@ -80,22 +80,22 @@ export class OutputSaver {
     // Ensure output directory exists
     await this.ensureDirectoryExists();
 
-    // Generate timestamp
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `review-${timestamp}.json`;
+    // Generate timestamp once for consistency
+    const timestamp = new Date().toISOString();
+    const fileTimestamp = timestamp.replace(/[:.]/g, '-');
+    const filename = `review-${fileTimestamp}.json`;
     const filepath = path.join(this.LOCAL_DIR, filename);
 
-    // Create review save object
+    // Create clean review save object without redundant data
     const savedReview = {
-      metadata: {
-        timestamp: new Date().toISOString(),
+      saveMetadata: {
+        timestamp,
         mode,
-        totalNodes: reviewResult.metadata.totalNodes,
-        averageConfidence: reviewResult.metadata.averageConfidence,
-        overallRecommendation: reviewResult.overallRecommendation,
-        processingTime: reviewResult.processingTime
+        savedAt: timestamp,
+        version: '2.0',
+        type: 'review-result'
       },
-      reviewResult
+      ...reviewResult  // Spread the review result directly to avoid duplication
     };
 
     // Save to file
