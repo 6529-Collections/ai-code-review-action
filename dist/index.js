@@ -36572,17 +36572,10 @@ class GitHubCommentService {
     }
     // Helper methods
     isPullRequestContext() {
-        const eventName = this.context.eventName;
-        const issueNumber = this.context.issue?.number;
-        const manualPrNumber = process.env.GITHUB_CONTEXT_ISSUE_NUMBER;
-        logger_1.logger.info('GITHUB_COMMENT', `PR context check: eventName=${eventName}, issueNumber=${issueNumber}, manualPrNumber=${manualPrNumber}`);
-        logger_1.logger.info('GITHUB_COMMENT', `Full context.issue: ${JSON.stringify(this.context.issue)}`);
-        const result = eventName === 'pull_request' ||
-            eventName === 'pull_request_target' ||
-            !!issueNumber || // For local testing with issue number
-            !!manualPrNumber; // For manual PR review via workflow_dispatch
-        logger_1.logger.info('GITHUB_COMMENT', `PR context result: ${result}`);
-        return result;
+        return this.context.eventName === 'pull_request' ||
+            this.context.eventName === 'pull_request_target' ||
+            !!this.context.issue?.number || // For local testing with issue number
+            !!process.env.GITHUB_CONTEXT_ISSUE_NUMBER; // For manual PR review via workflow_dispatch
     }
     getPRNumber() {
         // Check manual PR review environment variable first
@@ -36818,7 +36811,9 @@ RESPOND WITH ONLY VALID JSON:
      * AI analyzes node for review findings
      */
     async analyzeNodeFindings(theme, nodeType) {
-        const codeContext = theme.codeSnippets?.join('\n\n') || 'No code snippets available';
+        // Extract file context from existing theme data
+        const fileContext = this.extractFileContext(theme);
+        const enhancedCodeContext = this.buildEnhancedCodeContext(theme, fileContext);
         const prompt = `You are performing a code review with ${nodeType.toUpperCase()} focus.
 
 CONTEXT:
@@ -36829,7 +36824,7 @@ Node Type: ${nodeType}
 Files Affected: ${theme.affectedFiles?.join(', ') || 'Not specified'}
 
 CODE CHANGES:
-${codeContext}
+${enhancedCodeContext}
 
 TASK: Provide a thorough code review focusing on the node type.
 
@@ -36873,7 +36868,8 @@ RESPOND WITH ONLY VALID JSON:
                 parsed.riskLevel = 'medium';
             }
             logger_1.logger.debug('REVIEW_SERVICE', `Found ${parsed.issues.length} issues, risk level: ${parsed.riskLevel}`);
-            return parsed;
+            // Enrich findings with location context
+            return this.enrichFindingsWithLocation(parsed, fileContext);
         }
         catch (error) {
             logger_1.logger.warn('REVIEW_SERVICE', `Failed to analyze node findings: ${error}`);
@@ -36942,6 +36938,151 @@ RESPOND WITH ONLY VALID JSON:
             .map(([type, count]) => `${count} ${type}`)
             .join(', ');
         return `Reviewed ${nodeReviews.length} changes (${typesSummary}). Found ${totalIssues} issues: ${criticalIssues} critical, ${majorIssues} major, ${minorIssues} minor. Average confidence: ${(avgConfidence * 100).toFixed(1)}%`;
+    }
+    /**
+     * Extract file context from theme data
+     */
+    extractFileContext(theme) {
+        return {
+            files: theme.affectedFiles || [],
+            codeExamples: theme.codeExamples || [],
+            functions: theme.mainFunctionsChanged || [],
+            classes: theme.mainClassesChanged || [],
+            diffHunks: this.extractDiffHunks(theme)
+        };
+    }
+    /**
+     * Build enhanced code context with file/function information
+     */
+    buildEnhancedCodeContext(theme, fileContext) {
+        const sections = [];
+        // Basic code snippets
+        if (theme.codeSnippets?.length > 0) {
+            sections.push('=== CODE SNIPPETS ===');
+            sections.push(theme.codeSnippets.join('\n\n'));
+        }
+        // File-specific code examples with context
+        if (fileContext.codeExamples.length > 0) {
+            sections.push('\n=== FILE-SPECIFIC CHANGES ===');
+            fileContext.codeExamples.forEach(example => {
+                sections.push(`\n📁 File: ${example.file}`);
+                sections.push(`Description: ${example.description}`);
+                sections.push('```');
+                sections.push(example.snippet);
+                sections.push('```');
+            });
+        }
+        // Functions/classes context
+        if (fileContext.functions.length > 0 || fileContext.classes.length > 0) {
+            sections.push('\n=== AFFECTED COMPONENTS ===');
+            if (fileContext.functions.length > 0) {
+                sections.push(`Functions: ${fileContext.functions.join(', ')}`);
+            }
+            if (fileContext.classes.length > 0) {
+                sections.push(`Classes: ${fileContext.classes.join(', ')}`);
+            }
+        }
+        return sections.length > 0 ? sections.join('\n') : 'No code snippets available';
+    }
+    /**
+     * Extract diff hunks with line numbers from theme data
+     */
+    extractDiffHunks(theme) {
+        const diffHunks = [];
+        // Extract from theme's codeSnippets that contain diff format
+        theme.codeSnippets?.forEach(snippet => {
+            const hunkMatches = snippet.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@.*$/gm);
+            if (hunkMatches) {
+                hunkMatches.forEach(match => {
+                    const lineMatch = match.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/);
+                    if (lineMatch) {
+                        const [, oldStart, newStart] = lineMatch;
+                        diffHunks.push({
+                            oldLineStart: parseInt(oldStart, 10),
+                            newLineStart: parseInt(newStart, 10),
+                            content: snippet,
+                            filePath: this.extractFileFromDiff(snippet)
+                        });
+                    }
+                });
+            }
+        });
+        return diffHunks;
+    }
+    /**
+     * Extract file path from diff content
+     */
+    extractFileFromDiff(diffContent) {
+        const fileMatch = diffContent.match(/^[\+\-]{3}\s+(.+)$/m);
+        return fileMatch ? fileMatch[1].replace(/^[ab]\//, '') : undefined;
+    }
+    /**
+     * Enrich findings with location context
+     */
+    enrichFindingsWithLocation(findings, fileContext) {
+        return {
+            ...findings,
+            issues: findings.issues.map(issue => ({
+                ...issue,
+                locationContext: this.mapIssueToLocation(issue, fileContext)
+            }))
+        };
+    }
+    /**
+     * Map issue to specific file location
+     */
+    mapIssueToLocation(issue, fileContext) {
+        // Try to match issue description to specific file/function context
+        const issueText = issue.description.toLowerCase();
+        // Find matching file
+        let filePath = fileContext.files[0]; // Default to first file
+        for (const file of fileContext.files) {
+            const fileName = file.split('/').pop()?.toLowerCase() || '';
+            if (issueText.includes(fileName.replace('.ts', '').replace('.js', ''))) {
+                filePath = file;
+                break;
+            }
+        }
+        // Find matching function
+        let functionName;
+        for (const func of fileContext.functions) {
+            if (issueText.includes(func.toLowerCase())) {
+                functionName = func;
+                break;
+            }
+        }
+        // Find matching class
+        let className;
+        for (const cls of fileContext.classes) {
+            if (issueText.includes(cls.toLowerCase())) {
+                className = cls;
+                break;
+            }
+        }
+        // Find matching code example
+        let codeSnippet;
+        for (const example of fileContext.codeExamples) {
+            if (example.file === filePath) {
+                codeSnippet = example.snippet;
+                break;
+            }
+        }
+        // Estimate line number from diff hunks
+        let lineNumber;
+        if (filePath) {
+            const relevantHunk = fileContext.diffHunks.find(hunk => hunk.filePath === filePath ||
+                filePath.endsWith(hunk.filePath || ''));
+            if (relevantHunk) {
+                lineNumber = relevantHunk.newLineStart;
+            }
+        }
+        return filePath ? {
+            filePath,
+            functionName,
+            className,
+            lineNumber,
+            codeSnippet
+        } : undefined;
     }
 }
 exports.ReviewService = ReviewService;
@@ -37218,6 +37359,15 @@ class PRCommentFormatter {
         const sections = [];
         sections.push(`${severityEmoji} **${issue.severity.toUpperCase()}** (${issue.category})`);
         sections.push('');
+        // Add location context for inline comments
+        if (issue.locationContext) {
+            const { functionName, className } = issue.locationContext;
+            if (className || functionName) {
+                const context = className ? `${className}${functionName ? '.' + functionName : ''}` : functionName;
+                sections.push(`🔧 **Context**: \`${context}()\``);
+                sections.push('');
+            }
+        }
         sections.push(issue.description);
         if (issue.suggestedFix) {
             sections.push('');
@@ -37286,7 +37436,25 @@ class PRCommentFormatter {
         const sections = [];
         sections.push(`#### ${index}. ${severityEmoji} ${issue.severity.toUpperCase()} - ${issue.category}`);
         sections.push('');
+        // Add file/line context if available
+        if (issue.locationContext) {
+            const { filePath, functionName, className, lineNumber, codeSnippet } = issue.locationContext;
+            sections.push(`📁 **File**: \`${filePath}\`${lineNumber ? ` (line ${lineNumber})` : ''}`);
+            if (className || functionName) {
+                const context = className ? `${className}${functionName ? '.' + functionName : ''}` : functionName;
+                sections.push(`🔧 **Context**: \`${context}()\``);
+            }
+            sections.push('');
+        }
         sections.push(issue.description);
+        // Add code snippet if available
+        if (issue.locationContext?.codeSnippet) {
+            sections.push('');
+            sections.push('**Code:**');
+            sections.push('```typescript');
+            sections.push(issue.locationContext.codeSnippet);
+            sections.push('```');
+        }
         if (issue.suggestedFix) {
             sections.push('');
             sections.push(`**💡 Suggested fix:** ${issue.suggestedFix}`);

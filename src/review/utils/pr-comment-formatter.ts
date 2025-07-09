@@ -125,6 +125,17 @@ export class PRCommentFormatter {
     
     sections.push(`${severityEmoji} **${issue.severity.toUpperCase()}** (${issue.category})`);
     sections.push('');
+    
+    // Add location context for inline comments
+    if (issue.locationContext) {
+      const { functionName, className } = issue.locationContext;
+      if (className || functionName) {
+        const context = className ? `${className}${functionName ? '.' + functionName : ''}` : functionName;
+        sections.push(`🔧 **Context**: \`${context}()\``);
+        sections.push('');
+      }
+    }
+    
     sections.push(issue.description);
     
     if (issue.suggestedFix) {
@@ -202,7 +213,31 @@ export class PRCommentFormatter {
     
     sections.push(`#### ${index}. ${severityEmoji} ${issue.severity.toUpperCase()} - ${issue.category}`);
     sections.push('');
+    
+    // Add file/line context if available
+    if (issue.locationContext) {
+      const { filePath, functionName, className, lineNumber, codeSnippet } = issue.locationContext;
+      
+      sections.push(`📁 **File**: \`${filePath}\`${lineNumber ? ` (line ${lineNumber})` : ''}`);
+      
+      if (className || functionName) {
+        const context = className ? `${className}${functionName ? '.' + functionName : ''}` : functionName;
+        sections.push(`🔧 **Context**: \`${context}()\``);
+      }
+      
+      sections.push('');
+    }
+    
     sections.push(issue.description);
+    
+    // Add code snippet if available
+    if (issue.locationContext?.codeSnippet) {
+      sections.push('');
+      sections.push('**Code:**');
+      sections.push('```typescript');
+      sections.push(issue.locationContext.codeSnippet);
+      sections.push('```');
+    }
     
     if (issue.suggestedFix) {
       sections.push('');

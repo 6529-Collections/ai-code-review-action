@@ -41,6 +41,13 @@ export interface ReviewIssue {
     description: string;
     suggestedFix?: string;
     codeContext?: string;
+    locationContext?: {
+        filePath: string;
+        functionName?: string;
+        className?: string;
+        lineNumber?: number;
+        codeSnippet?: string;
+    };
 }
 /**
  * Node type classification response from AI
@@ -58,4 +65,27 @@ export interface ReviewConfig {
     testOutputFile?: string;
     maxRetries?: number;
     timeoutMs?: number;
+}
+/**
+ * File context mapping for location-aware review analysis
+ */
+export interface FileContextMap {
+    files: string[];
+    codeExamples: Array<{
+        file: string;
+        snippet: string;
+        description: string;
+    }>;
+    functions: string[];
+    classes: string[];
+    diffHunks: DiffHunkInfo[];
+}
+/**
+ * Parsed diff hunk information with line numbers
+ */
+export interface DiffHunkInfo {
+    oldLineStart: number;
+    newLineStart: number;
+    content: string;
+    filePath?: string;
 }
