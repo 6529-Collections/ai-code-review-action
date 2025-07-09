@@ -31,7 +31,7 @@ export class GitHubCommentService {
       const { data: existingComments } = await this.octokit.rest.issues.listComments({
         owner: this.context.repo.owner,
         repo: this.context.repo.repo,
-        issue_number: this.context.issue.number,
+        issue_number: this.getPRNumber(),
       });
       
       // Check if we already posted a review comment (to update instead of duplicate)
@@ -54,7 +54,7 @@ export class GitHubCommentService {
         const { data: newComment } = await this.octokit.rest.issues.createComment({
           owner: this.context.repo.owner,
           repo: this.context.repo.repo,
-          issue_number: this.context.issue.number,
+          issue_number: this.getPRNumber(),
           body: comment,
         });
         
@@ -103,7 +103,7 @@ export class GitHubCommentService {
       const { data: newComment } = await this.octokit.rest.issues.createComment({
         owner: this.context.repo.owner,
         repo: this.context.repo.repo,
-        issue_number: this.context.issue.number,
+        issue_number: this.getPRNumber(),
         body: comment,
       });
       
@@ -147,7 +147,7 @@ export class GitHubCommentService {
       const { data: newComment } = await this.octokit.rest.issues.createComment({
         owner: this.context.repo.owner,
         repo: this.context.repo.repo,
-        issue_number: this.context.issue.number,
+        issue_number: this.getPRNumber(),
         body: comment,
       });
       
@@ -164,7 +164,18 @@ export class GitHubCommentService {
   private isPullRequestContext(): boolean {
     return this.context.eventName === 'pull_request' || 
            this.context.eventName === 'pull_request_target' ||
-           !!this.context.issue?.number; // For local testing with issue number
+           !!this.context.issue?.number || // For local testing with issue number
+           !!process.env.GITHUB_CONTEXT_ISSUE_NUMBER; // For manual PR review via workflow_dispatch
+  }
+  
+  private getPRNumber(): number {
+    // Check manual PR review environment variable first
+    if (process.env.GITHUB_CONTEXT_ISSUE_NUMBER) {
+      return parseInt(process.env.GITHUB_CONTEXT_ISSUE_NUMBER);
+    }
+    
+    // Fallback to context issue number
+    return this.context.issue.number;
   }
   
   private hasSignificantIssues(nodeReview: NodeReview): boolean {

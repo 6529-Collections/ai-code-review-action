@@ -1,0 +1,40 @@
+{
+  "total_runs": 0,
+  "suggestions": {
+    "performance": {"suggested": 0, "implemented": 0},
+    "code_quality": {"suggested": 0, "implemented": 0},
+    "prd_updates": {"suggested": 0, "implemented": 0},
+    "logging": {"suggested": 0, "implemented": 0},
+    "system_improvements": {"suggested": 0, "implemented": 0},
+    "documentation": {"suggested": 0, "implemented": 0}
+  },
+  "contexts_used": {
+    "performance": 0,
+    "quality": 0,
+    "prd": 0,
+    "logging": 0,
+    "review": 0,
+    "general": 0
+  },
+  "implementation_rate": 0.0,
+  "preferred_categories": [],
+  "last_report_number": 0,
+  "command_evolution": {
+    "priority_weights": {
+      "performance": 1.0,
+      "code_quality": 1.0,
+      "prd_updates": 1.0,
+      "logging": 1.0,
+      "system_improvements": 1.0,
+      "documentation": 1.0
+    },
+    "context_interpretation": {
+      "performance": ["performance", "speed", "slow", "fast", "optimization", "bottleneck"],
+      "quality": ["quality", "clean", "code", "refactor", "structure"],
+      "prd": ["prd", "document", "alignment", "strategy", "specification"],
+      "logging": ["log", "logging", "debug", "trace", "monitoring"],
+      "review": ["review", "analysis", "ai", "decision", "confidence"]
+    },
+    "adaptation_notes": []
+  }
+}
