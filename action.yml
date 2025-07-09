@@ -1,12 +1,8 @@
-name: 'AI Code Review Action'
-description: 'AI-powered code review GitHub Action that provides automated code analysis and feedback'
+name: 'AI Code Theme Analysis Action'
+description: 'AI-powered GitHub Action that analyzes code changes in pull requests to identify and consolidate business themes using Claude AI'
 author: '6529 Collections'
 
 inputs:
-  greeting:
-    description: 'Custom greeting message for the code review'
-    required: false
-    default: 'Hello'
   github-token:
     description: 'GitHub token for API access'
     required: false
@@ -14,10 +10,19 @@ inputs:
   anthropic-api-key:
     description: 'Anthropic API key for Claude access'
     required: true
+  
+  # PRD Compliance Controls
+  max-atomic-size:
+    description: 'Maximum lines for atomic theme (from PRD)'
+    required: false
+    default: '15'
+  
 
 outputs:
-  message:
-    description: 'The formatted code review message'
+  themes:
+    description: 'Detailed theme analysis with consolidation information'
+  summary:
+    description: 'Summary of the theme analysis'
 
 branding:
   icon: 'eye'

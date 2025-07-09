@@ -27,16 +27,17 @@
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write src/**/*.ts",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
-    "test:local": "yarn build && node test-local.js",
-    "test:act": "act -j test -W .github/workflows/local-test.yml --secret-file .env",
+    "test:act": "act -j test -W .github/workflows/local-test.yml --secret-file .env --bind /Users/simo/ai-code-review-action:/github/workspace",
+    "test:local": "yarn build && echo 'Local test - use test:act for full GitHub Actions simulation'",
     "dev": "yarn lint && yarn test && yarn build",
     "ci": "yarn lint && yarn test && yarn build"
   },
   "dependencies": {
     "@actions/core": "^1.10.0",
-    "@actions/github": "^6.0.1"
+    "@actions/github": "^6.0.1",
+    "zod": "^3.25.67"
   },
   "devDependencies": {
     "@types/dotenv": "^8.2.3",

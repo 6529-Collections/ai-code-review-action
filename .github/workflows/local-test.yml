@@ -33,6 +33,14 @@ jobs:
     - name: Test the action
       uses: ./
       with:
-        greeting: "Hello from local test!"
         github-token: ${{ secrets.GITHUB_TOKEN }}
         anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+        # Conservative settings for local testing
+        cross-level-dedup-threshold: '0.95'
+        min-themes-for-batch-dedup: '10'
+        min-themes-for-second-pass-dedup: '20'
+        verbose-dedup-logging: 'true'
+      env:
+        LOG_LEVEL: INFO
+        LOG_TIMESTAMPS: true
+    
