@@ -36,7 +36,7 @@ export declare const ResponseSchemas: {
         fileType: string;
         isConfigFile: boolean;
         architecturalPatterns: string[];
-        codeComplexity: "low" | "medium" | "high";
+        codeComplexity: "medium" | "low" | "high";
     }, {
         isTestFile: boolean;
         businessDomain: string;
@@ -47,7 +47,7 @@ export declare const ResponseSchemas: {
         fileType: string;
         isConfigFile: boolean;
         architecturalPatterns: string[];
-        codeComplexity: "low" | "medium" | "high";
+        codeComplexity: "medium" | "low" | "high";
     }>;
     theme_extraction: z.ZodObject<{
         themeName: z.ZodString;
@@ -165,27 +165,27 @@ export declare const ResponseSchemas: {
             userValue: z.ZodString;
         }, "strip", z.ZodTypeAny, {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }, {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }>, "many">;
     }, "strip", z.ZodTypeAny, {
         domains: {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }[];
     }, {
         domains: {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }[];
     }>;

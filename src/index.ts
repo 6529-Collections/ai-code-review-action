@@ -44,9 +44,10 @@ export async function run(): Promise<void> {
     // Set Anthropic API key for Claude CLI
     process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
 
-    // Development Mode: Skip to Phase 2 review if requested
-    if (process.env.SKIP_PHASE1 === 'true') {
-      logger.info('MAIN', 'Development mode: Skipping Phase 1, running Phase 2 review only');
+    // Development Mode: Run Phase 2 review only with test data
+    const isDevelopmentReviewMode = process.env.DEV_MODE_PHASE2_ONLY === 'true';
+    if (isDevelopmentReviewMode) {
+      logger.info('MAIN', 'Development mode: Running Phase 2 review only with test data');
       
       try {
         performanceTracker.startTiming('Phase 2 Development Review');
@@ -67,7 +68,7 @@ export async function run(): Promise<void> {
               reviewResult,
               'development-mode'
             );
-            logInfo(`Development review results saved to: ${savedPath}`);
+            logger.info('MAIN', `Development review results saved to: ${savedPath}`);
           } catch (saveError) {
             logger.warn('MAIN', `Failed to save development review results: ${saveError}`);
           }
@@ -91,18 +92,18 @@ export async function run(): Promise<void> {
     }
 
     // Log mode (isLocal already defined above)
-    logInfo(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
+    logger.info('MAIN', `Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
 
     performanceTracker.startTiming('Setup');
 
     // Install Claude Code CLI (only in production or when explicitly needed)
     if (!isLocal) {
-      logInfo('Installing Claude Code CLI...');
+      logger.info('MAIN', 'Installing Claude Code CLI...');
       await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
-      logInfo('Claude Code CLI installed successfully');
+      logger.info('MAIN', 'Claude Code CLI installed successfully');
 
       // Initialize Claude CLI configuration to avoid JSON config errors
-      logInfo('Initializing Claude CLI configuration...');
+      logger.info('MAIN', 'Initializing Claude CLI configuration...');
       const claudeConfig = {
         allowedTools: [],
         hasTrustDialogAccepted: true,
@@ -114,14 +115,14 @@ export async function run(): Promise<void> {
         '-c',
         `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
       ], { silent: true });
-      logInfo('Claude CLI configuration initialized');
+      logger.info('MAIN', 'Claude CLI configuration initialized');
     } else {
-      logInfo('Skipping Claude CLI installation in local testing mode');
+      logger.info('MAIN', 'Skipping Claude CLI installation in local testing mode');
     }
 
     performanceTracker.endTiming('Setup');
 
-    logInfo('Starting AI code review analysis...');
+    logger.info('MAIN', 'Starting AI code review analysis...');
 
     // Initialize services based on environment
     const gitService: IGitService = isLocal 
@@ -131,7 +132,7 @@ export async function run(): Promise<void> {
     // Initialize theme service with AI-driven expansion
     const themeService = new ThemeService(inputs.anthropicApiKey);
 
-    logInfo('Using AI-driven theme expansion for natural hierarchy depth');
+    logger.info('MAIN', 'Using AI-driven theme expansion for natural hierarchy depth');
 
     performanceTracker.startTiming('Git Operations');
     
@@ -145,23 +146,23 @@ export async function run(): Promise<void> {
     if (isLocal) {
       if (gitService instanceof LocalGitService) {
         const modeInfo = gitService.getCurrentMode();
-        logInfo(`Local testing mode: ${modeInfo.name} - ${modeInfo.description}`);
+        logger.info('MAIN', `Local testing mode: ${modeInfo.name} - ${modeInfo.description}`);
       }
     } else if (prContext && prContext.number === 0) {
-      logInfo(
+      logger.info('MAIN', 
         `Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`
       );
-      logInfo(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
-      logInfo(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
+      logger.info('MAIN', `Base SHA: ${prContext.baseSha.substring(0, 8)}`);
+      logger.info('MAIN', `Head SHA: ${prContext.headSha.substring(0, 8)}`);
     }
 
-    logInfo(`Found ${changedFiles.length} changed files`);
+    logger.info('MAIN', `Found ${changedFiles.length} changed files`);
 
     if (changedFiles.length === 0) {
       const message = isLocal 
         ? 'No uncommitted changes found, skipping analysis'
         : 'No files changed in this PR, skipping analysis';
-      logInfo(message);
+      logger.info('MAIN', message);
       core.setOutput('themes', JSON.stringify([]));
       core.setOutput('summary', message);
       return;
@@ -169,7 +170,7 @@ export async function run(): Promise<void> {
 
     // Analyze themes
     performanceTracker.startTiming('Theme Analysis');
-    logInfo('Analyzing code themes...');
+    logger.info('MAIN', 'Analyzing code themes...');
     const themeAnalysis =
       await themeService.analyzeThemesWithEnhancedContext(gitService);
     performanceTracker.endTiming('Theme Analysis');
@@ -217,7 +218,7 @@ export async function run(): Promise<void> {
             themeAnalysis,
             modeInfo.name
           );
-          logInfo(`Analysis saved to: ${savedPath}`);
+          logger.info('MAIN', `Analysis saved to: ${savedPath}`);
         } catch (saveError) {
           logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
         }
@@ -228,7 +229,7 @@ export async function run(): Promise<void> {
 
       // Log expansion statistics if available
       if (themeAnalysis.expansionStats) {
-        logInfo(
+        logger.info('MAIN',
           `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`
         );
       }
@@ -259,8 +260,8 @@ export async function run(): Promise<void> {
       );
     }
 
-    // Phase 2: Code Review (if not in development mode that skips Phase 1)
-    const shouldRunReview = process.env.SKIP_PHASE1 !== 'true';
+    // Phase 2: Code Review (production mode only - development mode already returned)
+    const shouldRunReview = !isDevelopmentReviewMode;
     if (shouldRunReview) {
       performanceTracker.startTiming('Phase 2 Review');
       
@@ -282,7 +283,7 @@ export async function run(): Promise<void> {
               reviewResult,
               modeInfo.name
             );
-            logInfo(`Review results saved to: ${savedPath}`);
+            logger.info('MAIN', `Review results saved to: ${savedPath}`);
           } catch (saveError) {
             logger.warn('MAIN', `Failed to save review results: ${saveError}`);
           }
@@ -318,9 +319,8 @@ export async function run(): Promise<void> {
       }
       
       performanceTracker.endTiming('Phase 2 Review');
-    } else {
-      logger.info('MAIN', 'Skipping Phase 2 review (SKIP_PHASE1=true for development mode)');
     }
+    // Note: Development mode already executed and returned early, so no else clause needed
 
     // End total timing and generate comprehensive performance report
     performanceTracker.endTiming('Total AI Code Review');

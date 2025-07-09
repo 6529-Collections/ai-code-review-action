@@ -11,9 +11,23 @@ export class TestDataLoader {
   private static readonly TEST_OUTPUT_DIR = path.join(process.cwd(), 'test-output');
 
   /**
+   * Validates filename for security and format compliance
+   */
+  private static validateFilename(filename: string): boolean {
+    // Security: prevent path traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return false;
+    }
+    
+    // Format: must be .json with safe characters
+    const safePattern = /^[a-zA-Z0-9\-_.]+\.json$/;
+    return safePattern.test(filename);
+  }
+
+  /**
    * Load themes from latest test-output JSON file
    */
-  static async loadLatestTestOutput(): Promise<ConsolidatedTheme[]> {
+  static loadLatestTestOutput(): ConsolidatedTheme[] {
     if (!fs.existsSync(this.TEST_OUTPUT_DIR)) {
       throw new Error('test-output directory not found. Run Phase 1 first to generate test data.');
     }
@@ -54,7 +68,11 @@ export class TestDataLoader {
   /**
    * Load specific test-output file by name
    */
-  static async loadTestOutput(filename: string): Promise<ConsolidatedTheme[]> {
+  static loadTestOutput(filename: string): ConsolidatedTheme[] {
+    if (!this.validateFilename(filename)) {
+      throw new Error(`Invalid filename: ${filename}. Only alphanumeric characters, hyphens, dots, and underscores are allowed.`);
+    }
+    
     const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
     
     if (!fs.existsSync(filePath)) {
@@ -99,6 +117,10 @@ export class TestDataLoader {
    * Get metadata from test output file
    */
   static getTestOutputMetadata(filename: string): any {
+    if (!this.validateFilename(filename)) {
+      throw new Error(`Invalid filename: ${filename}. Only alphanumeric characters, hyphens, dots, and underscores are allowed.`);
+    }
+    
     const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
     
     if (!fs.existsSync(filePath)) {

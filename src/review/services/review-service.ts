@@ -97,8 +97,8 @@ export class ReviewService {
     logger.info('REVIEW_SERVICE', 'Loading themes from test-output for development mode');
     
     const themes = filename 
-      ? await TestDataLoader.loadTestOutput(filename)
-      : await TestDataLoader.loadLatestTestOutput();
+      ? TestDataLoader.loadTestOutput(filename)
+      : TestDataLoader.loadLatestTestOutput();
     
     return this.reviewThemes(themes);
   }

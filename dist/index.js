@@ -29993,9 +29993,10 @@ async function run() {
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
-        // Development Mode: Skip to Phase 2 review if requested
-        if (process.env.SKIP_PHASE1 === 'true') {
-            logger_1.logger.info('MAIN', 'Development mode: Skipping Phase 1, running Phase 2 review only');
+        // Development Mode: Run Phase 2 review only with test data
+        const isDevelopmentReviewMode = process.env.DEV_MODE_PHASE2_ONLY === 'true';
+        if (isDevelopmentReviewMode) {
+            logger_1.logger.info('MAIN', 'Development mode: Running Phase 2 review only with test data');
             try {
                 performance_tracker_1.performanceTracker.startTiming('Phase 2 Development Review');
                 const reviewService = new review_service_1.ReviewService(inputs.anthropicApiKey);
@@ -30008,7 +30009,7 @@ async function run() {
                 if (isLocal) {
                     try {
                         const savedPath = await output_saver_1.OutputSaver.saveReviewResults(reviewResult, 'development-mode');
-                        (0, utils_1.logInfo)(`Development review results saved to: ${savedPath}`);
+                        logger_1.logger.info('MAIN', `Development review results saved to: ${savedPath}`);
                     }
                     catch (saveError) {
                         logger_1.logger.warn('MAIN', `Failed to save development review results: ${saveError}`);
@@ -30030,15 +30031,15 @@ async function run() {
             output_saver_1.OutputSaver.cleanAllAnalyses();
         }
         // Log mode (isLocal already defined above)
-        (0, utils_1.logInfo)(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
+        logger_1.logger.info('MAIN', `Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
         performance_tracker_1.performanceTracker.startTiming('Setup');
         // Install Claude Code CLI (only in production or when explicitly needed)
         if (!isLocal) {
-            (0, utils_1.logInfo)('Installing Claude Code CLI...');
+            logger_1.logger.info('MAIN', 'Installing Claude Code CLI...');
             await exec.exec('npm', ['install', '-g', '@anthropic-ai/claude-code'], { silent: true });
-            (0, utils_1.logInfo)('Claude Code CLI installed successfully');
+            logger_1.logger.info('MAIN', 'Claude Code CLI installed successfully');
             // Initialize Claude CLI configuration to avoid JSON config errors
-            (0, utils_1.logInfo)('Initializing Claude CLI configuration...');
+            logger_1.logger.info('MAIN', 'Initializing Claude CLI configuration...');
             const claudeConfig = {
                 allowedTools: [],
                 hasTrustDialogAccepted: true,
@@ -30050,20 +30051,20 @@ async function run() {
                 '-c',
                 `echo '${JSON.stringify(claudeConfig)}' > /root/.claude.json || true`,
             ], { silent: true });
-            (0, utils_1.logInfo)('Claude CLI configuration initialized');
+            logger_1.logger.info('MAIN', 'Claude CLI configuration initialized');
         }
         else {
-            (0, utils_1.logInfo)('Skipping Claude CLI installation in local testing mode');
+            logger_1.logger.info('MAIN', 'Skipping Claude CLI installation in local testing mode');
         }
         performance_tracker_1.performanceTracker.endTiming('Setup');
-        (0, utils_1.logInfo)('Starting AI code review analysis...');
+        logger_1.logger.info('MAIN', 'Starting AI code review analysis...');
         // Initialize services based on environment
         const gitService = isLocal
             ? new local_testing_1.LocalGitService(inputs.anthropicApiKey)
             : new git_service_1.GitService(inputs.githubToken || '', inputs.anthropicApiKey);
         // Initialize theme service with AI-driven expansion
         const themeService = new theme_service_1.ThemeService(inputs.anthropicApiKey);
-        (0, utils_1.logInfo)('Using AI-driven theme expansion for natural hierarchy depth');
+        logger_1.logger.info('MAIN', 'Using AI-driven theme expansion for natural hierarchy depth');
         performance_tracker_1.performanceTracker.startTiming('Git Operations');
         // Get PR context and changed files
         const prContext = await gitService.getPullRequestContext();
@@ -30073,27 +30074,27 @@ async function run() {
         if (isLocal) {
             if (gitService instanceof local_testing_1.LocalGitService) {
                 const modeInfo = gitService.getCurrentMode();
-                (0, utils_1.logInfo)(`Local testing mode: ${modeInfo.name} - ${modeInfo.description}`);
+                logger_1.logger.info('MAIN', `Local testing mode: ${modeInfo.name} - ${modeInfo.description}`);
             }
         }
         else if (prContext && prContext.number === 0) {
-            (0, utils_1.logInfo)(`Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
-            (0, utils_1.logInfo)(`Base SHA: ${prContext.baseSha.substring(0, 8)}`);
-            (0, utils_1.logInfo)(`Head SHA: ${prContext.headSha.substring(0, 8)}`);
+            logger_1.logger.info('MAIN', `Dev mode: Comparing ${prContext.headBranch} against ${prContext.baseBranch}`);
+            logger_1.logger.info('MAIN', `Base SHA: ${prContext.baseSha.substring(0, 8)}`);
+            logger_1.logger.info('MAIN', `Head SHA: ${prContext.headSha.substring(0, 8)}`);
         }
-        (0, utils_1.logInfo)(`Found ${changedFiles.length} changed files`);
+        logger_1.logger.info('MAIN', `Found ${changedFiles.length} changed files`);
         if (changedFiles.length === 0) {
             const message = isLocal
                 ? 'No uncommitted changes found, skipping analysis'
                 : 'No files changed in this PR, skipping analysis';
-            (0, utils_1.logInfo)(message);
+            logger_1.logger.info('MAIN', message);
             core.setOutput('themes', JSON.stringify([]));
             core.setOutput('summary', message);
             return;
         }
         // Analyze themes
         performance_tracker_1.performanceTracker.startTiming('Theme Analysis');
-        (0, utils_1.logInfo)('Analyzing code themes...');
+        logger_1.logger.info('MAIN', 'Analyzing code themes...');
         const themeAnalysis = await themeService.analyzeThemesWithEnhancedContext(gitService);
         performance_tracker_1.performanceTracker.endTiming('Theme Analysis');
         // Debug: Log theme analysis result
@@ -30125,7 +30126,7 @@ async function run() {
                 try {
                     const modeInfo = gitService.getCurrentMode();
                     const savedPath = await output_saver_1.OutputSaver.saveAnalysis(detailedThemes, safeSummary, themeAnalysis, modeInfo.name);
-                    (0, utils_1.logInfo)(`Analysis saved to: ${savedPath}`);
+                    logger_1.logger.info('MAIN', `Analysis saved to: ${savedPath}`);
                 }
                 catch (saveError) {
                     logger_1.logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
@@ -30135,7 +30136,7 @@ async function run() {
             // logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
-                (0, utils_1.logInfo)(`Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
+                logger_1.logger.info('MAIN', `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
             }
         }
         catch (error) {
@@ -30159,8 +30160,8 @@ async function run() {
         if (themeAnalysis.expansionStats) {
             logger_1.logger.info('MAIN', `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
         }
-        // Phase 2: Code Review (if not in development mode that skips Phase 1)
-        const shouldRunReview = process.env.SKIP_PHASE1 !== 'true';
+        // Phase 2: Code Review (production mode only - development mode already returned)
+        const shouldRunReview = !isDevelopmentReviewMode;
         if (shouldRunReview) {
             performance_tracker_1.performanceTracker.startTiming('Phase 2 Review');
             try {
@@ -30175,7 +30176,7 @@ async function run() {
                     try {
                         const modeInfo = gitService.getCurrentMode();
                         const savedPath = await output_saver_1.OutputSaver.saveReviewResults(reviewResult, modeInfo.name);
-                        (0, utils_1.logInfo)(`Review results saved to: ${savedPath}`);
+                        logger_1.logger.info('MAIN', `Review results saved to: ${savedPath}`);
                     }
                     catch (saveError) {
                         logger_1.logger.warn('MAIN', `Failed to save review results: ${saveError}`);
@@ -30208,9 +30209,7 @@ async function run() {
             }
             performance_tracker_1.performanceTracker.endTiming('Phase 2 Review');
         }
-        else {
-            logger_1.logger.info('MAIN', 'Skipping Phase 2 review (SKIP_PHASE1=true for development mode)');
-        }
+        // Note: Development mode already executed and returned early, so no else clause needed
         // End total timing and generate comprehensive performance report
         performance_tracker_1.performanceTracker.endTiming('Total AI Code Review');
         performance_tracker_1.performanceTracker.generateReport();
@@ -30845,21 +30844,21 @@ class OutputSaver {
     static async saveReviewResults(reviewResult, mode) {
         // Ensure output directory exists
         await this.ensureDirectoryExists();
-        // Generate timestamp
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const filename = `review-${timestamp}.json`;
+        // Generate timestamp once for consistency
+        const timestamp = new Date().toISOString();
+        const fileTimestamp = timestamp.replace(/[:.]/g, '-');
+        const filename = `review-${fileTimestamp}.json`;
         const filepath = path.join(this.LOCAL_DIR, filename);
-        // Create review save object
+        // Create clean review save object without redundant data
         const savedReview = {
-            metadata: {
-                timestamp: new Date().toISOString(),
+            saveMetadata: {
+                timestamp,
                 mode,
-                totalNodes: reviewResult.metadata.totalNodes,
-                averageConfidence: reviewResult.metadata.averageConfidence,
-                overallRecommendation: reviewResult.overallRecommendation,
-                processingTime: reviewResult.processingTime
+                savedAt: timestamp,
+                version: '2.0',
+                type: 'review-result'
             },
-            reviewResult
+            ...reviewResult // Spread the review result directly to avoid duplication
         };
         // Save to file
         const jsonContent = JSON.stringify(savedReview, null, 2);
@@ -36722,8 +36721,8 @@ class ReviewService {
     async reviewFromTestOutput(filename) {
         logger_1.logger.info('REVIEW_SERVICE', 'Loading themes from test-output for development mode');
         const themes = filename
-            ? await test_data_loader_1.TestDataLoader.loadTestOutput(filename)
-            : await test_data_loader_1.TestDataLoader.loadLatestTestOutput();
+            ? test_data_loader_1.TestDataLoader.loadTestOutput(filename)
+            : test_data_loader_1.TestDataLoader.loadLatestTestOutput();
         return this.reviewThemes(themes);
     }
     /**
@@ -36979,9 +36978,21 @@ const logger_1 = __nccwpck_require__(9000);
  */
 class TestDataLoader {
     /**
+     * Validates filename for security and format compliance
+     */
+    static validateFilename(filename) {
+        // Security: prevent path traversal
+        if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+            return false;
+        }
+        // Format: must be .json with safe characters
+        const safePattern = /^[a-zA-Z0-9\-_.]+\.json$/;
+        return safePattern.test(filename);
+    }
+    /**
      * Load themes from latest test-output JSON file
      */
-    static async loadLatestTestOutput() {
+    static loadLatestTestOutput() {
         if (!fs.existsSync(this.TEST_OUTPUT_DIR)) {
             throw new Error('test-output directory not found. Run Phase 1 first to generate test data.');
         }
@@ -37013,7 +37024,10 @@ class TestDataLoader {
     /**
      * Load specific test-output file by name
      */
-    static async loadTestOutput(filename) {
+    static loadTestOutput(filename) {
+        if (!this.validateFilename(filename)) {
+            throw new Error(`Invalid filename: ${filename}. Only alphanumeric characters, hyphens, dots, and underscores are allowed.`);
+        }
         const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
         if (!fs.existsSync(filePath)) {
             throw new Error(`Test output file not found: ${filename}`);
@@ -37049,6 +37063,9 @@ class TestDataLoader {
      * Get metadata from test output file
      */
     static getTestOutputMetadata(filename) {
+        if (!this.validateFilename(filename)) {
+            throw new Error(`Invalid filename: ${filename}. Only alphanumeric characters, hyphens, dots, and underscores are allowed.`);
+        }
         const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
         if (!fs.existsSync(filePath)) {
             throw new Error(`Test output file not found: ${filename}`);
@@ -37809,6 +37826,44 @@ class GitService {
         return codeChanges;
     }
     async getPullRequestContext() {
+        // Check for manual PR review environment variables first
+        const manualPrNumber = process.env.GITHUB_CONTEXT_ISSUE_NUMBER;
+        const manualBaseSha = process.env.GITHUB_CONTEXT_PR_BASE_SHA;
+        const manualHeadSha = process.env.GITHUB_CONTEXT_PR_HEAD_SHA;
+        if (manualPrNumber && manualBaseSha && manualHeadSha) {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Using manual PR review context: #${manualPrNumber}`);
+            // For manual PR review, we need to get PR details from GitHub API
+            if (this.octokit) {
+                try {
+                    const { data: pr } = await this.octokit.rest.pulls.get({
+                        ...github.context.repo,
+                        pull_number: parseInt(manualPrNumber),
+                    });
+                    return {
+                        number: pr.number,
+                        title: pr.title,
+                        body: pr.body || '',
+                        baseBranch: pr.base.ref,
+                        headBranch: pr.head.ref,
+                        baseSha: manualBaseSha,
+                        headSha: manualHeadSha,
+                    };
+                }
+                catch (error) {
+                    logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to fetch PR #${manualPrNumber}: ${error}`);
+                }
+            }
+            // Fallback for manual review without GitHub API
+            return {
+                number: parseInt(manualPrNumber),
+                title: `PR #${manualPrNumber}`,
+                body: '',
+                baseBranch: 'main', // Default assumption
+                headBranch: 'feature-branch', // Default assumption
+                baseSha: manualBaseSha,
+                headSha: manualHeadSha,
+            };
+        }
         // Production mode: Handle GitHub Actions PR context
         if (github.context.eventName === 'pull_request') {
             const pr = github.context.payload.pull_request;
@@ -37840,6 +37895,13 @@ class GitService {
         // Fallback to git-based diff if we have PR context but no GitHub API access
         if (prContext) {
             logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'PR context found but no GitHub API access, using git diff');
+            // For manual PR review, we prefer using SHAs for more accurate comparison
+            const manualBaseSha = process.env.GITHUB_CONTEXT_PR_BASE_SHA;
+            const manualHeadSha = process.env.GITHUB_CONTEXT_PR_HEAD_SHA;
+            if (manualBaseSha && manualHeadSha) {
+                logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Using SHA-based comparison: ${manualBaseSha}...${manualHeadSha}`);
+                return await this.getChangedFilesFromGitShas(manualBaseSha, manualHeadSha);
+            }
             return await this.getChangedFilesFromGit(prContext.baseBranch, prContext.headBranch);
         }
         // Last resort: try to compare current branch against common base branches
@@ -38061,6 +38123,66 @@ class GitService {
         }
         catch (error) {
             logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get changed files from git: ${error}`);
+            return [];
+        }
+    }
+    /**
+     * Get changed files using git diff with specific SHAs
+     */
+    async getChangedFilesFromGitShas(baseSha, headSha) {
+        try {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Getting changed files via git diff: ${baseSha}...${headSha}`);
+            // Get list of changed files with status
+            let filesOutput = '';
+            await exec.exec('git', ['diff', '--name-status', `${baseSha}...${headSha}`], {
+                listeners: {
+                    stdout: (data) => {
+                        filesOutput += data.toString();
+                    },
+                },
+            });
+            if (!filesOutput.trim()) {
+                logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'No files changed according to git diff');
+                return [];
+            }
+            // Parse the output
+            const lines = filesOutput.trim().split('\n');
+            const changedFiles = [];
+            for (const line of lines) {
+                const match = line.match(/^([AMDRT])\s+(.+)$/);
+                if (match) {
+                    const [, statusChar, filename] = match;
+                    // Skip excluded files
+                    if (!this.shouldIncludeFile(filename)) {
+                        continue;
+                    }
+                    const status = this.mapGitStatusToChangeStatus(statusChar);
+                    // Get the patch for this file
+                    let patch = '';
+                    try {
+                        await exec.exec('git', ['diff', `${baseSha}...${headSha}`, '--', filename], {
+                            listeners: {
+                                stdout: (data) => {
+                                    patch += data.toString();
+                                },
+                            },
+                        });
+                    }
+                    catch (patchError) {
+                        logger_1.logger.warn(constants_1.LoggerServices.GIT_SERVICE, `Failed to get patch for ${filename}: ${patchError}`);
+                    }
+                    changedFiles.push({
+                        filename,
+                        status,
+                        patch: patch || undefined,
+                    });
+                }
+            }
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Git diff (SHA): Found ${changedFiles.length} changed files`);
+            return changedFiles;
+        }
+        catch (error) {
+            logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get changed files from git SHAs: ${error}`);
             return [];
         }
     }
