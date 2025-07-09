@@ -73,6 +73,7 @@ jobs:
       run: node test-comment.js
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TEST_COMMENT_POSTING: 'true'
         # Override context for manual PR review
         GITHUB_CONTEXT_ISSUE_NUMBER: ${{ github.event.inputs.pr_number }}
         GITHUB_CONTEXT_PR_BASE_SHA: ${{ steps.pr.outputs.base_sha }}
