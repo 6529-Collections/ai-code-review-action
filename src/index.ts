@@ -156,10 +156,11 @@ export async function run(): Promise<void> {
       );
       logger.debug('MAIN', `Summary created, length: ${safeSummary?.length || 'undefined'}`);
 
-      logger.debug('MAIN', 'Setting outputs...');
-      core.setOutput('themes', detailedThemes);
-      core.setOutput('summary', safeSummary);
-      logger.debug('MAIN', 'Outputs set successfully');
+      // TODO: Remove production output writing (debugging only)
+      // logger.debug('MAIN', 'Setting outputs...');
+      // core.setOutput('themes', detailedThemes);
+      // core.setOutput('summary', safeSummary);
+      // logger.debug('MAIN', 'Outputs set successfully');
 
       // Save analysis results for local testing
       if (isLocal && gitService instanceof LocalGitService) {
@@ -177,7 +178,8 @@ export async function run(): Promise<void> {
         }
       }
 
-      logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
+      // TODO: Remove production output logging (debugging only)
+      // logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
 
       // Log expansion statistics if available
       if (themeAnalysis.expansionStats) {
@@ -191,8 +193,9 @@ export async function run(): Promise<void> {
         logger.debug('MAIN', `Error stack: ${error.stack}`);
       }
       logger.error('MAIN', `Failed to set outputs: ${error}`);
-      core.setOutput('themes', 'No themes found');
-      core.setOutput('summary', 'Output generation failed');
+      // TODO: Remove production output writing (debugging only)
+      // core.setOutput('themes', 'No themes found');
+      // core.setOutput('summary', 'Output generation failed');
     }
     performanceTracker.endTiming('Output Generation');
 
