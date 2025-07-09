@@ -24,27 +24,6 @@ export interface ExpansionMetrics {
     aiCallCount: number;
     cacheHitRate: number;
 }
-export interface CrossLevelSimilarity {
-    theme1: ConsolidatedTheme;
-    theme2: ConsolidatedTheme;
-    levelDifference: number;
-    similarityScore: number;
-    relationshipType: 'duplicate' | 'overlap' | 'related' | 'distinct';
-    action: 'merge_up' | 'merge_down' | 'merge_sibling' | 'keep_separate';
-    confidence: number;
-    reasoning: string;
-}
-export interface DeduplicationResult {
-    originalCount: number;
-    deduplicatedCount: number;
-    mergedThemes: Array<{
-        sourceIds: string[];
-        targetTheme: ConsolidatedTheme;
-        mergeReason: string;
-    }>;
-    duplicatesRemoved: number;
-    overlapsResolved: number;
-}
 export interface BusinessPattern {
     id: string;
     name: string;

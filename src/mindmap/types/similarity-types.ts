@@ -108,8 +108,3 @@ export interface ThemePair {
   id: string;
 }
 
-export interface BatchSimilarityResult {
-  pairId: string;
-  similarity: AISimilarityResult;
-  error?: string;
-}

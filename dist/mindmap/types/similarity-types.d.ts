@@ -85,8 +85,3 @@ export interface ThemePair {
     theme2: Theme;
     id: string;
 }
-export interface BatchSimilarityResult {
-    pairId: string;
-    similarity: AISimilarityResult;
-    error?: string;
-}

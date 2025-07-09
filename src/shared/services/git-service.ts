@@ -2,6 +2,8 @@ import * as github from '@actions/github';
 import * as exec from '@actions/exec';
 import { AICodeAnalyzer, CodeChange } from '../utils/ai-code-analyzer';
 import { IGitService } from '../interfaces/git-service-interface';
+import { logger } from '@/shared/logger/logger';
+import { LoggerServices } from '@/shared/logger/constants';
 
 export interface ChangedFile {
   filename: string;
@@ -36,9 +38,7 @@ export class GitService implements IGitService {
     const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) =>
       pattern.test(filename)
     );
-    console.log(
-      `[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`
-    );
+    logger.debug(LoggerServices.GIT_SERVICE, `${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
     return !isExcluded;
   }
 
@@ -51,10 +51,7 @@ export class GitService implements IGitService {
       try {
         this.octokit = github.getOctokit(this.githubToken);
       } catch (error) {
-        console.warn(
-          '[GIT-SERVICE] Failed to initialize GitHub API client:',
-          error
-        );
+        logger.warn(LoggerServices.GIT_SERVICE, `Failed to initialize GitHub API client: ${error}`);
       }
     }
 
@@ -69,15 +66,13 @@ export class GitService implements IGitService {
   }
 
   async getEnhancedChangedFiles(): Promise<CodeChange[]> {
-    console.log(
-      '[GIT-SERVICE] Getting enhanced changed files with AI code analysis'
-    );
+    logger.info(LoggerServices.GIT_SERVICE, 'Getting enhanced changed files with AI code analysis');
 
     // Get basic changed files first
     const changedFiles = await this.getChangedFiles();
 
     if (changedFiles.length === 0) {
-      console.log('[GIT-SERVICE] No changed files to analyze');
+      logger.info(LoggerServices.GIT_SERVICE, 'No changed files to analyze');
       return [];
     }
 
@@ -91,35 +86,27 @@ export class GitService implements IGitService {
           : (file.status as 'added' | 'modified' | 'renamed'),
     }));
 
-    console.log(
-      `[GIT-SERVICE] Starting AI analysis of ${filesToAnalyze.length} files`
-    );
+    logger.info(LoggerServices.GIT_SERVICE, `Starting AI analysis of ${filesToAnalyze.length} files`);
 
     // Use AICodeAnalyzer for processing changed files
     const codeChanges =
       await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
 
-    console.log(
-      `[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`
-    );
+    logger.info(LoggerServices.GIT_SERVICE, `AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
 
     // Log cache statistics
     const cacheStats = this.aiAnalyzer.getCacheStats();
-    console.log(
-      `[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`
-    );
+    logger.info(LoggerServices.GIT_SERVICE, `Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
 
     return codeChanges;
   }
 
   async getPullRequestContext(): Promise<PullRequestContext | null> {
-    // Production mode: Only handle GitHub Actions PR context
+    // Production mode: Handle GitHub Actions PR context
     if (github.context.eventName === 'pull_request') {
       const pr = github.context.payload.pull_request;
       if (pr) {
-        console.log(
-          `[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`
-        );
+        logger.info(LoggerServices.GIT_SERVICE, `Using GitHub Actions PR context: #${pr.number}`);
         return {
           number: pr.number,
           title: pr.title,
@@ -132,29 +119,48 @@ export class GitService implements IGitService {
       }
     }
 
-    console.log('[GIT-SERVICE] No PR context found in GitHub Actions');
-    return null;
+    // Fallback for manual runs: Try to detect PR from current branch
+    logger.info(LoggerServices.GIT_SERVICE, `Event: ${github.context.eventName}, attempting PR detection for current branch`);
+    return await this.detectCurrentBranchPR();
   }
 
 
   async getChangedFiles(): Promise<ChangedFile[]> {
     const prContext = await this.getPullRequestContext();
-    if (!prContext) {
-      console.log('[GIT-SERVICE] No PR context available, returning empty file list');
-      return [];
-    }
-
-    console.log(
-      `[GIT-SERVICE] PR Context: #${prContext.number}, event=${github.context.eventName}`
-    );
-
-    // Production mode: Use GitHub API for PR files
-    if (prContext.number > 0 && this.octokit) {
-      console.log(`[GIT-SERVICE] Using GitHub API for PR #${prContext.number}`);
+    
+    // Try GitHub API first if we have PR context
+    if (prContext && prContext.number > 0 && this.octokit) {
+      logger.info(LoggerServices.GIT_SERVICE, `PR Context: #${prContext.number}, event=${github.context.eventName}`);
+      logger.info(LoggerServices.GIT_SERVICE, `Using GitHub API for PR #${prContext.number}`);
       return await this.getChangedFilesFromGitHub(prContext.number);
     }
 
-    console.log('[GIT-SERVICE] No GitHub API access or invalid PR context');
+    // Fallback to git-based diff if we have PR context but no GitHub API access
+    if (prContext) {
+      logger.info(LoggerServices.GIT_SERVICE, 'PR context found but no GitHub API access, using git diff');
+      return await this.getChangedFilesFromGit(prContext.baseBranch, prContext.headBranch);
+    }
+
+    // Last resort: try to compare current branch against common base branches
+    logger.info(LoggerServices.GIT_SERVICE, 'No PR context available, attempting git-based detection');
+    const currentBranch = await this.getCurrentBranch();
+    if (currentBranch) {
+      logger.info(LoggerServices.GIT_SERVICE, `Current branch: ${currentBranch}`);
+      
+      // Try common base branches
+      const baseBranches = ['main', 'master', 'develop'];
+      for (const baseBranch of baseBranches) {
+        if (await this.branchExists(baseBranch) && currentBranch !== baseBranch) {
+          logger.info(LoggerServices.GIT_SERVICE, `Comparing ${currentBranch} against ${baseBranch}`);
+          const files = await this.getChangedFilesFromGit(baseBranch, currentBranch);
+          if (files.length > 0) {
+            return files;
+          }
+        }
+      }
+    }
+
+    logger.info(LoggerServices.GIT_SERVICE, 'No changed files found using any method');
     return [];
   }
 
@@ -187,9 +193,7 @@ export class GitService implements IGitService {
 
         // Safety limit to prevent infinite loops
         if (page > 10) {
-          console.warn(
-            '[GIT-SERVICE] Reached pagination limit, stopping at 1000 files'
-          );
+          logger.warn(LoggerServices.GIT_SERVICE, 'Reached pagination limit, stopping at 1000 files');
           break;
         }
       }
@@ -204,12 +208,10 @@ export class GitService implements IGitService {
           patch: file.patch,
         }));
 
-      console.log(
-        `[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`
-      );
+      logger.info(LoggerServices.GIT_SERVICE, `GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
       return changedFiles;
     } catch (error) {
-      console.error('Failed to get changed files from GitHub:', error);
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get changed files from GitHub: ${error}`);
       return [];
     }
   }
@@ -227,9 +229,192 @@ export class GitService implements IGitService {
         },
       });
     } catch (error) {
-      console.error('Failed to get diff content:', error);
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get diff content: ${error}`);
     }
 
     return diffOutput;
+  }
+
+  /**
+   * Get current git branch name
+   */
+  private async getCurrentBranch(): Promise<string | null> {
+    let branchOutput = '';
+    
+    try {
+      await exec.exec('git', ['branch', '--show-current'], {
+        listeners: {
+          stdout: (data: Buffer) => {
+            branchOutput += data.toString();
+          },
+        },
+      });
+      
+      const branch = branchOutput.trim();
+      logger.debug(LoggerServices.GIT_SERVICE, `Current branch: ${branch}`);
+      return branch || null;
+    } catch (error) {
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get current branch: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Check if a branch exists
+   */
+  private async branchExists(branchName: string): Promise<boolean> {
+    try {
+      await exec.exec('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
+      return true;
+    } catch (error) {
+      // Try remote branch
+      try {
+        await exec.exec('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branchName}`]);
+        return true;
+      } catch (remoteError) {
+        return false;
+      }
+    }
+  }
+
+  /**
+   * Detect PR context from current branch using GitHub API
+   */
+  private async detectCurrentBranchPR(): Promise<PullRequestContext | null> {
+    if (!this.octokit) {
+      logger.info(LoggerServices.GIT_SERVICE, 'No GitHub API client available for PR detection');
+      return null;
+    }
+
+    const currentBranch = await this.getCurrentBranch();
+    if (!currentBranch) {
+      logger.warn(LoggerServices.GIT_SERVICE, 'Could not determine current branch');
+      return null;
+    }
+
+    try {
+      logger.info(LoggerServices.GIT_SERVICE, `Searching for open PRs from branch: ${currentBranch}`);
+      
+      // Search for open PRs from current branch
+      const { data: pullRequests } = await this.octokit.rest.pulls.list({
+        ...github.context.repo,
+        state: 'open',
+        head: `${github.context.repo.owner}:${currentBranch}`,
+      });
+
+      if (pullRequests.length > 0) {
+        const pr = pullRequests[0]; // Use the first matching PR
+        logger.info(LoggerServices.GIT_SERVICE, `Found PR #${pr.number} for branch ${currentBranch}`);
+        
+        return {
+          number: pr.number,
+          title: pr.title,
+          body: pr.body || '',
+          baseBranch: pr.base.ref,
+          headBranch: pr.head.ref,
+          baseSha: pr.base.sha,
+          headSha: pr.head.sha,
+        };
+      }
+
+      logger.info(LoggerServices.GIT_SERVICE, `No open PR found for branch: ${currentBranch}`);
+      return null;
+    } catch (error) {
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to search for PRs: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Get changed files using git diff commands
+   */
+  private async getChangedFilesFromGit(
+    baseBranch: string,
+    headBranch: string
+  ): Promise<ChangedFile[]> {
+    try {
+      logger.info(LoggerServices.GIT_SERVICE, `Getting changed files via git diff: ${baseBranch}...${headBranch}`);
+      
+      // Get list of changed files with status
+      let filesOutput = '';
+      await exec.exec('git', ['diff', '--name-status', `${baseBranch}...${headBranch}`], {
+        listeners: {
+          stdout: (data: Buffer) => {
+            filesOutput += data.toString();
+          },
+        },
+      });
+
+      if (!filesOutput.trim()) {
+        logger.info(LoggerServices.GIT_SERVICE, 'No files changed according to git diff');
+        return [];
+      }
+
+      // Parse the output
+      const lines = filesOutput.trim().split('\n');
+      const changedFiles: ChangedFile[] = [];
+
+      for (const line of lines) {
+        const match = line.match(/^([AMDRT])\s+(.+)$/);
+        if (match) {
+          const [, statusChar, filename] = match;
+          
+          // Skip excluded files
+          if (!this.shouldIncludeFile(filename)) {
+            continue;
+          }
+
+          const status = this.mapGitStatusToChangeStatus(statusChar);
+          
+          // Get the patch for this file
+          let patch = '';
+          try {
+            await exec.exec('git', ['diff', `${baseBranch}...${headBranch}`, '--', filename], {
+              listeners: {
+                stdout: (data: Buffer) => {
+                  patch += data.toString();
+                },
+              },
+            });
+          } catch (patchError) {
+            logger.warn(LoggerServices.GIT_SERVICE, `Failed to get patch for ${filename}: ${patchError}`);
+          }
+
+          changedFiles.push({
+            filename,
+            status,
+            patch: patch || undefined,
+          });
+        }
+      }
+
+      logger.info(LoggerServices.GIT_SERVICE, `Git diff: Found ${changedFiles.length} changed files`);
+      return changedFiles;
+    } catch (error) {
+      logger.error(LoggerServices.GIT_SERVICE, `Failed to get changed files from git: ${error}`);
+      return [];
+    }
+  }
+
+  /**
+   * Map git status characters to ChangedFile status
+   */
+  private mapGitStatusToChangeStatus(
+    gitStatus: string
+  ): ChangedFile['status'] {
+    switch (gitStatus) {
+      case 'A':
+        return 'added';
+      case 'M':
+        return 'modified';
+      case 'D':
+        return 'removed';
+      case 'R':
+        return 'renamed';
+      case 'T': // Type change (rare)
+        return 'modified';
+      default:
+        return 'modified';
+    }
   }
 }

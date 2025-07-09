@@ -102,6 +102,13 @@ Reusable Component:
 3. **Avoid redundancy**: Don't duplicate for the sake of completeness
 4. **User value focus**: Include where it helps understand user impact
 
+### Analysis Scope
+- **Code files only**: Analysis focuses on executable code changes (.ts, .js, .py, .java, etc.)
+- **Documentation excluded**: Documentation files (.md, .txt, .rst) are intentionally excluded from theme analysis
+- **Build artifacts excluded**: Distribution folders (dist/, build/, target/) are intentionally excluded as they contain generated code
+- **Configuration included**: Config files (.json, .yaml, .toml) are included as they affect system behavior
+- **Tests included**: Test files are analyzed as they represent verifiable business requirements
+
 ## Examples
 
 ### Simple Change (2 levels)
@@ -209,11 +216,6 @@ Root: "Improve Error Handling"
 - **Incremental updates**: Only re-analyze changed portions during iterative development
 - **Smart invalidation**: Clear cache selectively based on file modifications
 
-### Deduplication Strategy
-- **Multi-pass approach**: First pass within batches, second pass across batches
-- **Similarity detection**: AI-driven identification of semantic duplicates
-- **Merge strategy**: Combine duplicate themes while preserving unique context
-- **Validation**: Ensure deduplication doesn't lose critical information
 
 ## Quality Assurance
 
@@ -222,19 +224,46 @@ Root: "Improve Error Handling"
 - **Thresholds**: 
   - >0.8: High confidence, proceed automatically
   - 0.5-0.8: Medium confidence, flag for review
-  - <0.5: Low confidence, use fallback
+  - <0.5: Low confidence, mark as uncertain but still use AI result
 - **Score factors**: Code clarity, pattern recognition, context completeness
 - **Learning loop**: Track user corrections to improve future scoring
+- **No Confidence Fallbacks**: Even low confidence AI decisions are preferred over algorithmic alternatives
 
-### Graceful Degradation
-- **Never fail completely**: Always provide meaningful output
-- **Fallback hierarchy**:
-  1. Full AI analysis
-  2. Simplified AI analysis with reduced context
-  3. Rule-based analysis
-  4. Basic file grouping
-- **Quality indicators**: Mark degraded results clearly
-- **Progressive enhancement**: Upgrade analysis when possible
+### AI-First Error Handling
+- **Retry Strategy**: Retry failed AI calls with identical prompts up to maximum attempts (5x)
+- **No Content Truncation**: Never split or truncate content unless explicitly specified
+- **No Prompt Simplification**: Never create "simplified" prompts when complex ones fail
+- **Hard Error on Failure**: After maximum retries, fail with clear error rather than algorithmic fallback
+- **No Mechanical Fallbacks**: Absolutely no rule-based, pattern-matching, or algorithmic alternatives to AI decisions
+- **Complete Context**: Always provide full context to AI - let AI decide what's relevant
+- **Fail Fast**: Better to fail explicitly than provide misleading non-AI results
+
+#### Prohibited Fallback Patterns
+```typescript
+// ❌ NEVER DO THIS - Algorithmic fallback
+if (fileName.includes('auth')) {
+    return 'User Account Management';
+}
+
+// ❌ NEVER DO THIS - Content truncation
+const truncated = content.substring(0, 1000);
+
+// ❌ NEVER DO THIS - Simplified prompts on failure
+if (attempt > 1) {
+    return createSimplePrompt(context);
+}
+
+// ✅ CORRECT - Retry identical prompt then hard error
+for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+        return await ai.analyze(fullPrompt, fullContext);
+    } catch (error) {
+        if (i === MAX_RETRIES - 1) {
+            throw new Error(`AI analysis failed after ${MAX_RETRIES} attempts`);
+        }
+    }
+}
+```
 
 ### AI Interaction Guidelines
 - **Structured prompts**: Use consistent templates with clear sections

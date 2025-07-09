@@ -29966,6 +29966,8 @@ const theme_service_1 = __nccwpck_require__(884);
 const theme_formatter_1 = __nccwpck_require__(2542);
 const logger_1 = __nccwpck_require__(9000);
 const performance_tracker_1 = __nccwpck_require__(9600);
+const review_service_1 = __nccwpck_require__(680);
+const github_comment_service_1 = __nccwpck_require__(1556);
 /**
  * Detect if we're running in local testing mode
  */
@@ -29980,8 +29982,6 @@ async function run() {
     try {
         // Initialize live logging for local testing
         if (isLocal) {
-            // Clean all previous analysis files for fresh start
-            output_saver_1.OutputSaver.cleanAllAnalyses();
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             logFilePath = await output_saver_1.OutputSaver.initializeLogFile(timestamp);
             logger_1.Logger.initializeLiveLogging(logFilePath);
@@ -29993,6 +29993,42 @@ async function run() {
         const inputs = (0, validation_1.validateInputs)();
         // Set Anthropic API key for Claude CLI
         process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+        // Development Mode: Skip to Phase 2 review if requested
+        if (process.env.SKIP_PHASE1 === 'true') {
+            logger_1.logger.info('MAIN', 'Development mode: Skipping Phase 1, running Phase 2 review only');
+            try {
+                performance_tracker_1.performanceTracker.startTiming('Phase 2 Development Review');
+                const reviewService = new review_service_1.ReviewService(inputs.anthropicApiKey);
+                const testFile = process.env.TEST_OUTPUT_FILE;
+                const reviewResult = testFile
+                    ? await reviewService.reviewFromTestOutput(testFile)
+                    : await reviewService.reviewFromTestOutput();
+                logger_1.logger.info('MAIN', `Development review completed: ${reviewResult.overallRecommendation} (${reviewResult.nodeReviews.length} nodes)`);
+                logger_1.logger.info('MAIN', reviewResult.summary);
+                if (isLocal) {
+                    try {
+                        const savedPath = await output_saver_1.OutputSaver.saveReviewResults(reviewResult, 'development-mode');
+                        (0, utils_1.logInfo)(`Development review results saved to: ${savedPath}`);
+                    }
+                    catch (saveError) {
+                        logger_1.logger.warn('MAIN', `Failed to save development review results: ${saveError}`);
+                    }
+                }
+                performance_tracker_1.performanceTracker.endTiming('Phase 2 Development Review');
+                performance_tracker_1.performanceTracker.endTiming('Total AI Code Review');
+                performance_tracker_1.performanceTracker.generateReport();
+                return;
+            }
+            catch (devError) {
+                logger_1.logger.error('MAIN', `Development mode review failed: ${devError}`);
+                throw devError;
+            }
+        }
+        // Clean previous analysis files only for full pipeline runs (not development mode)
+        if (isLocal) {
+            logger_1.logger.info('MAIN', 'Full pipeline mode: Cleaning previous analysis files for fresh start');
+            output_saver_1.OutputSaver.cleanAllAnalyses();
+        }
         // Log mode (isLocal already defined above)
         (0, utils_1.logInfo)(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
         performance_tracker_1.performanceTracker.startTiming('Setup');
@@ -30079,10 +30115,11 @@ async function run() {
             logger_1.logger.debug('MAIN', `Detailed themes formatted, length: ${detailedThemes?.length || 'undefined'}`);
             const safeSummary = theme_formatter_1.ThemeFormatter.createThemeSummary(themeAnalysis.themes);
             logger_1.logger.debug('MAIN', `Summary created, length: ${safeSummary?.length || 'undefined'}`);
-            logger_1.logger.debug('MAIN', 'Setting outputs...');
-            core.setOutput('themes', detailedThemes);
-            core.setOutput('summary', safeSummary);
-            logger_1.logger.debug('MAIN', 'Outputs set successfully');
+            // TODO: Remove production output writing (debugging only)
+            // logger.debug('MAIN', 'Setting outputs...');
+            // core.setOutput('themes', detailedThemes);
+            // core.setOutput('summary', safeSummary);
+            // logger.debug('MAIN', 'Outputs set successfully');
             // Save analysis results for local testing
             if (isLocal && gitService instanceof local_testing_1.LocalGitService) {
                 try {
@@ -30094,7 +30131,8 @@ async function run() {
                     logger_1.logger.warn('MAIN', `Failed to save analysis: ${saveError}`);
                 }
             }
-            (0, utils_1.logInfo)(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
+            // TODO: Remove production output logging (debugging only)
+            // logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
             // Log expansion statistics if available
             if (themeAnalysis.expansionStats) {
                 (0, utils_1.logInfo)(`Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
@@ -30106,8 +30144,9 @@ async function run() {
                 logger_1.logger.debug('MAIN', `Error stack: ${error.stack}`);
             }
             logger_1.logger.error('MAIN', `Failed to set outputs: ${error}`);
-            core.setOutput('themes', 'No themes found');
-            core.setOutput('summary', 'Output generation failed');
+            // TODO: Remove production output writing (debugging only)
+            // core.setOutput('themes', 'No themes found');
+            // core.setOutput('summary', 'Output generation failed');
         }
         performance_tracker_1.performanceTracker.endTiming('Output Generation');
         logger_1.logger.info('MAIN', `Analysis complete: Found ${themeAnalysis.totalThemes} themes in ${themeAnalysis.processingTime}ms`);
@@ -30119,6 +30158,58 @@ async function run() {
         // Log expansion statistics if available
         if (themeAnalysis.expansionStats) {
             logger_1.logger.info('MAIN', `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`);
+        }
+        // Phase 2: Code Review (if not in development mode that skips Phase 1)
+        const shouldRunReview = process.env.SKIP_PHASE1 !== 'true';
+        if (shouldRunReview) {
+            performance_tracker_1.performanceTracker.startTiming('Phase 2 Review');
+            try {
+                logger_1.logger.info('MAIN', 'Starting Phase 2: AI Code Review...');
+                const reviewService = new review_service_1.ReviewService(inputs.anthropicApiKey);
+                const reviewResult = await reviewService.reviewThemes(themeAnalysis.themes);
+                logger_1.logger.info('MAIN', `Review completed: ${reviewResult.overallRecommendation} (${reviewResult.nodeReviews.length} nodes reviewed)`);
+                logger_1.logger.info('MAIN', reviewResult.summary);
+                // Handle output based on environment
+                if (isLocal && gitService instanceof local_testing_1.LocalGitService) {
+                    // Local testing: Save to files
+                    try {
+                        const modeInfo = gitService.getCurrentMode();
+                        const savedPath = await output_saver_1.OutputSaver.saveReviewResults(reviewResult, modeInfo.name);
+                        (0, utils_1.logInfo)(`Review results saved to: ${savedPath}`);
+                    }
+                    catch (saveError) {
+                        logger_1.logger.warn('MAIN', `Failed to save review results: ${saveError}`);
+                    }
+                }
+                else {
+                    // Production: Post to PR comments
+                    try {
+                        logger_1.logger.info('MAIN', 'Posting review results to PR comments...');
+                        const commentService = new github_comment_service_1.GitHubCommentService(inputs.githubToken || '');
+                        // Post main review comment
+                        await commentService.postMainReviewComment(reviewResult);
+                        // Post detailed comments for significant issues
+                        await commentService.postDetailedNodeComments(reviewResult);
+                        // Post action items summary if there are critical/major issues
+                        if (reviewResult.overallRecommendation !== 'approve') {
+                            await commentService.postActionItemsSummary(reviewResult);
+                        }
+                        logger_1.logger.info('MAIN', 'PR comments posted successfully');
+                    }
+                    catch (commentError) {
+                        logger_1.logger.error('MAIN', `Failed to post PR comments: ${commentError}`);
+                        // Don't fail the pipeline for comment errors
+                    }
+                }
+            }
+            catch (reviewError) {
+                logger_1.logger.error('MAIN', `Phase 2 review failed: ${reviewError}`);
+                // Continue execution - review failure shouldn't break the pipeline
+            }
+            performance_tracker_1.performanceTracker.endTiming('Phase 2 Review');
+        }
+        else {
+            logger_1.logger.info('MAIN', 'Skipping Phase 2 review (SKIP_PHASE1=true for development mode)');
         }
         // End total timing and generate comprehensive performance report
         performance_tracker_1.performanceTracker.endTiming('Total AI Code Review');
@@ -30523,8 +30614,8 @@ UncommittedMode.EXCLUDED_PATTERNS = [
     /node_modules\//, // Exclude dependencies
     /\.map$/, // Exclude source maps
     /package-lock\.json$/, // Exclude lock files
-    /mindmap-prd\.txt$/, // Exclude PRD files
-    /review-prd\.md$/, // Exclude PRD files
+    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
+    /command-center\/review-prd\.md$/, // Exclude PRD files
     /\.md$/, // Exclude all markdown files
     /\.txt$/, // Exclude all text files
     /\.json$/, // Exclude all json files
@@ -30749,6 +30840,33 @@ class OutputSaver {
         return filepath;
     }
     /**
+     * Save review results to disk
+     */
+    static async saveReviewResults(reviewResult, mode) {
+        // Ensure output directory exists
+        await this.ensureDirectoryExists();
+        // Generate timestamp
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const filename = `review-${timestamp}.json`;
+        const filepath = path.join(this.LOCAL_DIR, filename);
+        // Create review save object
+        const savedReview = {
+            metadata: {
+                timestamp: new Date().toISOString(),
+                mode,
+                totalNodes: reviewResult.metadata.totalNodes,
+                averageConfidence: reviewResult.metadata.averageConfidence,
+                overallRecommendation: reviewResult.overallRecommendation,
+                processingTime: reviewResult.processingTime
+            },
+            reviewResult
+        };
+        // Save to file
+        const jsonContent = JSON.stringify(savedReview, null, 2);
+        fs.writeFileSync(filepath, jsonContent, 'utf8');
+        return filepath;
+    }
+    /**
      * Generate log file path with timestamp
      */
     static generateLogFilePath(timestamp) {
@@ -30893,6 +31011,7 @@ const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const utils_1 = __nccwpck_require__(1798);
 const business_prompt_templates_1 = __nccwpck_require__(2813);
+const complexity_analyzer_1 = __nccwpck_require__(1981);
 /**
  * AI-driven business domain analyzer
  * Replaces mechanical keyword matching with semantic understanding
@@ -30903,11 +31022,13 @@ class AIDomainAnalyzer {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
     }
     /**
-     * Classify business capability using AI semantic understanding
+     * Classify business capability using AI semantic understanding with complexity awareness
      * PRD: Root level represents "distinct user flow, story, or business capability"
      */
     async classifyBusinessDomain(context, semanticDiff) {
-        const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
+        // Generate complexity profile to inform naming strategy
+        const complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+        const prompt = this.buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile);
         try {
             const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
@@ -31177,6 +31298,47 @@ RESPOND WITH ONLY VALID JSON:
     }
   ]
 }`;
+    }
+    /**
+     * Generate complexity profile for the given context
+     */
+    generateComplexityProfile(context, semanticDiff) {
+        const themeCount = semanticDiff?.totalComplexity || 1;
+        const affectedFiles = semanticDiff?.files.map(f => f.path) || [context.filePath];
+        // Extract theme-like information from context
+        const fileName = context.filePath.split('/').pop() || '';
+        const themeName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
+        const themeDescription = context.commitMessage || context.prDescription || '';
+        return complexity_analyzer_1.ComplexityAnalyzer.generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, context.completeDiff, context.surroundingContext);
+    }
+    /**
+     * Build complexity-aware domain classification prompt
+     */
+    buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile) {
+        // If no complexity profile provided, generate one
+        if (!complexityProfile) {
+            complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+        }
+        const additionalContext = semanticDiff
+            ? this.formatSemanticDiffContext(semanticDiff)
+            : '';
+        // Enhanced functional context with complexity information
+        const functionalContext = `
+${context.surroundingContext}
+
+${additionalContext}
+
+COMPLEXITY ANALYSIS:
+Complexity Level: ${complexityProfile.complexity.toUpperCase()}
+Recommended Approach: ${complexityProfile.recommendedApproach}
+Reasoning: ${complexityProfile.reasoning}
+Detected Patterns: ${complexityProfile.detectedPatterns.join(', ')}
+
+COMMIT CONTEXT:
+${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
+${context.prDescription ? `PR Description: ${context.prDescription}` : ''}`;
+        // Use the enhanced business prompt templates with complexity awareness
+        return business_prompt_templates_1.BusinessPromptTemplates.createBusinessImpactPrompt(context.filePath, context.completeDiff, functionalContext, complexityProfile.complexity);
     }
     /**
      * Trim text to word limit
@@ -32417,604 +32579,6 @@ exports.BusinessDomainService = BusinessDomainService;
 
 /***/ }),
 
-/***/ 4200:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.HierarchicalSimilarityService = void 0;
-const generic_cache_1 = __nccwpck_require__(282);
-const claude_client_1 = __nccwpck_require__(3861);
-const json_extractor_1 = __nccwpck_require__(8168);
-const utils_1 = __nccwpck_require__(1798);
-const logger_1 = __nccwpck_require__(9000);
-/**
- * Enhanced similarity service for multi-level theme hierarchies
- * Handles cross-level duplicate detection and hierarchy optimization
- */
-class HierarchicalSimilarityService {
-    constructor(anthropicApiKey) {
-        this.effectiveness = {
-            crossLevelComparisonsGenerated: 0,
-            duplicatesFound: 0,
-            overlapsResolved: 0,
-            processingTime: 0,
-            aiCallsUsed: 0,
-            filteringReduction: 0,
-        };
-        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
-        this.cache = new generic_cache_1.GenericCache(1800000); // 30 minutes TTL
-    }
-    /**
-     * Analyze similarity across multiple hierarchy levels
-     * Identifies potential duplicates, overlaps, and optimization opportunities
-     */
-    async analyzeCrossLevelSimilarity(hierarchy) {
-        const startTime = Date.now();
-        const initialAICalls = this.claudeClient.getMetrics().totalCalls;
-        logger_1.logger.info('HIERARCHICAL', 'Starting cross-level similarity analysis');
-        // Reset effectiveness tracking
-        this.resetEffectiveness();
-        const allThemes = this.flattenHierarchy(hierarchy);
-        const comparisons = [];
-        // Generate all cross-level comparison pairs
-        for (let i = 0; i < allThemes.length; i++) {
-            for (let j = i + 1; j < allThemes.length; j++) {
-                const theme1 = allThemes[i];
-                const theme2 = allThemes[j];
-                // Only compare themes at different levels or with different parents
-                if (this.shouldCompareThemes(theme1, theme2)) {
-                    comparisons.push({
-                        id: `cross_${theme1.id}_${theme2.id}`,
-                        theme1,
-                        theme2,
-                        levelDifference: Math.abs(theme1.level - theme2.level),
-                    });
-                }
-            }
-        }
-        // Track pre-filtering effectiveness
-        const totalPossibleComparisons = (allThemes.length * (allThemes.length - 1)) / 2;
-        this.effectiveness.filteringReduction =
-            ((totalPossibleComparisons - comparisons.length) /
-                totalPossibleComparisons) *
-                100;
-        this.effectiveness.crossLevelComparisonsGenerated = comparisons.length;
-        logger_1.logger.info('HIERARCHICAL', `Generated ${comparisons.length} cross-level comparisons`);
-        logger_1.logger.info('HIERARCHICAL', `Pre-filtering reduced comparisons by ${this.effectiveness.filteringReduction.toFixed(1)}% (${totalPossibleComparisons} → ${comparisons.length})`);
-        if (comparisons.length > 100) {
-            logger_1.logger.warn('HIERARCHICAL', `Too many comparisons (${comparisons.length}), this may cause performance issues`);
-        }
-        // Process comparisons with controlled concurrency
-        console.log(`[HIERARCHICAL] Starting ${comparisons.length} Claude API calls with concurrency limit of 10`);
-        // Process all comparisons concurrently - let ClaudeClient handle rate limiting
-        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
-        console.log(`[HIERARCHICAL] Processing all ${comparisons.length} comparisons concurrently`);
-        const comparisonPromises = comparisons.map(async (comparison) => {
-            try {
-                const result = await this.analyzeCrossLevelSimilarityPair(comparison);
-                return { success: true, result };
-            }
-            catch (error) {
-                console.warn(`[HIERARCHICAL] Failed comparison: ${comparison.id} - ${error instanceof Error ? error.message : 'Unknown error'}`);
-                return { success: false };
-            }
-        });
-        // Wait for all comparisons to complete - ClaudeClient manages the 10 concurrent limit
-        const allResults = await Promise.all(comparisonPromises);
-        // Separate successful and failed results
-        const successfulResults = [];
-        let failedCount = 0;
-        for (const result of allResults) {
-            if (result.success) {
-                successfulResults.push(result.result);
-            }
-            else {
-                failedCount++;
-            }
-        }
-        if (failedCount > 0) {
-            console.warn(`[HIERARCHICAL] ${failedCount}/${comparisons.length} comparisons failed after retries`);
-        }
-        // Update effectiveness metrics
-        this.effectiveness.processingTime = Date.now() - startTime;
-        this.effectiveness.aiCallsUsed =
-            this.claudeClient.getMetrics().totalCalls - initialAICalls;
-        logger_1.logger.info('HIERARCHICAL', `Completed cross-level similarity analysis: ${successfulResults.length} successful results in ${this.effectiveness.processingTime}ms`);
-        return successfulResults;
-    }
-    /**
-     * Deduplicate themes across hierarchy levels
-     */
-    async deduplicateHierarchy(hierarchy) {
-        const crossLevelSimilarities = await this.analyzeCrossLevelSimilarity(hierarchy);
-        // Filter for high-similarity themes that should be merged
-        // Use environment variable to control threshold (default: more strict 0.95 vs original 0.85)
-        const similarityThreshold = parseFloat(process.env.CROSS_LEVEL_DEDUP_THRESHOLD || '0.95');
-        const allowOverlapMerging = process.env.ALLOW_OVERLAP_MERGING !== 'false';
-        const duplicates = crossLevelSimilarities.filter((similarity) => {
-            const meetsThreshold = similarity.similarityScore > similarityThreshold;
-            const isStrictDuplicate = similarity.relationshipType === 'duplicate';
-            const isOverlap = similarity.relationshipType === 'overlap';
-            const shouldMerge = meetsThreshold &&
-                (isStrictDuplicate || (allowOverlapMerging && isOverlap));
-            // Log detailed deduplication decisions
-            if (process.env.VERBOSE_DEDUP_LOGGING === 'true') {
-                console.log(`[CROSS-LEVEL-DEDUP] Similarity: ${similarity.similarityScore.toFixed(3)} (threshold: ${similarityThreshold})`);
-                console.log(`[CROSS-LEVEL-DEDUP] Relationship: ${similarity.relationshipType}`);
-                console.log(`[CROSS-LEVEL-DEDUP] Theme1: "${similarity.theme1.name}"`);
-                console.log(`[CROSS-LEVEL-DEDUP] Theme2: "${similarity.theme2.name}"`);
-                console.log(`[CROSS-LEVEL-DEDUP] Decision: ${shouldMerge ? 'MERGE' : 'KEEP_SEPARATE'}`);
-                console.log(`[CROSS-LEVEL-DEDUP] Reasoning: ${similarity.reasoning}`);
-                console.log('---');
-            }
-            return shouldMerge;
-        });
-        console.log(`[CROSS-LEVEL-DEDUP] Found ${duplicates.length} themes to merge (threshold: ${similarityThreshold}, allowOverlap: ${allowOverlapMerging})`);
-        const mergedThemes = [];
-        const processedIds = new Set();
-        let duplicatesRemoved = 0;
-        let overlapsResolved = 0;
-        for (const duplicate of duplicates) {
-            if (processedIds.has(duplicate.theme1.id) ||
-                processedIds.has(duplicate.theme2.id)) {
-                continue; // Already processed
-            }
-            const mergedTheme = this.mergeThemes(duplicate.theme1, duplicate.theme2, duplicate.action);
-            mergedThemes.push({
-                sourceIds: [duplicate.theme1.id, duplicate.theme2.id],
-                targetTheme: mergedTheme,
-                mergeReason: duplicate.reasoning,
-            });
-            processedIds.add(duplicate.theme1.id);
-            processedIds.add(duplicate.theme2.id);
-            if (duplicate.relationshipType === 'duplicate') {
-                duplicatesRemoved++;
-                this.effectiveness.duplicatesFound++;
-            }
-            else {
-                overlapsResolved++;
-                this.effectiveness.overlapsResolved++;
-            }
-        }
-        const originalCount = this.countThemes(hierarchy);
-        const deduplicatedHierarchy = this.applyMerges(hierarchy);
-        const deduplicatedCount = this.countThemes(deduplicatedHierarchy);
-        return {
-            originalCount,
-            deduplicatedCount,
-            mergedThemes,
-            duplicatesRemoved,
-            overlapsResolved,
-        };
-    }
-    /**
-     * Validate hierarchy integrity after expansion
-     */
-    validateHierarchyIntegrity(hierarchy) {
-        const allThemes = this.flattenHierarchy(hierarchy);
-        const themeIds = new Set(allThemes.map((t) => t.id));
-        // Check for orphaned themes
-        for (const theme of allThemes) {
-            if (theme.parentId && !themeIds.has(theme.parentId)) {
-                (0, utils_1.logInfo)(`Found orphaned theme: ${theme.name} (parent ${theme.parentId} not found)`);
-                return false;
-            }
-        }
-        // Check for circular references
-        for (const theme of allThemes) {
-            if (this.hasCircularReference(theme, allThemes)) {
-                (0, utils_1.logInfo)(`Found circular reference in theme: ${theme.name}`);
-                return false;
-            }
-        }
-        // Check level consistency
-        for (const theme of allThemes) {
-            if (theme.parentId) {
-                const parent = allThemes.find((t) => t.id === theme.parentId);
-                if (parent && theme.level !== parent.level + 1) {
-                    (0, utils_1.logInfo)(`Level inconsistency: ${theme.name} level ${theme.level}, parent level ${parent.level}`);
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-    // Private helper methods
-    flattenHierarchy(hierarchy) {
-        const flattened = [];
-        const traverse = (themes) => {
-            for (const theme of themes) {
-                flattened.push(theme);
-                if (theme.childThemes.length > 0) {
-                    traverse(theme.childThemes);
-                }
-            }
-        };
-        traverse(hierarchy);
-        return flattened;
-    }
-    shouldCompareThemes(theme1, theme2) {
-        // Basic hierarchy rules
-        if (theme1.level === theme2.level && theme1.parentId === theme2.parentId) {
-            return false;
-        }
-        if (theme1.parentId === theme2.id || theme2.parentId === theme1.id) {
-            return false;
-        }
-        const levelDifference = Math.abs(theme1.level - theme2.level);
-        if (levelDifference > 1) {
-            return false;
-        }
-        // Intelligent pre-filtering optimizations (PRD: "Efficient cross-reference indexing")
-        // 1. File overlap check - skip if zero file overlap
-        const fileOverlap = this.calculateFileOverlap(theme1, theme2);
-        if (fileOverlap === 0) {
-            // Check name similarity as secondary filter
-            const nameSimilarity = this.calculateNameSimilarity(theme1.name, theme2.name);
-            if (nameSimilarity < 0.3) {
-                // No file overlap AND very different names = very unlikely to be related
-                return false;
-            }
-        }
-        // 2. Business domain filtering - skip if clearly different domains
-        if (this.areDifferentBusinessDomains(theme1, theme2)) {
-            return false;
-        }
-        // 3. Size mismatch filtering - skip if one is much larger than the other
-        if (this.hasSevereSizeMismatch(theme1, theme2)) {
-            return false;
-        }
-        // 4. Type mismatch filtering - skip incompatible change types
-        if (this.hasIncompatibleChangeTypes(theme1, theme2)) {
-            return false;
-        }
-        return true;
-    }
-    /**
-     * Calculate file overlap between two themes
-     * Returns ratio 0.0-1.0 of overlapping files
-     */
-    calculateFileOverlap(theme1, theme2) {
-        const files1 = new Set(theme1.affectedFiles || []);
-        const files2 = new Set(theme2.affectedFiles || []);
-        if (files1.size === 0 || files2.size === 0) {
-            return 0;
-        }
-        const intersection = new Set([...files1].filter((x) => files2.has(x)));
-        const union = new Set([...files1, ...files2]);
-        return intersection.size / union.size;
-    }
-    /**
-     * Calculate name similarity using simple token matching
-     * Returns ratio 0.0-1.0 of similarity
-     */
-    calculateNameSimilarity(name1, name2) {
-        const tokens1 = new Set(name1.toLowerCase().split(/\s+/));
-        const tokens2 = new Set(name2.toLowerCase().split(/\s+/));
-        const intersection = new Set([...tokens1].filter((x) => tokens2.has(x)));
-        const union = new Set([...tokens1, ...tokens2]);
-        return union.size > 0 ? intersection.size / union.size : 0;
-    }
-    /**
-     * Check if themes belong to clearly different business domains
-     * Uses heuristic domain detection from descriptions
-     */
-    areDifferentBusinessDomains(theme1, theme2) {
-        const domain1 = this.inferBusinessDomain(theme1);
-        const domain2 = this.inferBusinessDomain(theme2);
-        // Known incompatible domain pairs
-        const incompatiblePairs = [
-            ['ui', 'api'],
-            ['auth', 'docs'],
-            ['test', 'feature'],
-            ['config', 'logic'],
-        ];
-        for (const [d1, d2] of incompatiblePairs) {
-            if ((domain1 === d1 && domain2 === d2) ||
-                (domain1 === d2 && domain2 === d1)) {
-                return true;
-            }
-        }
-        return false;
-    }
-    /**
-     * Simple domain inference from theme content
-     */
-    inferBusinessDomain(theme) {
-        const text = `${theme.name} ${theme.description}`.toLowerCase();
-        if (text.includes('ui') ||
-            text.includes('interface') ||
-            text.includes('component')) {
-            return 'ui';
-        }
-        if (text.includes('api') ||
-            text.includes('endpoint') ||
-            text.includes('service')) {
-            return 'api';
-        }
-        if (text.includes('auth') ||
-            text.includes('login') ||
-            text.includes('security')) {
-            return 'auth';
-        }
-        if (text.includes('test') ||
-            text.includes('spec') ||
-            text.includes('mock')) {
-            return 'test';
-        }
-        if (text.includes('config') ||
-            text.includes('setting') ||
-            text.includes('env')) {
-            return 'config';
-        }
-        if (text.includes('doc') ||
-            text.includes('readme') ||
-            text.includes('comment')) {
-            return 'docs';
-        }
-        return 'general';
-    }
-    /**
-     * Check if themes have severe size mismatch (one much larger than other)
-     */
-    hasSevereSizeMismatch(theme1, theme2) {
-        const size1 = theme1.affectedFiles?.length || 0;
-        const size2 = theme2.affectedFiles?.length || 0;
-        if (size1 === 0 || size2 === 0) {
-            return false; // Can't judge size mismatch
-        }
-        const ratio = Math.max(size1, size2) / Math.min(size1, size2);
-        return ratio > 10; // One is 10x larger than the other
-    }
-    /**
-     * Check if themes have incompatible change types
-     */
-    hasIncompatibleChangeTypes(theme1, theme2) {
-        // Extract change type indicators from descriptions
-        const type1 = this.inferChangeType(theme1);
-        const type2 = this.inferChangeType(theme2);
-        // Incompatible type pairs
-        const incompatibleTypes = [
-            ['add', 'remove'],
-            ['create', 'delete'],
-            ['new', 'fix'],
-        ];
-        for (const [t1, t2] of incompatibleTypes) {
-            if ((type1 === t1 && type2 === t2) || (type1 === t2 && type2 === t1)) {
-                return true;
-            }
-        }
-        return false;
-    }
-    /**
-     * Simple change type inference
-     */
-    inferChangeType(theme) {
-        const text = `${theme.name} ${theme.description}`.toLowerCase();
-        if (text.includes('add') ||
-            text.includes('create') ||
-            text.includes('new')) {
-            return 'add';
-        }
-        if (text.includes('remove') ||
-            text.includes('delete') ||
-            text.includes('drop')) {
-            return 'remove';
-        }
-        if (text.includes('fix') ||
-            text.includes('bug') ||
-            text.includes('error')) {
-            return 'fix';
-        }
-        if (text.includes('update') ||
-            text.includes('modify') ||
-            text.includes('change')) {
-            return 'update';
-        }
-        return 'general';
-    }
-    async analyzeCrossLevelSimilarityPair(request) {
-        const { theme1, theme2, levelDifference } = request;
-        const cacheKey = `cross_level_${theme1.id}_${theme2.id}`;
-        const cached = this.cache.get(cacheKey);
-        if (cached) {
-            return cached;
-        }
-        const prompt = `
-Analyze these two themes from different hierarchy levels for similarity and relationship:
-
-THEME 1:
-Level: ${theme1.level}
-Name: ${theme1.name}
-Description: ${theme1.description}
-Business Impact: ${theme1.businessImpact}
-Files: ${theme1.affectedFiles.join(', ')}
-Parent: ${theme1.parentId || 'None'}
-
-THEME 2:
-Level: ${theme2.level}
-Name: ${theme2.name}
-Description: ${theme2.description}
-Business Impact: ${theme2.businessImpact}
-Files: ${theme2.affectedFiles.join(', ')}
-Parent: ${theme2.parentId || 'None'}
-
-Level Difference: ${levelDifference}
-
-ANALYSIS TASK:
-Determine the relationship between these themes across hierarchy levels:
-
-1. SIMILARITY SCORE (0-1): How similar are these themes in business purpose?
-2. RELATIONSHIP TYPE: 
-   - "duplicate": Essentially the same theme (should be merged)
-   - "overlap": Significant overlap in scope (should be consolidated)
-   - "related": Related but distinct (keep separate)
-   - "distinct": Completely different themes
-
-3. MERGE ACTION:
-   - "merge_up": Merge into higher-level theme
-   - "merge_down": Merge into lower-level theme
-   - "merge_sibling": Merge at same level under common parent
-   - "keep_separate": Keep as separate themes
-
-Return JSON:
-{
-  "similarityScore": number (0-1),
-  "relationshipType": "duplicate|overlap|related|distinct",
-  "action": "merge_up|merge_down|merge_sibling|keep_separate",
-  "confidence": number (0-1),
-  "reasoning": "detailed explanation of decision"
-}
-
-Focus on business value and avoid merging themes with distinct business purposes.
-`;
-        try {
-            console.log(`[HIERARCHICAL] Making Claude call for themes: ${theme1.name} vs ${theme2.name}`);
-            const response = await this.claudeClient.callClaude(prompt, 'hierarchical-analysis');
-            console.log(`[HIERARCHICAL] Got response length: ${response.length}`);
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
-                'similarityScore',
-                'relationshipType',
-                'action',
-                'confidence',
-                'reasoning',
-            ]);
-            if (!extractionResult.success) {
-                console.warn(`[HIERARCHICAL] Failed to parse AI response: ${extractionResult.error}`);
-                console.debug(`[HIERARCHICAL] Original response: ${extractionResult.originalResponse?.substring(0, 200)}...`);
-                // Return conservative default
-                const fallbackResult = {
-                    theme1,
-                    theme2,
-                    levelDifference,
-                    similarityScore: 0.2,
-                    relationshipType: 'distinct',
-                    action: 'keep_separate',
-                    confidence: 0.3,
-                    reasoning: `AI response parsing failed: ${extractionResult.error}`,
-                };
-                this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
-                return fallbackResult;
-            }
-            const analysis = extractionResult.data;
-            const result = {
-                theme1,
-                theme2,
-                levelDifference,
-                similarityScore: analysis.similarityScore || 0.2,
-                relationshipType: analysis.relationshipType || 'distinct',
-                action: analysis.action || 'keep_separate',
-                confidence: analysis.confidence || 0.3,
-                reasoning: analysis.reasoning || 'No reasoning provided',
-            };
-            this.cache.set(cacheKey, result, 1800000); // Cache for 30 minutes
-            return result;
-        }
-        catch (error) {
-            console.error(`[HIERARCHICAL] AI analysis failed for ${theme1.name} vs ${theme2.name}:`, error);
-            console.error(`[HIERARCHICAL] Error details:`, {
-                message: error instanceof Error ? error.message : String(error),
-                stack: error instanceof Error ? error.stack : undefined,
-                name: error instanceof Error ? error.name : undefined,
-            });
-            // Return conservative default on any error
-            const fallbackResult = {
-                theme1,
-                theme2,
-                levelDifference,
-                similarityScore: 0.2,
-                relationshipType: 'distinct',
-                action: 'keep_separate',
-                confidence: 0.3,
-                reasoning: `AI analysis failed: ${error}`,
-            };
-            this.cache.set(cacheKey, fallbackResult, 1800000); // Cache for 30 minutes
-            return fallbackResult;
-        }
-    }
-    mergeThemes(theme1, theme2, action) {
-        // Determine which theme should be the primary one based on action
-        const primaryTheme = action === 'merge_up'
-            ? theme1.level < theme2.level
-                ? theme1
-                : theme2
-            : theme1.level > theme2.level
-                ? theme1
-                : theme2;
-        const secondaryTheme = primaryTheme === theme1 ? theme2 : theme1;
-        return {
-            ...primaryTheme,
-            description: `${primaryTheme.description} ${secondaryTheme.description}`.trim(),
-            businessImpact: `${primaryTheme.businessImpact} ${secondaryTheme.businessImpact}`.trim(),
-            affectedFiles: [
-                ...new Set([
-                    ...primaryTheme.affectedFiles,
-                    ...secondaryTheme.affectedFiles,
-                ]),
-            ],
-            codeSnippets: [
-                ...primaryTheme.codeSnippets,
-                ...secondaryTheme.codeSnippets,
-            ],
-            confidence: Math.max(primaryTheme.confidence, secondaryTheme.confidence),
-            sourceThemes: [
-                ...primaryTheme.sourceThemes,
-                ...secondaryTheme.sourceThemes,
-            ],
-            consolidationMethod: 'merge',
-            lastAnalysis: new Date(),
-        };
-    }
-    countThemes(hierarchy) {
-        return this.flattenHierarchy(hierarchy).length;
-    }
-    applyMerges(hierarchy) {
-        // This would implement the actual merge logic
-        // For now, return the original hierarchy
-        // In a full implementation, this would rebuild the hierarchy with merged themes
-        return hierarchy;
-    }
-    hasCircularReference(theme, allThemes, visited = new Set()) {
-        if (visited.has(theme.id)) {
-            return true; // Found a cycle
-        }
-        visited.add(theme.id);
-        if (theme.parentId) {
-            const parent = allThemes.find((t) => t.id === theme.parentId);
-            if (parent && this.hasCircularReference(parent, allThemes, visited)) {
-                return true;
-            }
-        }
-        visited.delete(theme.id); // Remove from visited when backtracking
-        return false;
-    }
-    /**
-     * Get effectiveness metrics for this hierarchical analysis
-     */
-    getEffectiveness() {
-        return { ...this.effectiveness };
-    }
-    /**
-     * Reset effectiveness metrics
-     */
-    resetEffectiveness() {
-        this.effectiveness = {
-            crossLevelComparisonsGenerated: 0,
-            duplicatesFound: 0,
-            overlapsResolved: 0,
-            processingTime: 0,
-            aiCallsUsed: 0,
-            filteringReduction: 0,
-        };
-    }
-}
-exports.HierarchicalSimilarityService = HierarchicalSimilarityService;
-
-
-/***/ }),
-
 /***/ 667:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -33080,7 +32644,6 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeExpansionService = exports.DEFAULT_EXPANSION_CONFIG = void 0;
 const generic_cache_1 = __nccwpck_require__(282);
 const claude_client_1 = __nccwpck_require__(3861);
-const json_extractor_1 = __nccwpck_require__(8168);
 const secure_file_namer_1 = __nccwpck_require__(5584);
 const ai_mindmap_service_1 = __nccwpck_require__(3555);
 const theme_mindmap_converter_1 = __nccwpck_require__(3936);
@@ -33298,10 +32861,7 @@ class ThemeExpansionService {
         }
         // Combine all child themes
         const allChildThemes = [...expandedExistingChildren, ...expandedSubThemes];
-        // Deduplicate child themes using AI
-        const deduplicatedChildren = await this.deduplicateSubThemes(allChildThemes);
-        // NEW: Re-evaluate merged themes for potential expansion (PRD compliance)
-        const finalChildren = await this.reEvaluateMergedThemes(deduplicatedChildren, currentDepth + 1, result.expandedTheme);
+        const finalChildren = allChildThemes;
         return {
             ...result.expandedTheme,
             childThemes: finalChildren,
@@ -33345,415 +32905,6 @@ class ThemeExpansionService {
             parentTheme,
             expansionDecision,
         };
-    }
-    /**
-     * Re-evaluate merged themes for potential expansion after deduplication
-     * PRD: Ensure merged themes still follow atomic guidelines
-     */
-    async reEvaluateMergedThemes(themes, currentDepth, parentTheme) {
-        // Check if re-evaluation is disabled
-        const reEvaluateAfterMerge = process.env.RE_EVALUATE_AFTER_MERGE !== 'false';
-        if (!reEvaluateAfterMerge) {
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Re-evaluation disabled (RE_EVALUATE_AFTER_MERGE=false)`);
-            return themes;
-        }
-        const reEvaluatedThemes = [];
-        const strictAtomicLimits = process.env.STRICT_ATOMIC_LIMITS !== 'false';
-        for (const theme of themes) {
-            // Check if this was a merged theme (has multiple source themes)
-            if (theme.sourceThemes && theme.sourceThemes.length > 1) {
-                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Checking merged theme "${theme.name}" (${theme.affectedFiles.length} files, ${theme.sourceThemes.length} sources)`);
-                // PRD: If merged theme has complexity indicators, it should be re-evaluated
-                const exceedsFileLimit = strictAtomicLimits && theme.affectedFiles.length > 1;
-                const hasMultipleSources = theme.sourceThemes.length > 2;
-                if (exceedsFileLimit || hasMultipleSources) {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" exceeds atomic limits -> re-evaluating for expansion`);
-                    // Re-evaluate if it should expand
-                    const expansionCandidate = await this.evaluateExpansionCandidate(theme, parentTheme, currentDepth);
-                    if (expansionCandidate) {
-                        logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" needs expansion after deduplication`);
-                        // Recursively expand the merged theme
-                        const expanded = await this.expandThemeRecursively(theme, currentDepth, parentTheme);
-                        reEvaluatedThemes.push(expanded);
-                    }
-                    else {
-                        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" remains atomic despite complexity`);
-                        reEvaluatedThemes.push(theme);
-                    }
-                }
-                else {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Merged theme "${theme.name}" within atomic limits -> keeping as-is`);
-                    reEvaluatedThemes.push(theme);
-                }
-            }
-            else {
-                // Not a merged theme, keep as is
-                reEvaluatedThemes.push(theme);
-            }
-        }
-        return reEvaluatedThemes;
-    }
-    /**
-     * Deduplicate sub-themes using AI to identify duplicates
-     */
-    async deduplicateSubThemes(subThemes) {
-        if (subThemes.length <= 1) {
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${subThemes.length} sub-themes unchanged (too few to deduplicate)`);
-            return subThemes;
-        }
-        // Check if batch deduplication is disabled
-        const skipBatchDedup = process.env.SKIP_BATCH_DEDUP === 'true';
-        const minThemesForBatchDedup = parseInt(process.env.MIN_THEMES_FOR_BATCH_DEDUP || '5');
-        if (skipBatchDedup) {
-            logger_1.logger.info('EXPANSION', `Skipping batch deduplication (SKIP_BATCH_DEDUP=true)`);
-            return subThemes;
-        }
-        if (subThemes.length < minThemesForBatchDedup) {
-            logger_1.logger.info('EXPANSION', `Skipping batch deduplication: ${subThemes.length} themes < minimum ${minThemesForBatchDedup}`);
-            return subThemes;
-        }
-        // Pre-deduplication state logging
-        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Themes before deduplication:`);
-        subThemes.forEach((t) => {
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
-        });
-        logger_1.logger.info('EXPANSION', `Deduplicating ${subThemes.length} sub-themes using AI`);
-        // Calculate optimal batch size based on theme count
-        const batchSize = this.calculateOptimalBatchSize(subThemes.length);
-        const batches = [];
-        for (let i = 0; i < subThemes.length; i += batchSize) {
-            batches.push(subThemes.slice(i, i + batchSize));
-        }
-        // Process each batch sequentially
-        // ClaudeClient handles rate limiting and queuing
-        const successfulResults = [];
-        for (let i = 0; i < batches.length; i++) {
-            const batch = batches[i];
-            try {
-                const result = await this.deduplicateBatch(batch);
-                successfulResults.push(result);
-                if (this.config.enableProgressLogging && batches.length > 1) {
-                    logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Deduplication progress: ${i + 1}/${batches.length} batches (batch size: ${batchSize})`);
-                }
-            }
-            catch (error) {
-                logger_1.logger.warn(constants_1.LoggerServices.EXPANSION, `Deduplication batch failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            }
-        }
-        // Flatten and combine results
-        const allGroups = successfulResults.flat();
-        // Merge groups that span batches
-        const finalThemes = [];
-        const processedIds = new Set();
-        for (const group of allGroups) {
-            if (group.length === 1) {
-                // Single theme, no duplicates
-                if (!processedIds.has(group[0].id)) {
-                    finalThemes.push(group[0]);
-                    processedIds.add(group[0].id);
-                }
-            }
-            else {
-                // Multiple themes to merge
-                const unprocessedThemes = group.filter((t) => !processedIds.has(t.id));
-                if (unprocessedThemes.length > 0) {
-                    const mergedTheme = await this.mergeSubThemes(unprocessedThemes);
-                    finalThemes.push(mergedTheme);
-                    unprocessedThemes.forEach((t) => processedIds.add(t.id));
-                }
-            }
-        }
-        logger_1.logger.info('EXPANSION', `Deduplication complete: ${subThemes.length} themes → ${finalThemes.length} themes`);
-        // Second pass: check if any of the final themes are still duplicates
-        // This handles cases where duplicates were in different batches
-        // Skip if disabled via environment variable or theme count is too small
-        const skipSecondPass = process.env.SKIP_SECOND_PASS_DEDUP === 'true';
-        const minThemesForSecondPass = parseInt(process.env.MIN_THEMES_FOR_SECOND_PASS_DEDUP || '10');
-        if (finalThemes.length > 1 &&
-            !skipSecondPass &&
-            finalThemes.length >= minThemesForSecondPass) {
-            logger_1.logger.info('EXPANSION', `Running second pass deduplication on ${finalThemes.length} themes`);
-            const secondPassResult = await this.runSecondPassDeduplication(finalThemes);
-            logger_1.logger.info('EXPANSION', `Second pass complete: ${finalThemes.length} themes → ${secondPassResult.length} themes`);
-            // Post-deduplication state logging (after second pass)
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after second pass deduplication:`);
-            secondPassResult.forEach((t) => {
-                if (t.sourceThemes && t.sourceThemes.length > 1) {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
-                }
-                else {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
-                }
-            });
-            return secondPassResult;
-        }
-        else if (skipSecondPass) {
-            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication (SKIP_SECOND_PASS_DEDUP=true)`);
-        }
-        else if (finalThemes.length < minThemesForSecondPass) {
-            logger_1.logger.info('EXPANSION', `Skipping second pass deduplication: ${finalThemes.length} themes < minimum ${minThemesForSecondPass}`);
-        }
-        // Post-deduplication state logging (no second pass)
-        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Final themes after first pass deduplication:`);
-        finalThemes.forEach((t) => {
-            if (t.sourceThemes && t.sourceThemes.length > 1) {
-                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (MERGED from ${t.sourceThemes.length} themes, ${t.affectedFiles.length} files)`);
-            }
-            else {
-                logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  - "${t.name}" (unchanged, ${t.affectedFiles.length} files, ${t.codeSnippets.length} snippets)`);
-            }
-        });
-        // DEBUG: Log deduplication output
-        logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Returning ${finalThemes.length} sub-themes:`);
-        finalThemes.forEach((theme, i) => logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `  [${i}] "${theme.name}" (ID: ${theme.id})`));
-        return finalThemes;
-    }
-    /**
-     * Run a second pass to catch duplicates that were in different batches
-     */
-    async runSecondPassDeduplication(themes) {
-        // Create a single batch with all themes for comprehensive comparison
-        const prompt = `
-These themes have already been deduplicated within their groups. Only identify EXACT duplicates across groups.
-
-CRITICAL REQUIREMENTS for identifying duplicates:
-- Themes must represent IDENTICAL code changes (not just similar)
-- Themes must affect the exact same files AND same functionality
-- Themes must have the same business purpose
-- When in doubt, DO NOT merge - preserving granularity is more important than consolidation
-
-${themes
-            .map((theme, index) => `
-Theme ${index + 1}: "${theme.name}"
-Description: ${theme.description}
-${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
-Files: ${theme.affectedFiles.join(', ')}
-Business Impact: ${theme.businessImpact || 'N/A'}
-`)
-            .join('\n')}
-
-Only identify themes that are EXACT duplicates. Be extremely conservative.
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "duplicateGroups": [
-    {
-      "themeIndices": [1, 4],
-      "reasoning": "Both implement the exact same testing configuration change"
-    }
-  ]
-}
-
-If no duplicates found, return: {"duplicateGroups": []}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['duplicateGroups']);
-            if (!extractionResult.success) {
-                // No duplicates found or parsing failed
-                return themes;
-            }
-            const data = extractionResult.data;
-            if (!data.duplicateGroups || data.duplicateGroups.length === 0) {
-                return themes;
-            }
-            // Process duplicate groups
-            const finalThemes = [];
-            const processedIndices = new Set();
-            for (const group of data.duplicateGroups) {
-                const duplicateThemes = [];
-                for (const index of group.themeIndices) {
-                    if (index >= 1 &&
-                        index <= themes.length &&
-                        !processedIndices.has(index - 1)) {
-                        duplicateThemes.push(themes[index - 1]);
-                        processedIndices.add(index - 1);
-                    }
-                }
-                if (duplicateThemes.length > 1) {
-                    const mergedTheme = await this.mergeSubThemes(duplicateThemes);
-                    finalThemes.push(mergedTheme);
-                }
-                else if (duplicateThemes.length === 1) {
-                    finalThemes.push(duplicateThemes[0]);
-                }
-            }
-            // Add themes that weren't in any duplicate group
-            themes.forEach((theme, index) => {
-                if (!processedIndices.has(index)) {
-                    finalThemes.push(theme);
-                }
-            });
-            return finalThemes;
-        }
-        catch (error) {
-            logger_1.logger.info('EXPANSION', `Second pass deduplication failed: ${error}`);
-            return themes;
-        }
-    }
-    /**
-     * Process a batch of themes for deduplication
-     */
-    async deduplicateBatch(themes) {
-        const prompt = `
-Analyze these sub-themes and identify which ones describe IDENTICAL changes (not just related functionality).
-
-IMPORTANT: Only group themes that are truly duplicates - representing exactly the same code change.
-- Themes that touch related but different functionality should NOT be merged
-- Themes with different business purposes should NOT be merged
-- Themes affecting different files or different parts of files should NOT be merged
-- When in doubt, keep themes separate to preserve granularity
-
-${themes
-            .map((theme, index) => `
-Theme ${index + 1}: "${theme.name}"
-Description: ${theme.description}
-${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
-Files: ${theme.affectedFiles.join(', ')}
-${theme.keyChanges ? `Key changes: ${theme.keyChanges.join('; ')}` : ''}
-`)
-            .join('\n')}
-
-Questions:
-1. Which themes are describing the same change (even if worded differently)?
-2. Group duplicate themes together
-3. For each group, explain why they are duplicates
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "groups": [
-    {
-      "themeIndices": [1, 3],
-      "reasoning": "Both themes describe the same CI workflow change"
-    },
-    {
-      "themeIndices": [2],
-      "reasoning": "Unique theme about type definitions"
-    }
-  ]
-}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['groups']);
-            if (!extractionResult.success) {
-                logger_1.logger.info('EXPANSION', `Failed to parse deduplication response: ${extractionResult.error}`);
-                // Return each theme as its own group
-                return themes.map((theme) => [theme]);
-            }
-            const data = extractionResult.data;
-            // Convert indices to theme groups
-            const groups = [];
-            const processedIndices = new Set();
-            if (data.groups) {
-                for (const group of data.groups) {
-                    const themeGroup = [];
-                    for (const index of group.themeIndices) {
-                        if (index >= 1 &&
-                            index <= themes.length &&
-                            !processedIndices.has(index - 1)) {
-                            themeGroup.push(themes[index - 1]);
-                            processedIndices.add(index - 1);
-                        }
-                    }
-                    if (themeGroup.length > 0) {
-                        groups.push(themeGroup);
-                    }
-                }
-            }
-            // Add any themes not in groups
-            themes.forEach((theme, index) => {
-                if (!processedIndices.has(index)) {
-                    groups.push([theme]);
-                }
-            });
-            // Log batch deduplication results
-            const mergedCount = groups.filter((g) => g.length > 1).length;
-            const keptSeparate = groups.filter((g) => g.length === 1).length;
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Processed ${themes.length} themes into ${groups.length} groups`);
-            logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `${mergedCount} groups will be merged, ${keptSeparate} themes kept separate`);
-            groups.forEach((group, idx) => {
-                if (group.length > 1) {
-                    logger_1.logger.debug(constants_1.LoggerServices.EXPANSION, `Group ${idx + 1}: Merging ${group.length} themes: ${group.map((t) => `"${t.name}"`).join(', ')}`);
-                }
-            });
-            logger_1.logger.info(constants_1.LoggerServices.EXPANSION, `Batch deduplication: ${themes.length} themes → ${groups.length} groups (${mergedCount} merged, ${keptSeparate} separate)`);
-            return groups;
-        }
-        catch (error) {
-            logger_1.logger.info('EXPANSION', `Deduplication batch failed: ${error}`);
-            // Return each theme as its own group
-            return themes.map((theme) => [theme]);
-        }
-    }
-    /**
-     * Merge duplicate sub-themes into a single theme
-     */
-    async mergeSubThemes(themes) {
-        if (themes.length === 1) {
-            return themes[0];
-        }
-        const prompt = `
-These themes have been identified as duplicates describing the same change:
-
-${themes
-            .map((theme, index) => `
-Theme ${index + 1}: "${theme.name}"
-Description: ${theme.description}
-${theme.detailedDescription ? `Details: ${theme.detailedDescription}` : ''}
-${theme.technicalSummary ? `Technical: ${theme.technicalSummary}` : ''}
-`)
-            .join('\n')}
-
-Create a single, unified theme that best represents this change. Combine the best aspects of each description.
-
-CRITICAL: Respond with ONLY valid JSON.
-
-{
-  "name": "unified theme name",
-  "description": "clear, comprehensive description",
-  "detailedDescription": "detailed explanation combining all relevant details",
-  "reasoning": "why this unified version is better"
-}`;
-        try {
-            const response = await this.claudeClient.callClaude(prompt, 'theme-expansion');
-            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['name', 'description']);
-            if (!extractionResult.success) {
-                // Use the first theme as fallback
-                return themes[0];
-            }
-            const data = extractionResult.data;
-            // Combine all data from duplicate themes
-            const allFiles = new Set();
-            const allSnippets = [];
-            const allKeyChanges = [];
-            let totalConfidence = 0;
-            themes.forEach((theme) => {
-                theme.affectedFiles.forEach((file) => allFiles.add(file));
-                allSnippets.push(...theme.codeSnippets);
-                if (theme.keyChanges)
-                    allKeyChanges.push(...theme.keyChanges);
-                totalConfidence += theme.confidence;
-            });
-            return {
-                ...themes[0], // Use first theme as base
-                id: secure_file_namer_1.SecureFileNamer.generateSecureId('dedup'),
-                name: data.name || themes[0].name,
-                description: data.description || themes[0].description,
-                detailedDescription: data.detailedDescription,
-                affectedFiles: Array.from(allFiles),
-                codeSnippets: allSnippets,
-                keyChanges: [...new Set(allKeyChanges)], // Deduplicate key changes
-                confidence: totalConfidence / themes.length,
-                sourceThemes: themes.flatMap((t) => t.sourceThemes),
-                consolidationMethod: 'merge',
-                consolidationSummary: `Merged ${themes.length} similar themes`,
-            };
-        }
-        catch (error) {
-            logger_1.logger.info('EXPANSION', `Sub-theme merge failed: ${error}`);
-            return themes[0]; // Use first theme as fallback
-        }
     }
     /**
      * Calculate optimal batch size based on total theme count
@@ -34197,7 +33348,8 @@ const exec = __importStar(__nccwpck_require__(5236));
 const secure_file_namer_1 = __nccwpck_require__(5584);
 class ThemeNamingService {
     async generateMergedThemeNameAndDescription(themes) {
-        const prompt = this.buildMergedThemeNamingPrompt(themes);
+        const complexity = this.assessChangeComplexity(themes);
+        const prompt = this.buildComplexityAwareMergedThemeNamingPrompt(themes, complexity);
         return this.executeMergedThemeNaming(prompt);
     }
     async executeMergedThemeNaming(prompt) {
@@ -34264,6 +33416,11 @@ class ThemeNamingService {
         };
     }
     generateMergedThemeNameWithContext(themes, enhancedContext) {
+        const complexity = this.assessChangeComplexityWithContext(themes, enhancedContext);
+        const prompt = this.buildEnhancedComplexityAwareMergedThemeNamingPrompt(themes, enhancedContext, complexity);
+        return this.executeMergedThemeNaming(prompt);
+    }
+    generateMergedThemeNameWithContextLegacy(themes, enhancedContext) {
         // Build enhanced context if available
         let codeContext = '';
         if (enhancedContext?.codeChanges &&
@@ -34386,6 +33543,238 @@ Respond in this exact JSON format (no other text):
             description: `Consolidated: ${themes.map((t) => t.name).join(', ')}`,
         };
     }
+    /**
+     * Assess change complexity for naming strategy
+     */
+    assessChangeComplexity(themes) {
+        // Simple: Single theme, basic technical changes
+        if (themes.length === 1) {
+            const theme = themes[0];
+            const files = theme.affectedFiles || [];
+            const isSimple = files.length <= 2 && this.isSimpleTechnicalPattern(theme.name, theme.description);
+            if (isSimple) {
+                return {
+                    complexity: 'simple',
+                    confidence: 0.9,
+                    reasoning: 'Single theme with simple technical change',
+                    recommendedApproach: 'technical-specific'
+                };
+            }
+        }
+        // Complex: Multiple themes or business features
+        if (themes.length >= 3 || this.hasBusinessFeaturePatterns(themes)) {
+            return {
+                complexity: 'complex',
+                confidence: 0.8,
+                reasoning: 'Multiple themes or business feature detected',
+                recommendedApproach: 'business-focused'
+            };
+        }
+        // Moderate: Default middle ground
+        return {
+            complexity: 'moderate',
+            confidence: 0.7,
+            reasoning: 'Moderate complexity change requiring hybrid approach',
+            recommendedApproach: 'hybrid'
+        };
+    }
+    /**
+     * Assess complexity with enhanced context
+     */
+    assessChangeComplexityWithContext(themes, enhancedContext) {
+        const baseComplexity = this.assessChangeComplexity(themes);
+        if (!enhancedContext?.contextSummary) {
+            return baseComplexity;
+        }
+        const contextText = enhancedContext.contextSummary.toLowerCase();
+        // Simple technical patterns in context
+        const simplePatterns = [
+            /replaced console\.warn with/,
+            /add.*import/,
+            /logger.*service/,
+            /structured logging/,
+            /fix.*typo/,
+            /update.*comment/
+        ];
+        if (simplePatterns.some(pattern => pattern.test(contextText))) {
+            return {
+                complexity: 'simple',
+                confidence: 0.95,
+                reasoning: 'Simple technical change pattern detected in context',
+                recommendedApproach: 'technical-specific'
+            };
+        }
+        return baseComplexity;
+    }
+    /**
+     * Check for simple technical patterns
+     */
+    isSimpleTechnicalPattern(name, description) {
+        const text = (name + ' ' + description).toLowerCase();
+        const patterns = [
+            /console\.warn/,
+            /logger/,
+            /import/,
+            /logging/,
+            /replace.*with/,
+            /add.*import/,
+            /fix.*typo/,
+            /update.*comment/
+        ];
+        return patterns.some(pattern => pattern.test(text));
+    }
+    /**
+     * Check for business feature patterns
+     */
+    hasBusinessFeaturePatterns(themes) {
+        const allText = themes.map(t => t.name + ' ' + t.description).join(' ').toLowerCase();
+        const patterns = [
+            /authentication/,
+            /authorization/,
+            /user.*flow/,
+            /business.*logic/,
+            /workflow/,
+            /onboarding/,
+            /payment/,
+            /checkout/
+        ];
+        return patterns.some(pattern => pattern.test(allText));
+    }
+    /**
+     * Build complexity-aware merged theme naming prompt
+     */
+    buildComplexityAwareMergedThemeNamingPrompt(themes, complexity) {
+        const themeDetails = themes
+            .map((theme) => `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles.join(', ')})`)
+            .join('\n');
+        const namingGuidelines = this.getNamingGuidelines(complexity);
+        return `You are analyzing related code changes with ${complexity.recommendedApproach.toUpperCase()} naming approach.
+
+COMPLEXITY: ${complexity.complexity.toUpperCase()} (${complexity.confidence} confidence)
+REASONING: ${complexity.reasoning}
+APPROACH: ${complexity.recommendedApproach}
+
+These ${themes.length} themes will be consolidated:
+
+${themeDetails}
+
+${namingGuidelines.instructions}
+
+Examples for ${complexity.complexity} changes:
+${namingGuidelines.examples.map(ex => `- ${ex}`).join('\n')}
+
+Respond in this exact JSON format (no other text):
+{
+  "name": "${namingGuidelines.namePrompt}",
+  "description": "${namingGuidelines.descriptionPrompt}"
+}`;
+    }
+    /**
+     * Build enhanced complexity-aware prompt with context
+     */
+    buildEnhancedComplexityAwareMergedThemeNamingPrompt(themes, enhancedContext, complexity) {
+        if (!complexity) {
+            complexity = this.assessChangeComplexityWithContext(themes, enhancedContext);
+        }
+        const themeDetails = themes
+            .map((theme) => `"${theme.name}": ${theme.description} (confidence: ${theme.confidence}, files: ${theme.affectedFiles?.join(', ') || 'unknown'})`)
+            .join('\n');
+        // Build enhanced context if available
+        let codeContext = '';
+        if (enhancedContext?.codeChanges &&
+            enhancedContext.codeChanges.length > 0) {
+            const changes = enhancedContext.codeChanges;
+            codeContext = `\nACTUAL CODE CHANGES:\n`;
+            codeContext += `- Files: ${changes.length} files affected\n`;
+            codeContext += `- Types: ${[...new Set(changes.map((c) => c.fileType))].join(', ')}\n`;
+            const functions = changes.flatMap((c) => c.functionsChanged);
+            if (functions.length > 0) {
+                codeContext += `- Functions added/modified: ${functions.slice(0, 5).join(', ')}${functions.length > 5 ? '...' : ''}\n`;
+            }
+            const imports = changes.flatMap((c) => c.importsChanged);
+            if (imports.length > 0) {
+                codeContext += `- Dependencies: ${imports.slice(0, 3).join(', ')}${imports.length > 3 ? '...' : ''}\n`;
+            }
+            if (enhancedContext?.contextSummary) {
+                codeContext += `- Summary: ${enhancedContext.contextSummary}\n`;
+            }
+        }
+        const namingGuidelines = this.getNamingGuidelines(complexity);
+        return `You are analyzing related code changes with ${complexity.recommendedApproach.toUpperCase()} naming approach.
+
+COMPLEXITY: ${complexity.complexity.toUpperCase()} (${complexity.confidence} confidence)
+REASONING: ${complexity.reasoning}
+APPROACH: ${complexity.recommendedApproach}
+
+These ${themes.length} themes will be consolidated:
+
+${themeDetails}
+${codeContext}
+
+${namingGuidelines.instructions}
+
+Examples for ${complexity.complexity} changes:
+${namingGuidelines.examples.map(ex => `- ${ex}`).join('\n')}
+
+Respond in this exact JSON format (no other text):
+{
+  "name": "${namingGuidelines.namePrompt}",
+  "description": "${namingGuidelines.descriptionPrompt}"
+}`;
+    }
+    /**
+     * Get naming guidelines based on complexity
+     */
+    getNamingGuidelines(complexity) {
+        const guidelines = {
+            simple: {
+                instructions: `TECHNICAL-SPECIFIC NAMING GUIDELINES:
+- Describe the specific technical action taken (max 12 words)
+- Use precise technical terms that clarify what changed
+- Mention specific functions, methods, or patterns modified
+- Focus on WHAT changed, not just WHY
+- Example: "Replace console.warn with structured logger calls"`,
+                examples: [
+                    '"Replace console.warn with logger.warn calls"',
+                    '"Add LoggerServices import for centralized logging"',
+                    '"Update error handling to use structured logging"'
+                ],
+                namePrompt: 'Specific technical action description (max 12 words)',
+                descriptionPrompt: 'Detailed explanation of technical change made'
+            },
+            complex: {
+                instructions: `BUSINESS-FOCUSED NAMING GUIDELINES:
+- Focus on user value and business capability (max 8 words)
+- Use business language avoiding technical implementation details
+- Emphasize business outcomes and user benefits
+- Think from product manager perspective explaining to executives
+- Example: "Enhance User Authentication Security"`,
+                examples: [
+                    '"Enable Secure User Authentication"',
+                    '"Streamline Customer Onboarding Process"',
+                    '"Improve Error Resolution Workflow"'
+                ],
+                namePrompt: 'Business capability or user value created (max 8 words)',
+                descriptionPrompt: 'Business value and user benefit explanation'
+            },
+            moderate: {
+                instructions: `HYBRID NAMING GUIDELINES:
+- Balance technical specificity with business context (max 10 words)
+- Include both technical action and business value
+- Use technical terms when they add clarity
+- Connect technical change to business outcome
+- Example: "Implement Structured Logging for Better Error Diagnosis"`,
+                examples: [
+                    '"Implement Structured Logging for Error Diagnosis"',
+                    '"Add OAuth2 Integration for User Security"',
+                    '"Enhance API Validation for Data Integrity"'
+                ],
+                namePrompt: 'Technical change with business context (max 10 words)',
+                descriptionPrompt: 'Technical change explanation with business value'
+            }
+        };
+        return guidelines[complexity.complexity] || guidelines.moderate;
+    }
 }
 exports.ThemeNamingService = ThemeNamingService;
 
@@ -34436,11 +33825,11 @@ const exec = __importStar(__nccwpck_require__(5236));
 const secure_file_namer_1 = __nccwpck_require__(5584);
 const theme_similarity_1 = __nccwpck_require__(3500);
 const theme_expansion_1 = __nccwpck_require__(8430);
-const hierarchical_similarity_1 = __nccwpck_require__(4200);
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const json_extractor_1 = __nccwpck_require__(8168);
 const performance_tracker_1 = __nccwpck_require__(9600);
 const business_prompt_templates_1 = __nccwpck_require__(2813);
+const logger_1 = __nccwpck_require__(9000);
 // Processing configuration
 const PROCESSING_CONFIG = {
     CHUNK_TIMEOUT: 120000, // 2 minutes
@@ -34475,8 +33864,27 @@ class ClaudeService {
         }
         catch (err) {
             const error = err instanceof Error ? err.message : String(err);
-            return this.createFallbackAnalysis(chunk);
+            throw new Error(`Theme analysis failed for ${chunk.filename}: ${error}`);
         }
+    }
+    async analyzeChunkWithRetry(chunk, context, codeChange) {
+        const MAX_RETRIES = 5;
+        let lastError;
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return await this.analyzeChunk(chunk, context, codeChange);
+            }
+            catch (error) {
+                lastError = error instanceof Error ? error : new Error(String(error));
+                logger_1.logger.warn('THEME_SERVICE', `AI analysis attempt ${attempt}/${MAX_RETRIES} failed for ${chunk.filename}: ${lastError.message}`);
+                if (attempt === MAX_RETRIES) {
+                    throw new Error(`AI theme analysis failed after ${MAX_RETRIES} attempts for ${chunk.filename}: ${lastError.message}`);
+                }
+                // Brief delay before retry (exponential backoff)
+                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 500));
+            }
+        }
+        throw lastError;
     }
     buildAnalysisPrompt(chunk, context, codeChange) {
         // Use full content - modern context windows can handle it
@@ -34545,45 +33953,8 @@ class ClaudeService {
                 mainClassesChanged: codeChange?.classesChanged || data.mainClassesChanged || [],
             };
         }
-        // Use the better fallback that includes filename
-        return this.createFallbackAnalysis(chunk);
-    }
-    createFallbackAnalysis(chunk) {
-        // Try to infer business capability from filename
-        const fileName = chunk.filename.toLowerCase();
-        let businessCapability = 'User Experience Enhancement';
-        let userValue = 'Users benefit from improved system functionality';
-        let businessProcess = 'General system improvement and optimization';
-        if (fileName.includes('auth') || fileName.includes('login')) {
-            businessCapability = 'User Account Management';
-            userValue = 'Users access their accounts securely and efficiently';
-            businessProcess = 'Secure user authentication and access control';
-        }
-        else if (fileName.includes('test') || fileName.includes('spec')) {
-            businessCapability = 'Development Workflow Optimization';
-            userValue = 'Developers catch issues before users experience them';
-            businessProcess = 'Quality assurance and automated testing';
-        }
-        else if (fileName.includes('config') || fileName.includes('setting')) {
-            businessCapability = 'Development Workflow Optimization';
-            userValue = 'Developers deploy and maintain systems reliably';
-            businessProcess = 'System configuration and deployment management';
-        }
-        else if (fileName.includes('ui') || fileName.includes('component')) {
-            businessCapability = 'User Experience Enhancement';
-            userValue = 'Users accomplish tasks intuitively and efficiently';
-            businessProcess = 'Intuitive user interface and interaction design';
-        }
-        return {
-            themeName: businessCapability,
-            description: userValue,
-            businessImpact: businessProcess,
-            confidence: 0.4,
-            codePattern: 'User Experience Enhancement',
-            suggestedParent: undefined,
-            detailedDescription: `Business analysis unavailable - inferred from file: ${chunk.filename}`,
-            technicalSummary: `Modifications in ${chunk.filename}`,
-        };
+        // PRD-compliant: Hard error instead of algorithmic fallback
+        throw new Error(`Failed to parse Claude response for ${chunk.filename}. Raw output: ${output.substring(0, 200)}...`);
     }
 }
 class ChunkProcessor {
@@ -34608,22 +33979,18 @@ class ThemeContextManager {
     }
     async processChunk(chunk) {
         const contextString = this.buildContextForClaude();
-        const analysis = await this.claudeService.analyzeChunk(chunk, contextString);
+        const analysis = await this.claudeService.analyzeChunkWithRetry(chunk, contextString);
         const placement = this.determineThemePlacement(analysis);
         this.updateContext(placement, analysis, chunk);
     }
     async analyzeChunkOnly(chunk, codeChange) {
         try {
             const contextString = this.buildContextForClaude();
-            const analysis = await this.claudeService.analyzeChunk(chunk, contextString, codeChange);
+            const analysis = await this.claudeService.analyzeChunkWithRetry(chunk, contextString, codeChange);
             return { chunk, analysis };
         }
         catch (error) {
-            return {
-                chunk,
-                analysis: this.createFallbackAnalysis(chunk),
-                error: error instanceof Error ? error.message : String(error),
-            };
+            throw new Error(`Batch analysis failed for ${chunk.filename}: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
     processBatchResults(results, codeChangeMap) {
@@ -34634,16 +34001,6 @@ class ThemeContextManager {
             const codeChange = codeChangeMap.get(result.chunk.filename);
             this.updateContext(placement, result.analysis, result.chunk, codeChange);
         }
-    }
-    createFallbackAnalysis(chunk) {
-        return {
-            themeName: `Changes in ${chunk.filename}`,
-            description: 'Analysis unavailable - using fallback',
-            businessImpact: 'Unknown impact',
-            confidence: 0.3,
-            codePattern: 'File modification',
-            suggestedParent: undefined,
-        };
     }
     buildContextForClaude() {
         const existingThemes = Array.from(this.context.themes.values())
@@ -34775,7 +34132,6 @@ class ThemeService {
         this.similarityService = new theme_similarity_1.ThemeSimilarityService(anthropicApiKey, consolidationConfig);
         // Initialize expansion services with simplified AI-driven approach
         this.expansionService = new theme_expansion_1.ThemeExpansionService(anthropicApiKey);
-        this.hierarchicalSimilarityService = new hierarchical_similarity_1.HierarchicalSimilarityService(anthropicApiKey);
         // Enable expansion by default
         this.expansionEnabled = consolidationConfig?.expansionEnabled ?? true;
     }
@@ -34890,22 +34246,10 @@ class ThemeService {
                     // Expand themes hierarchically using pre-identified candidates for optimization
                     const beforeExpansionCount = consolidatedThemes.length;
                     const expandedThemes = await this.expansionService.expandThemesHierarchically(consolidatedThemes);
-                    // Apply cross-level deduplication
-                    const minThemesForCrossLevel = parseInt(process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20');
-                    if (process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
-                        expandedThemes.length >= minThemesForCrossLevel) {
-                        performance_tracker_1.performanceTracker.startTiming('Cross-Level Deduplication');
-                        const beforeDedup = expandedThemes.length;
-                        const dedupStartTime = Date.now();
-                        await this.hierarchicalSimilarityService.deduplicateHierarchy(expandedThemes);
-                        // Track deduplication effectiveness
-                        performance_tracker_1.performanceTracker.trackEffectiveness('Cross-Level Deduplication', beforeDedup, expandedThemes.length, Date.now() - dedupStartTime);
-                        performance_tracker_1.performanceTracker.endTiming('Cross-Level Deduplication');
-                    }
                     // Track expansion effectiveness
                     performance_tracker_1.performanceTracker.trackEffectiveness('Theme Expansion', beforeExpansionCount, expandedThemes.length, Date.now() - expansionStartTime);
-                    // Update consolidated themes with expanded and deduplicated results
-                    consolidatedThemes = expandedThemes; // For now, use expanded themes directly
+                    // Update consolidated themes with expanded results
+                    consolidatedThemes = expandedThemes;
                     // Calculate expansion statistics
                     expansionStats = this.calculateExpansionStats(consolidatedThemes);
                 }
@@ -35106,12 +34450,6 @@ class ThemeService {
      */
     getExpansionEffectiveness() {
         return this.expansionService.getEffectiveness();
-    }
-    /**
-     * Get effectiveness metrics from hierarchical similarity service
-     */
-    getHierarchicalEffectiveness() {
-        return this.hierarchicalSimilarityService.getEffectiveness();
     }
 }
 exports.ThemeService = ThemeService;
@@ -35641,37 +34979,36 @@ const prompt_templates_1 = __nccwpck_require__(1958);
 class BusinessPromptTemplates extends prompt_templates_1.PromptTemplates {
     /**
      * Business capability identification prompt - transforms technical changes to user value
+     * Now includes complexity-aware naming strategy
      */
-    static createBusinessImpactPrompt(filePath, codeChanges, technicalContext) {
+    static createBusinessImpactPrompt(filePath, codeChanges, technicalContext, changeComplexity) {
+        const strategy = this.determineNamingStrategy(changeComplexity, codeChanges, filePath);
+        return this.createComplexityAwarePrompt(filePath, codeChanges, technicalContext, strategy);
+    }
+    /**
+     * Create prompt based on naming strategy
+     */
+    static createComplexityAwarePrompt(filePath, codeChanges, technicalContext, strategy) {
         return this.createJsonPrompt({
-            instruction: `You are a product manager analyzing code changes for business impact and user value.
+            instruction: `You are analyzing code changes with ${strategy.namingApproach.toUpperCase()} naming approach.
 
-PERSPECTIVE: Focus on USER VALUE and BUSINESS CAPABILITY, not technical implementation.
+NAMING STRATEGY: ${strategy.namingApproach} (${strategy.changeComplexity} complexity)
+${this.getNamingInstructions(strategy)}
 
 CONTEXT:
 File: ${filePath}
 Code Changes: ${codeChanges}
 Technical Context: ${technicalContext}
 
-CRITICAL QUESTIONS TO ANSWER:
-1. What user problem does this solve or improve?
-2. What business process does this enable or enhance?
-3. What user journey or workflow does this affect?
-4. How does this create value for end users?
-5. What can users now DO that they couldn't before (or do BETTER)?
-
-BUSINESS-FIRST ANALYSIS:
-Think like a product manager explaining this change to an executive board.
-Focus on user outcomes, business processes, and customer value.
-Avoid technical jargon - use business language.`,
+${this.getAnalysisQuestions(strategy)}`,
             jsonSchema: `{
-  "businessCapability": "What user capability this creates (max 8 words)",
+  "businessCapability": "${this.getNamePrompt(strategy)}",
   "userValue": "Direct benefit to end users (max 12 words)",
   "businessProcess": "Business workflow this improves (max 15 words)",
-  "userScenarios": ["When users will experience this benefit"],
+  "userScenarios": ["Specific user scenarios this enables (array)"],
   "businessDomain": "Primary business area affected",
-  "executiveSummary": "One-sentence business value for executives",
-  "technicalImplementation": "How it's implemented (max 10 words)",
+  "executiveSummary": "Executive summary of business impact (max 25 words)",
+  "technicalImplementation": "Technical approach and implementation details",
   "confidence": 0.0-1.0
 }`,
             examples: [
@@ -35705,6 +35042,156 @@ Avoid technical jargon - use business language.`,
                 'Confidence reflects certainty of business impact assessment'
             ]
         });
+    }
+    /**
+     * Determine naming strategy based on change complexity and patterns
+     */
+    static determineNamingStrategy(complexity = 'moderate', codeChanges, filePath) {
+        const analysis = this.analyzeChangeComplexity(codeChanges, filePath);
+        // Simple technical changes get technical-specific naming
+        if (complexity === 'simple' || analysis.isSimpleTechnicalChange) {
+            return {
+                changeComplexity: 'simple',
+                namingApproach: 'technical-specific',
+                maxWords: 12,
+                allowTechnicalTerms: true
+            };
+        }
+        // Complex business features get business-focused naming
+        if (complexity === 'complex' || analysis.isComplexBusinessFeature) {
+            return {
+                changeComplexity: 'complex',
+                namingApproach: 'business-focused',
+                maxWords: 8,
+                allowTechnicalTerms: false
+            };
+        }
+        // Moderate changes get hybrid approach
+        return {
+            changeComplexity: 'moderate',
+            namingApproach: 'hybrid',
+            maxWords: 10,
+            allowTechnicalTerms: true
+        };
+    }
+    /**
+     * Analyze code changes to determine complexity
+     */
+    static analyzeChangeComplexity(codeChanges, filePath) {
+        const changeText = codeChanges.toLowerCase();
+        const pathText = filePath.toLowerCase();
+        // Simple technical change patterns
+        const simplePatterns = [
+            /console\.(log|warn|error)/,
+            /import.*logger/i,
+            /logger\.(info|warn|error)/,
+            /\.warn\(/,
+            /console\.warn.*replaced.*logger/,
+            /add.*import/,
+            /replace.*console/,
+            /fix.*typo/,
+            /update.*comment/,
+            /rename.*variable/,
+            /add.*semicolon/
+        ];
+        // Complex business feature patterns  
+        const complexPatterns = [
+            /authentication/,
+            /authorization/,
+            /payment/,
+            /checkout/,
+            /registration/,
+            /onboarding/,
+            /workflow/,
+            /business.*logic/,
+            /user.*flow/,
+            /feature.*flag/
+        ];
+        const isSimple = simplePatterns.some(pattern => pattern.test(changeText)) ||
+            pathText.includes('test') ||
+            pathText.includes('spec') ||
+            (changeText.includes('import') && changeText.split('\n').length < 5);
+        const isComplex = complexPatterns.some(pattern => pattern.test(changeText)) ||
+            changeText.split('file').length > 3 ||
+            changeText.includes('new feature') ||
+            changeText.includes('business requirement');
+        return {
+            isSimpleTechnicalChange: isSimple,
+            isComplexBusinessFeature: isComplex,
+            confidence: isSimple || isComplex ? 0.9 : 0.6,
+            reasoning: isSimple ? 'Simple technical change detected' :
+                isComplex ? 'Complex business feature detected' :
+                    'Moderate complexity change'
+        };
+    }
+    /**
+     * Get naming instructions based on strategy
+     */
+    static getNamingInstructions(strategy) {
+        switch (strategy.namingApproach) {
+            case 'technical-specific':
+                return `FOCUS: Describe the specific technical action taken
+- Use precise technical terms that clarify what changed
+- Mention specific functions, methods, or patterns modified
+- Aim for clarity over business abstraction
+- Example: "Replace console.warn with structured logger calls"`;
+            case 'business-focused':
+                return `FOCUS: Emphasize user value and business capability
+- Use business language avoiding technical implementation details
+- Focus on user outcomes and business processes
+- Think from product manager perspective
+- Example: "Enhance System Reliability and User Experience"`;
+            case 'hybrid':
+                return `FOCUS: Balance technical specificity with business context
+- Include both what technically changed and why it matters
+- Use technical terms when they add clarity
+- Connect technical action to business value
+- Example: "Implement Structured Logging for Better Error Diagnosis"`;
+            default:
+                return 'FOCUS: Analyze the change and provide appropriate naming';
+        }
+    }
+    /**
+     * Get analysis questions based on strategy
+     */
+    static getAnalysisQuestions(strategy) {
+        switch (strategy.namingApproach) {
+            case 'technical-specific':
+                return `ANALYSIS QUESTIONS:
+1. What specific technical change was made?
+2. Which functions, methods, or patterns were modified?
+3. What was replaced, added, or removed?
+4. How would a developer describe this change?`;
+            case 'business-focused':
+                return `ANALYSIS QUESTIONS:
+1. What user problem does this solve or improve?
+2. What business process does this enable or enhance?
+3. What user journey or workflow does this affect?
+4. How does this create value for end users?`;
+            case 'hybrid':
+                return `ANALYSIS QUESTIONS:
+1. What technical change was made and why?
+2. How does this technical change improve user experience?
+3. What business capability does this technical improvement enable?
+4. What would both a developer and product manager find valuable about this change?`;
+            default:
+                return 'Analyze the change for appropriate naming approach.';
+        }
+    }
+    /**
+     * Get name prompt based on strategy
+     */
+    static getNamePrompt(strategy) {
+        switch (strategy.namingApproach) {
+            case 'technical-specific':
+                return `Specific technical action description (max ${strategy.maxWords} words)`;
+            case 'business-focused':
+                return `Business capability or user value created (max ${strategy.maxWords} words)`;
+            case 'hybrid':
+                return `Technical change with business context (max ${strategy.maxWords} words)`;
+            default:
+                return `Change description (max ${strategy.maxWords} words)`;
+        }
     }
     /**
      * Business domain classification - maps code to business capabilities
@@ -36058,6 +35545,232 @@ exports.BusinessPromptTemplates = BusinessPromptTemplates;
 
 /***/ }),
 
+/***/ 1981:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * Utility for analyzing code change complexity for theme naming strategy
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ComplexityAnalyzer = void 0;
+class ComplexityAnalyzer {
+    /**
+     * Analyze code changes and file patterns to determine complexity
+     */
+    static analyzeChangeComplexity(codeChanges, filePath, contextSummary) {
+        const changeText = codeChanges.toLowerCase();
+        const pathText = filePath.toLowerCase();
+        const contextText = contextSummary?.toLowerCase() || '';
+        // Simple technical change patterns
+        const simplePatterns = [
+            /console\.(log|warn|error)/,
+            /import.*logger/i,
+            /logger\.(info|warn|error)/,
+            /\.warn\(/,
+            /console\.warn.*replaced.*logger/,
+            /add.*import/,
+            /replace.*console/,
+            /fix.*typo/,
+            /update.*comment/,
+            /rename.*variable/,
+            /add.*semicolon/,
+            /structured logging/,
+            /logger.*service/
+        ];
+        // Complex business feature patterns  
+        const complexPatterns = [
+            /authentication/,
+            /authorization/,
+            /payment/,
+            /checkout/,
+            /registration/,
+            /onboarding/,
+            /workflow/,
+            /business.*logic/,
+            /user.*flow/,
+            /feature.*flag/,
+            /user.*journey/,
+            /business.*process/
+        ];
+        const isSimple = simplePatterns.some(pattern => pattern.test(changeText) || pattern.test(contextText)) || pathText.includes('test') ||
+            pathText.includes('spec') ||
+            (changeText.includes('import') && changeText.split('\n').length < 5);
+        const isComplex = complexPatterns.some(pattern => pattern.test(changeText) || pattern.test(contextText)) || changeText.split('file').length > 3 ||
+            changeText.includes('new feature') ||
+            changeText.includes('business requirement');
+        return {
+            isSimpleTechnicalChange: isSimple,
+            isComplexBusinessFeature: isComplex,
+            confidence: isSimple || isComplex ? 0.9 : 0.6,
+            reasoning: isSimple ? 'Simple technical change detected' :
+                isComplex ? 'Complex business feature detected' :
+                    'Moderate complexity change'
+        };
+    }
+    /**
+     * Generate comprehensive complexity profile with recommendations
+     */
+    static generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, codeChanges, contextSummary) {
+        const detectedPatterns = [];
+        // Single theme analysis
+        if (themeCount === 1 && affectedFiles.length <= 2) {
+            const isSimple = this.isSimpleTechnicalPattern(themeName || '', themeDescription || '', codeChanges, contextSummary);
+            if (isSimple) {
+                detectedPatterns.push('single-file-technical-change');
+                return {
+                    complexity: 'simple',
+                    confidence: 0.9,
+                    reasoning: 'Single theme with simple technical change',
+                    recommendedApproach: 'technical-specific',
+                    detectedPatterns
+                };
+            }
+        }
+        // Multiple themes or business features
+        if (themeCount >= 3 || this.hasBusinessFeaturePatterns(themeName, themeDescription, codeChanges)) {
+            detectedPatterns.push('multiple-themes-or-business-feature');
+            return {
+                complexity: 'complex',
+                confidence: 0.8,
+                reasoning: 'Multiple themes or business feature detected',
+                recommendedApproach: 'business-focused',
+                detectedPatterns
+            };
+        }
+        // Context-aware analysis
+        if (contextSummary) {
+            const contextAnalysis = this.analyzeContextPatterns(contextSummary);
+            if (contextAnalysis.isSimple) {
+                detectedPatterns.push('simple-context-pattern');
+                return {
+                    complexity: 'simple',
+                    confidence: 0.95,
+                    reasoning: 'Simple technical change pattern detected in context',
+                    recommendedApproach: 'technical-specific',
+                    detectedPatterns
+                };
+            }
+        }
+        // Default moderate complexity
+        detectedPatterns.push('moderate-complexity-default');
+        return {
+            complexity: 'moderate',
+            confidence: 0.7,
+            reasoning: 'Moderate complexity change requiring hybrid approach',
+            recommendedApproach: 'hybrid',
+            detectedPatterns
+        };
+    }
+    /**
+     * Check for simple technical patterns
+     */
+    static isSimpleTechnicalPattern(name, description, codeChanges, contextSummary) {
+        const text = (name + ' ' + description + ' ' + (codeChanges || '') + ' ' + (contextSummary || '')).toLowerCase();
+        const patterns = [
+            /console\.warn/,
+            /logger/,
+            /import/,
+            /logging/,
+            /replace.*with/,
+            /add.*import/,
+            /fix.*typo/,
+            /update.*comment/,
+            /structured logging/,
+            /replaced.*console.*warn/
+        ];
+        return patterns.some(pattern => pattern.test(text));
+    }
+    /**
+     * Check for business feature patterns
+     */
+    static hasBusinessFeaturePatterns(name, description, codeChanges) {
+        const allText = (name + ' ' + description + ' ' + (codeChanges || '')).toLowerCase();
+        const patterns = [
+            /authentication/,
+            /authorization/,
+            /user.*flow/,
+            /business.*logic/,
+            /workflow/,
+            /onboarding/,
+            /payment/,
+            /checkout/,
+            /user.*journey/,
+            /business.*process/
+        ];
+        return patterns.some(pattern => pattern.test(allText));
+    }
+    /**
+     * Analyze context summary for complexity indicators
+     */
+    static analyzeContextPatterns(contextSummary) {
+        const contextText = contextSummary.toLowerCase();
+        // Simple technical patterns in context
+        const simplePatterns = [
+            /replaced console\.warn with/,
+            /add.*import/,
+            /logger.*service/,
+            /structured logging/,
+            /fix.*typo/,
+            /update.*comment/,
+            /single.*file.*change/,
+            /minor.*refactor/
+        ];
+        // Complex patterns in context
+        const complexPatterns = [
+            /multiple.*components/,
+            /business.*feature/,
+            /user.*workflow/,
+            /new.*functionality/,
+            /feature.*implementation/,
+            /system.*integration/
+        ];
+        return {
+            isSimple: simplePatterns.some(pattern => pattern.test(contextText)),
+            isComplex: complexPatterns.some(pattern => pattern.test(contextText))
+        };
+    }
+    /**
+     * Get examples for detected complexity patterns
+     */
+    static getPatternExamples(detectedPatterns) {
+        const examples = {
+            'single-file-technical-change': [
+                'Replace console.warn with logger.warn calls',
+                'Add LoggerServices import for centralized logging',
+                'Update error handling to use structured logging'
+            ],
+            'multiple-themes-or-business-feature': [
+                'Enable Secure User Authentication',
+                'Streamline Customer Onboarding Process',
+                'Improve Error Resolution Workflow'
+            ],
+            'simple-context-pattern': [
+                'Replace console.warn with structured logging',
+                'Add import statement for logger service',
+                'Update logging call to use centralized system'
+            ],
+            'moderate-complexity-default': [
+                'Implement Structured Logging for Error Diagnosis',
+                'Add OAuth2 Integration for User Security',
+                'Enhance API Validation for Data Integrity'
+            ]
+        };
+        const allExamples = [];
+        detectedPatterns.forEach(pattern => {
+            if (examples[pattern]) {
+                allExamples.push(...examples[pattern]);
+            }
+        });
+        return allExamples.length > 0 ? allExamples : examples['moderate-complexity-default'];
+    }
+}
+exports.ComplexityAnalyzer = ComplexityAnalyzer;
+
+
+/***/ }),
+
 /***/ 1958:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -36206,74 +35919,6 @@ Only create sub-themes if there are genuinely distinct business concerns.`,
                 'Each sub-theme must have confidence >= 0.6',
                 'Sub-themes must be distinct from each other',
                 'Maintain business focus over technical details',
-            ],
-        });
-    }
-    /**
-     * Template for cross-level similarity analysis
-     */
-    static createCrossLevelSimilarityPrompt(theme1Name, theme1Description, theme1Level, theme1Files, theme2Name, theme2Description, theme2Level, theme2Files, levelDifference) {
-        return this.createJsonPrompt({
-            instruction: `Analyze these two themes from different hierarchy levels for similarity and relationship:
-
-THEME 1:
-Level: ${theme1Level}
-Name: ${theme1Name}
-Description: ${theme1Description}
-Files: ${theme1Files.join(', ')}
-
-THEME 2:
-Level: ${theme2Level}
-Name: ${theme2Name}
-Description: ${theme2Description}
-Files: ${theme2Files.join(', ')}
-
-Level Difference: ${levelDifference}
-
-Determine the relationship between these themes across hierarchy levels:
-
-1. SIMILARITY SCORE (0-1): How similar are these themes in business purpose?
-2. RELATIONSHIP TYPE: 
-   - "duplicate": Essentially the same theme (should be merged)
-   - "overlap": Significant overlap in scope (should be consolidated)
-   - "related": Related but distinct (keep separate)
-   - "distinct": Completely different themes
-
-3. MERGE ACTION:
-   - "merge_up": Merge into higher-level theme
-   - "merge_down": Merge into lower-level theme
-   - "merge_sibling": Merge at same level under common parent
-   - "keep_separate": Keep as separate themes
-
-Focus on business value and avoid merging themes with distinct business purposes.`,
-            jsonSchema: `{
-  "similarityScore": number,
-  "relationshipType": "duplicate|overlap|related|distinct",
-  "action": "merge_up|merge_down|merge_sibling|keep_separate",
-  "confidence": number,
-  "reasoning": "detailed explanation"
-}`,
-            examples: [
-                `{
-  "similarityScore": 0.85,
-  "relationshipType": "duplicate",
-  "action": "merge_up",
-  "confidence": 0.9,
-  "reasoning": "Both themes handle user authentication with nearly identical scope and files"
-}`,
-                `{
-  "similarityScore": 0.3,
-  "relationshipType": "distinct",
-  "action": "keep_separate",
-  "confidence": 0.95,
-  "reasoning": "Themes address completely different business concerns - authentication vs data processing"
-}`,
-            ],
-            constraints: [
-                'Similarity score must be between 0 and 1',
-                'Confidence must be between 0 and 1',
-                'Reasoning must explain the decision clearly',
-                'Consider file overlap and business purpose',
             ],
         });
     }
@@ -36753,6 +36398,899 @@ ThemeFormatter.MAX_DESCRIPTION_LENGTH = 200;
 
 /***/ }),
 
+/***/ 1556:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.GitHubCommentService = void 0;
+const github = __importStar(__nccwpck_require__(3228));
+const pr_comment_formatter_1 = __nccwpck_require__(6077);
+const logger_1 = __nccwpck_require__(9000);
+/**
+ * Service for posting AI review results as GitHub PR comments
+ */
+class GitHubCommentService {
+    constructor(githubToken) {
+        this.githubToken = githubToken;
+        this.octokit = github.getOctokit(githubToken);
+        this.context = github.context;
+    }
+    /**
+     * Post main review comment to PR
+     */
+    async postMainReviewComment(reviewResult) {
+        if (!this.isPullRequestContext()) {
+            logger_1.logger.warn('GITHUB_COMMENT', 'Not in PR context, skipping comment posting');
+            return;
+        }
+        try {
+            const comment = pr_comment_formatter_1.PRCommentFormatter.formatMainComment(reviewResult);
+            const { data: existingComments } = await this.octokit.rest.issues.listComments({
+                owner: this.context.repo.owner,
+                repo: this.context.repo.repo,
+                issue_number: this.context.issue.number,
+            });
+            // Check if we already posted a review comment (to update instead of duplicate)
+            const existingComment = existingComments.find(c => c.body?.includes('🤖 AI Code Review Results') && c.user?.login === 'github-actions[bot]');
+            if (existingComment) {
+                // Update existing comment
+                await this.octokit.rest.issues.updateComment({
+                    owner: this.context.repo.owner,
+                    repo: this.context.repo.repo,
+                    comment_id: existingComment.id,
+                    body: comment,
+                });
+                logger_1.logger.info('GITHUB_COMMENT', `Updated existing review comment (ID: ${existingComment.id})`);
+            }
+            else {
+                // Create new comment
+                const { data: newComment } = await this.octokit.rest.issues.createComment({
+                    owner: this.context.repo.owner,
+                    repo: this.context.repo.repo,
+                    issue_number: this.context.issue.number,
+                    body: comment,
+                });
+                logger_1.logger.info('GITHUB_COMMENT', `Posted new review comment (ID: ${newComment.id})`);
+            }
+        }
+        catch (error) {
+            logger_1.logger.error('GITHUB_COMMENT', `Failed to post main review comment: ${error}`);
+            throw error;
+        }
+    }
+    /**
+     * Post detailed comments for nodes with significant issues
+     */
+    async postDetailedNodeComments(reviewResult) {
+        if (!this.isPullRequestContext()) {
+            logger_1.logger.warn('GITHUB_COMMENT', 'Not in PR context, skipping detailed comments');
+            return;
+        }
+        // Only post detailed comments for nodes with critical or multiple major issues
+        const significantNodes = reviewResult.nodeReviews.filter(node => this.hasSignificantIssues(node));
+        if (significantNodes.length === 0) {
+            logger_1.logger.info('GITHUB_COMMENT', 'No nodes require detailed comments');
+            return;
+        }
+        logger_1.logger.info('GITHUB_COMMENT', `Posting detailed comments for ${significantNodes.length} nodes`);
+        for (const node of significantNodes) {
+            await this.postNodeDetailComment(node);
+        }
+    }
+    /**
+     * Post detailed comment for a specific node
+     */
+    async postNodeDetailComment(nodeReview) {
+        try {
+            const comment = pr_comment_formatter_1.PRCommentFormatter.formatNodeDetailComment(nodeReview);
+            const { data: newComment } = await this.octokit.rest.issues.createComment({
+                owner: this.context.repo.owner,
+                repo: this.context.repo.repo,
+                issue_number: this.context.issue.number,
+                body: comment,
+            });
+            logger_1.logger.info('GITHUB_COMMENT', `Posted detailed comment for node "${nodeReview.nodeName}" (ID: ${newComment.id})`);
+        }
+        catch (error) {
+            logger_1.logger.error('GITHUB_COMMENT', `Failed to post detailed comment for node "${nodeReview.nodeName}": ${error}`);
+            // Don't throw - continue with other comments
+        }
+    }
+    /**
+     * Set PR review status based on recommendation
+     */
+    async setPRReviewStatus(reviewResult) {
+        if (!this.isPullRequestContext()) {
+            logger_1.logger.warn('GITHUB_COMMENT', 'Not in PR context, skipping review status');
+            return;
+        }
+        // Skip setting review status for now - this would require special permissions
+        // and might conflict with human reviewers. We'll just post comments.
+        logger_1.logger.info('GITHUB_COMMENT', `Review recommendation: ${reviewResult.overallRecommendation}`);
+    }
+    /**
+     * Post a summary comment with key action items
+     */
+    async postActionItemsSummary(reviewResult) {
+        const actionItems = this.extractActionItems(reviewResult);
+        if (actionItems.length === 0) {
+            logger_1.logger.info('GITHUB_COMMENT', 'No action items to post');
+            return;
+        }
+        try {
+            const comment = this.formatActionItemsComment(actionItems, reviewResult.overallRecommendation);
+            const { data: newComment } = await this.octokit.rest.issues.createComment({
+                owner: this.context.repo.owner,
+                repo: this.context.repo.repo,
+                issue_number: this.context.issue.number,
+                body: comment,
+            });
+            logger_1.logger.info('GITHUB_COMMENT', `Posted action items summary (ID: ${newComment.id})`);
+        }
+        catch (error) {
+            logger_1.logger.error('GITHUB_COMMENT', `Failed to post action items summary: ${error}`);
+            // Don't throw - this is optional
+        }
+    }
+    // Helper methods
+    isPullRequestContext() {
+        return this.context.eventName === 'pull_request' ||
+            this.context.eventName === 'pull_request_target' ||
+            !!this.context.issue?.number; // For local testing with issue number
+    }
+    hasSignificantIssues(nodeReview) {
+        const criticalIssues = nodeReview.findings.issues.filter(i => i.severity === 'critical').length;
+        const majorIssues = nodeReview.findings.issues.filter(i => i.severity === 'major').length;
+        // Post detailed comment if:
+        // - Has any critical issues
+        // - Has 2+ major issues  
+        // - Has high/critical risk level
+        return criticalIssues > 0 ||
+            majorIssues >= 2 ||
+            ['high', 'critical'].includes(nodeReview.findings.riskLevel);
+    }
+    extractActionItems(reviewResult) {
+        const actionItems = [];
+        reviewResult.nodeReviews.forEach(node => {
+            node.findings.issues.forEach(issue => {
+                if (['critical', 'major'].includes(issue.severity)) {
+                    actionItems.push({
+                        priority: issue.severity,
+                        description: issue.description,
+                        nodeContext: node.nodeName,
+                        suggestedFix: issue.suggestedFix
+                    });
+                }
+            });
+        });
+        // Sort by priority: critical first, then major
+        return actionItems.sort((a, b) => {
+            const priorityOrder = { critical: 0, major: 1, minor: 2 };
+            return priorityOrder[a.priority] - priorityOrder[b.priority];
+        });
+    }
+    formatActionItemsComment(actionItems, recommendation) {
+        const sections = [];
+        sections.push('## 📋 Action Items from AI Review');
+        sections.push('');
+        if (recommendation === 'request-changes') {
+            sections.push('⚠️ **These items must be addressed before merge:**');
+        }
+        else {
+            sections.push('💡 **Recommended improvements:**');
+        }
+        sections.push('');
+        actionItems.forEach((item, index) => {
+            const emoji = item.priority === 'critical' ? '🚨' : '⚠️';
+            sections.push(`### ${index + 1}. ${emoji} ${item.priority.toUpperCase()}`);
+            sections.push(`**Context:** ${item.nodeContext}`);
+            sections.push('');
+            sections.push(item.description);
+            if (item.suggestedFix) {
+                sections.push('');
+                sections.push(`**💡 Suggested fix:** ${item.suggestedFix}`);
+            }
+            sections.push('');
+        });
+        sections.push('---');
+        sections.push('*Generated by AI Code Review Action*');
+        return sections.join('\n');
+    }
+}
+exports.GitHubCommentService = GitHubCommentService;
+
+
+/***/ }),
+
+/***/ 680:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ReviewService = void 0;
+const test_data_loader_1 = __nccwpck_require__(7080);
+const claude_client_1 = __nccwpck_require__(3861);
+const logger_1 = __nccwpck_require__(9000);
+const json_extractor_1 = __nccwpck_require__(8168);
+/**
+ * Main review service that orchestrates Phase 2 code review
+ * Implements Week 1 strategy: Basic node review with AI analysis
+ */
+class ReviewService {
+    constructor(apiKey, config = {}) {
+        this.apiKey = apiKey;
+        this.claudeClient = new claude_client_1.ClaudeClient(apiKey);
+        this.config = {
+            maxRetries: 3,
+            timeoutMs: 30000,
+            ...config
+        };
+    }
+    /**
+     * Production: Review themes from Phase 1 output
+     */
+    async reviewThemes(themes) {
+        const startTime = Date.now();
+        logger_1.logger.info('REVIEW_SERVICE', `Starting review of ${themes.length} themes`);
+        const nodeReviews = [];
+        // Review each theme node
+        for (const theme of themes) {
+            try {
+                const nodeReview = await this.reviewSingleNode(theme);
+                nodeReviews.push(nodeReview);
+            }
+            catch (error) {
+                logger_1.logger.error('REVIEW_SERVICE', `Failed to review node ${theme.id}: ${error}`);
+                // Create fallback review for failed nodes
+                const fallbackReview = {
+                    nodeId: theme.id,
+                    nodeName: theme.name,
+                    nodeType: 'integration-hybrid',
+                    findings: {
+                        issues: [{
+                                severity: 'minor',
+                                category: 'test',
+                                description: 'Review failed due to processing error',
+                                suggestedFix: 'Manual review recommended'
+                            }],
+                        strengths: [],
+                        testRecommendations: ['Manual testing recommended'],
+                        riskLevel: 'medium'
+                    },
+                    confidence: 0.1,
+                    processingTime: 0
+                };
+                nodeReviews.push(fallbackReview);
+            }
+        }
+        const overallRecommendation = this.determineOverallRecommendation(nodeReviews);
+        const summary = this.generateReviewSummary(nodeReviews);
+        const processingTime = Date.now() - startTime;
+        const averageConfidence = nodeReviews.reduce((sum, review) => sum + review.confidence, 0) / nodeReviews.length;
+        logger_1.logger.info('REVIEW_SERVICE', `Review completed in ${processingTime}ms with ${overallRecommendation} recommendation`);
+        return {
+            overallRecommendation,
+            summary,
+            nodeReviews,
+            processingTime,
+            metadata: {
+                totalNodes: themes.length,
+                averageConfidence,
+                timestamp: new Date().toISOString()
+            }
+        };
+    }
+    /**
+     * Development: Review from test-output file
+     */
+    async reviewFromTestOutput(filename) {
+        logger_1.logger.info('REVIEW_SERVICE', 'Loading themes from test-output for development mode');
+        const themes = filename
+            ? await test_data_loader_1.TestDataLoader.loadTestOutput(filename)
+            : await test_data_loader_1.TestDataLoader.loadLatestTestOutput();
+        return this.reviewThemes(themes);
+    }
+    /**
+     * Review a single theme node (Week 1 strategy: basic node review)
+     */
+    async reviewSingleNode(theme) {
+        const startTime = Date.now();
+        logger_1.logger.debug('REVIEW_SERVICE', `Reviewing node: ${theme.name}`);
+        // AI-driven node type classification
+        const nodeType = await this.classifyNodeType(theme);
+        // AI-driven review analysis
+        const findings = await this.analyzeNodeFindings(theme, nodeType);
+        // AI confidence in review
+        const confidence = this.calculateReviewConfidence(theme, findings);
+        const processingTime = Date.now() - startTime;
+        logger_1.logger.debug('REVIEW_SERVICE', `Completed review of ${theme.name} in ${processingTime}ms`);
+        return {
+            nodeId: theme.id,
+            nodeName: theme.name,
+            nodeType,
+            findings,
+            confidence,
+            processingTime
+        };
+    }
+    /**
+     * AI determines node type based on context
+     */
+    async classifyNodeType(theme) {
+        const prompt = `You are analyzing a code change to determine its review approach.
+    
+CONTEXT:
+Theme: ${theme.name}
+Description: ${theme.description || 'Not specified'}
+Business Impact: ${theme.businessImpact || 'Not specified'}
+Technical Details: ${theme.combinedTechnicalDetails || 'Not specified'}
+Files: ${theme.affectedFiles?.join(', ') || 'Not specified'}
+Has Code: ${theme.codeSnippets?.length > 0 ? 'Yes' : 'No'}
+Child Themes: ${theme.childThemes?.length || 0}
+
+TASK: Classify this change for review approach.
+
+CLASSIFICATION RULES:
+- atomic-technical: Single technical change, unit-testable, affects few files
+- business-feature: Business capability change, affects user workflows
+- integration-hybrid: Multiple components working together, architectural changes
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "nodeType": "atomic-technical|business-feature|integration-hybrid",
+  "reasoning": "Why this classification was chosen",
+  "confidence": 0.0-1.0
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'node-type-classification');
+            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const parsed = extractionResult.data;
+            if (!parsed.nodeType || !['atomic-technical', 'business-feature', 'integration-hybrid'].includes(parsed.nodeType)) {
+                throw new Error(`Invalid node type: ${parsed.nodeType}`);
+            }
+            logger_1.logger.debug('REVIEW_SERVICE', `Node type classified as: ${parsed.nodeType} (confidence: ${parsed.confidence})`);
+            return parsed.nodeType;
+        }
+        catch (error) {
+            logger_1.logger.warn('REVIEW_SERVICE', `Failed to classify node type: ${error}`);
+            return 'integration-hybrid'; // Safe fallback
+        }
+    }
+    /**
+     * AI analyzes node for review findings
+     */
+    async analyzeNodeFindings(theme, nodeType) {
+        const codeContext = theme.codeSnippets?.join('\n\n') || 'No code snippets available';
+        const prompt = `You are performing a code review with ${nodeType.toUpperCase()} focus.
+
+CONTEXT:
+Theme: ${theme.name}
+Description: ${theme.description || 'Not specified'}
+Business Impact: ${theme.businessImpact || 'Not specified'}
+Node Type: ${nodeType}
+Files Affected: ${theme.affectedFiles?.join(', ') || 'Not specified'}
+
+CODE CHANGES:
+${codeContext}
+
+TASK: Provide a thorough code review focusing on the node type.
+
+REVIEW FOCUS BY TYPE:
+- atomic-technical: Code correctness, unit testing, logic validation
+- business-feature: Business requirement validation, user impact, E2E testing
+- integration-hybrid: Component integration, architectural coherence, integration testing
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "issues": [
+    {
+      "severity": "critical|major|minor|suggestion",
+      "category": "logic|security|performance|style|test",
+      "description": "Clear description of the issue",
+      "suggestedFix": "How to fix it (optional)"
+    }
+  ],
+  "strengths": ["What was done well"],
+  "testRecommendations": ["What tests are needed"],
+  "riskLevel": "low|medium|high|critical"
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'code-review-analysis');
+            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const parsed = extractionResult.data;
+            // Validate response structure
+            if (!parsed.issues || !Array.isArray(parsed.issues)) {
+                parsed.issues = [];
+            }
+            if (!parsed.strengths || !Array.isArray(parsed.strengths)) {
+                parsed.strengths = [];
+            }
+            if (!parsed.testRecommendations || !Array.isArray(parsed.testRecommendations)) {
+                parsed.testRecommendations = [];
+            }
+            if (!parsed.riskLevel || !['low', 'medium', 'high', 'critical'].includes(parsed.riskLevel)) {
+                parsed.riskLevel = 'medium';
+            }
+            logger_1.logger.debug('REVIEW_SERVICE', `Found ${parsed.issues.length} issues, risk level: ${parsed.riskLevel}`);
+            return parsed;
+        }
+        catch (error) {
+            logger_1.logger.warn('REVIEW_SERVICE', `Failed to analyze node findings: ${error}`);
+            return {
+                issues: [],
+                strengths: [],
+                testRecommendations: [],
+                riskLevel: 'medium'
+            };
+        }
+    }
+    /**
+     * Calculate review confidence based on available context
+     */
+    calculateReviewConfidence(theme, findings) {
+        let confidence = 0.5; // Base confidence
+        // More confidence with code snippets
+        if (theme.codeSnippets?.length > 0)
+            confidence += 0.2;
+        // More confidence with business context
+        if (theme.businessImpact)
+            confidence += 0.1;
+        // More confidence with technical details
+        if (theme.combinedTechnicalDetails)
+            confidence += 0.1;
+        // More confidence with file context
+        if (theme.affectedFiles?.length > 0)
+            confidence += 0.1;
+        // Less confidence with high risk (uncertainty)
+        if (findings.riskLevel === 'critical')
+            confidence -= 0.2;
+        if (findings.riskLevel === 'high')
+            confidence -= 0.1;
+        return Math.max(0.1, Math.min(1.0, confidence));
+    }
+    /**
+     * Determine overall recommendation from node reviews
+     */
+    determineOverallRecommendation(nodeReviews) {
+        const criticalIssues = nodeReviews.some(review => review.findings.issues.some(issue => issue.severity === 'critical'));
+        const majorIssues = nodeReviews.filter(review => review.findings.issues.some(issue => issue.severity === 'major')).length;
+        const highRiskNodes = nodeReviews.filter(review => review.findings.riskLevel === 'critical' || review.findings.riskLevel === 'high').length;
+        const lowConfidenceNodes = nodeReviews.filter(review => review.confidence < 0.3).length;
+        if (criticalIssues || highRiskNodes > 0) {
+            return 'request-changes';
+        }
+        if (majorIssues > 2 || lowConfidenceNodes > nodeReviews.length / 2) {
+            return 'needs-discussion';
+        }
+        return 'approve';
+    }
+    /**
+     * Generate human-readable review summary
+     */
+    generateReviewSummary(nodeReviews) {
+        const totalIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.length, 0);
+        const criticalIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.filter(issue => issue.severity === 'critical').length, 0);
+        const majorIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.filter(issue => issue.severity === 'major').length, 0);
+        const minorIssues = nodeReviews.reduce((sum, review) => sum + review.findings.issues.filter(issue => issue.severity === 'minor').length, 0);
+        const avgConfidence = nodeReviews.reduce((sum, review) => sum + review.confidence, 0) / nodeReviews.length;
+        const nodeTypes = nodeReviews.reduce((counts, review) => {
+            counts[review.nodeType] = (counts[review.nodeType] || 0) + 1;
+            return counts;
+        }, {});
+        const typesSummary = Object.entries(nodeTypes)
+            .map(([type, count]) => `${count} ${type}`)
+            .join(', ');
+        return `Reviewed ${nodeReviews.length} changes (${typesSummary}). Found ${totalIssues} issues: ${criticalIssues} critical, ${majorIssues} major, ${minorIssues} minor. Average confidence: ${(avgConfidence * 100).toFixed(1)}%`;
+    }
+}
+exports.ReviewService = ReviewService;
+
+
+/***/ }),
+
+/***/ 7080:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TestDataLoader = void 0;
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+const logger_1 = __nccwpck_require__(9000);
+/**
+ * Service for loading test data from test-output directory
+ * Enables development mode by skipping Phase 1 and using saved mindmap data
+ */
+class TestDataLoader {
+    /**
+     * Load themes from latest test-output JSON file
+     */
+    static async loadLatestTestOutput() {
+        if (!fs.existsSync(this.TEST_OUTPUT_DIR)) {
+            throw new Error('test-output directory not found. Run Phase 1 first to generate test data.');
+        }
+        const files = fs.readdirSync(this.TEST_OUTPUT_DIR)
+            .filter(f => f.endsWith('.json') && f.startsWith('analysis-'))
+            .sort()
+            .reverse(); // Latest first
+        if (files.length === 0) {
+            throw new Error('No test-output JSON files found. Run Phase 1 first to generate test data.');
+        }
+        const latestFile = files[0];
+        const filePath = path.join(this.TEST_OUTPUT_DIR, latestFile);
+        logger_1.logger.info('TEST_DATA_LOADER', `Loading test data from: ${latestFile}`);
+        try {
+            const rawData = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(rawData);
+            // Extract themes from the test output structure
+            const themes = data.rawAnalysis?.themes || [];
+            if (themes.length === 0) {
+                throw new Error(`No themes found in test output file: ${latestFile}`);
+            }
+            logger_1.logger.info('TEST_DATA_LOADER', `Loaded ${themes.length} themes from test data`);
+            return themes;
+        }
+        catch (error) {
+            throw new Error(`Failed to load test output file ${latestFile}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    /**
+     * Load specific test-output file by name
+     */
+    static async loadTestOutput(filename) {
+        const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`Test output file not found: ${filename}`);
+        }
+        logger_1.logger.info('TEST_DATA_LOADER', `Loading test data from: ${filename}`);
+        try {
+            const rawData = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(rawData);
+            const themes = data.rawAnalysis?.themes || [];
+            if (themes.length === 0) {
+                throw new Error(`No themes found in test output file: ${filename}`);
+            }
+            logger_1.logger.info('TEST_DATA_LOADER', `Loaded ${themes.length} themes from ${filename}`);
+            return themes;
+        }
+        catch (error) {
+            throw new Error(`Failed to load test output file ${filename}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+    /**
+     * List available test output files
+     */
+    static listTestOutputFiles() {
+        if (!fs.existsSync(this.TEST_OUTPUT_DIR)) {
+            return [];
+        }
+        return fs.readdirSync(this.TEST_OUTPUT_DIR)
+            .filter(f => f.endsWith('.json') && f.startsWith('analysis-'))
+            .sort()
+            .reverse(); // Latest first
+    }
+    /**
+     * Get metadata from test output file
+     */
+    static getTestOutputMetadata(filename) {
+        const filePath = path.join(this.TEST_OUTPUT_DIR, filename);
+        if (!fs.existsSync(filePath)) {
+            throw new Error(`Test output file not found: ${filename}`);
+        }
+        try {
+            const rawData = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(rawData);
+            return data.metadata || {};
+        }
+        catch (error) {
+            throw new Error(`Failed to read metadata from ${filename}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+}
+exports.TestDataLoader = TestDataLoader;
+TestDataLoader.TEST_OUTPUT_DIR = path.join(process.cwd(), 'test-output');
+
+
+/***/ }),
+
+/***/ 6077:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PRCommentFormatter = void 0;
+/**
+ * Formats review results into well-structured GitHub PR comments
+ */
+class PRCommentFormatter {
+    /**
+     * Generate main review comment with overall findings
+     */
+    static formatMainComment(reviewResult) {
+        const { overallRecommendation, summary, nodeReviews, metadata } = reviewResult;
+        const recommendationEmoji = this.getRecommendationEmoji(overallRecommendation);
+        const sections = [];
+        // Header with recommendation
+        sections.push(`## 🤖 AI Code Review Results ${recommendationEmoji}`);
+        sections.push('');
+        sections.push(`**Recommendation:** ${this.formatRecommendation(overallRecommendation)}`);
+        sections.push('');
+        // Summary
+        sections.push(`**Summary:** ${summary}`);
+        sections.push('');
+        // Key metrics
+        sections.push('### 📊 Review Metrics');
+        sections.push(`- **Nodes Reviewed:** ${metadata.totalNodes}`);
+        sections.push(`- **Average Confidence:** ${(metadata.averageConfidence * 100).toFixed(1)}%`);
+        sections.push(`- **Processing Time:** ${(reviewResult.processingTime / 1000).toFixed(1)}s`);
+        sections.push('');
+        // Critical/Major issues summary
+        const criticalIssues = this.countIssuesBySeverity(nodeReviews, 'critical');
+        const majorIssues = this.countIssuesBySeverity(nodeReviews, 'major');
+        if (criticalIssues > 0 || majorIssues > 0) {
+            sections.push('### ⚠️ Key Issues');
+            if (criticalIssues > 0) {
+                sections.push(`- **${criticalIssues} Critical Issue(s)** - Must be addressed before merge`);
+            }
+            if (majorIssues > 0) {
+                sections.push(`- **${majorIssues} Major Issue(s)** - Should be addressed`);
+            }
+            sections.push('');
+        }
+        // Node breakdown
+        sections.push('### 🔍 Detailed Findings');
+        sections.push('');
+        nodeReviews.forEach((nodeReview, index) => {
+            sections.push(this.formatNodeReviewSummary(nodeReview, index + 1));
+            sections.push('');
+        });
+        // Footer
+        sections.push('---');
+        sections.push('*Generated by [AI Code Review Action](https://github.com/your-org/ai-code-review-action) with Claude AI*');
+        return sections.join('\n');
+    }
+    /**
+     * Generate detailed comment for a specific node
+     */
+    static formatNodeDetailComment(nodeReview) {
+        const sections = [];
+        // Header
+        sections.push(`## 🔍 Detailed Review: ${nodeReview.nodeName}`);
+        sections.push('');
+        sections.push(`**Node Type:** ${this.formatNodeType(nodeReview.nodeType)}`);
+        sections.push(`**Confidence:** ${(nodeReview.confidence * 100).toFixed(1)}%`);
+        sections.push(`**Risk Level:** ${this.formatRiskLevel(nodeReview.findings.riskLevel)}`);
+        sections.push('');
+        // Issues
+        if (nodeReview.findings.issues.length > 0) {
+            sections.push('### 🚨 Issues Found');
+            sections.push('');
+            nodeReview.findings.issues.forEach((issue, index) => {
+                sections.push(this.formatIssue(issue, index + 1));
+                sections.push('');
+            });
+        }
+        // Strengths
+        if (nodeReview.findings.strengths.length > 0) {
+            sections.push('### ✅ Strengths');
+            sections.push('');
+            nodeReview.findings.strengths.forEach(strength => {
+                sections.push(`- ${strength}`);
+            });
+            sections.push('');
+        }
+        // Test recommendations
+        if (nodeReview.findings.testRecommendations.length > 0) {
+            sections.push('### 🧪 Test Recommendations');
+            sections.push('');
+            nodeReview.findings.testRecommendations.forEach(test => {
+                sections.push(`- [ ] ${test}`);
+            });
+            sections.push('');
+        }
+        return sections.join('\n');
+    }
+    /**
+     * Generate concise inline comment for specific issues
+     */
+    static formatInlineComment(issue, nodeContext) {
+        const severityEmoji = this.getSeverityEmoji(issue.severity);
+        const sections = [];
+        sections.push(`${severityEmoji} **${issue.severity.toUpperCase()}** (${issue.category})`);
+        sections.push('');
+        sections.push(issue.description);
+        if (issue.suggestedFix) {
+            sections.push('');
+            sections.push(`**💡 Suggested fix:** ${issue.suggestedFix}`);
+        }
+        if (nodeContext) {
+            sections.push('');
+            sections.push(`*From: ${nodeContext}*`);
+        }
+        return sections.join('\n');
+    }
+    // Helper methods
+    static getRecommendationEmoji(recommendation) {
+        switch (recommendation) {
+            case 'approve': return '✅';
+            case 'request-changes': return '🚫';
+            case 'needs-discussion': return '💬';
+            default: return '❓';
+        }
+    }
+    static formatRecommendation(recommendation) {
+        switch (recommendation) {
+            case 'approve': return '**APPROVE** - Changes look good to merge';
+            case 'request-changes': return '**REQUEST CHANGES** - Critical issues must be addressed';
+            case 'needs-discussion': return '**NEEDS DISCUSSION** - Review findings require team discussion';
+            default: return recommendation;
+        }
+    }
+    static formatNodeType(nodeType) {
+        switch (nodeType) {
+            case 'atomic-technical': return '⚛️ Atomic Technical';
+            case 'business-feature': return '🏢 Business Feature';
+            case 'integration-hybrid': return '🔗 Integration Hybrid';
+            default: return nodeType;
+        }
+    }
+    static formatRiskLevel(riskLevel) {
+        switch (riskLevel) {
+            case 'low': return '🟢 Low';
+            case 'medium': return '🟡 Medium';
+            case 'high': return '🟠 High';
+            case 'critical': return '🔴 Critical';
+            default: return riskLevel;
+        }
+    }
+    static getSeverityEmoji(severity) {
+        switch (severity) {
+            case 'critical': return '🚨';
+            case 'major': return '⚠️';
+            case 'minor': return '⚡';
+            case 'suggestion': return '💡';
+            default: return '❓';
+        }
+    }
+    static formatIssue(issue, index) {
+        const severityEmoji = this.getSeverityEmoji(issue.severity);
+        const sections = [];
+        sections.push(`#### ${index}. ${severityEmoji} ${issue.severity.toUpperCase()} - ${issue.category}`);
+        sections.push('');
+        sections.push(issue.description);
+        if (issue.suggestedFix) {
+            sections.push('');
+            sections.push(`**💡 Suggested fix:** ${issue.suggestedFix}`);
+        }
+        return sections.join('\n');
+    }
+    static formatNodeReviewSummary(nodeReview, index) {
+        const nodeTypeIcon = this.getNodeTypeIcon(nodeReview.nodeType);
+        const riskEmoji = this.getRiskEmoji(nodeReview.findings.riskLevel);
+        const issueCount = nodeReview.findings.issues.length;
+        const sections = [];
+        sections.push(`#### ${index}. ${nodeTypeIcon} ${nodeReview.nodeName}`);
+        sections.push(`**Risk:** ${riskEmoji} ${nodeReview.findings.riskLevel} | **Issues:** ${issueCount} | **Confidence:** ${(nodeReview.confidence * 100).toFixed(1)}%`);
+        if (issueCount > 0) {
+            const criticalCount = nodeReview.findings.issues.filter(i => i.severity === 'critical').length;
+            const majorCount = nodeReview.findings.issues.filter(i => i.severity === 'major').length;
+            const minorCount = nodeReview.findings.issues.filter(i => i.severity === 'minor').length;
+            const issueCounts = [];
+            if (criticalCount > 0)
+                issueCounts.push(`${criticalCount} critical`);
+            if (majorCount > 0)
+                issueCounts.push(`${majorCount} major`);
+            if (minorCount > 0)
+                issueCounts.push(`${minorCount} minor`);
+            if (issueCounts.length > 0) {
+                sections.push(`*Issues: ${issueCounts.join(', ')}*`);
+            }
+        }
+        return sections.join('\n');
+    }
+    static getNodeTypeIcon(nodeType) {
+        switch (nodeType) {
+            case 'atomic-technical': return '⚛️';
+            case 'business-feature': return '🏢';
+            case 'integration-hybrid': return '🔗';
+            default: return '📁';
+        }
+    }
+    static getRiskEmoji(riskLevel) {
+        switch (riskLevel) {
+            case 'low': return '🟢';
+            case 'medium': return '🟡';
+            case 'high': return '🟠';
+            case 'critical': return '🔴';
+            default: return '⚪';
+        }
+    }
+    static countIssuesBySeverity(nodeReviews, severity) {
+        return nodeReviews.reduce((count, review) => count + review.findings.issues.filter(issue => issue.severity === severity).length, 0);
+    }
+}
+exports.PRCommentFormatter = PRCommentFormatter;
+
+
+/***/ }),
+
 /***/ 5061:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -37218,10 +37756,12 @@ exports.GitService = void 0;
 const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
+const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
 class GitService {
     shouldIncludeFile(filename) {
         const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        console.log(`[GIT-FILTER] ${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
+        logger_1.logger.debug(constants_1.LoggerServices.GIT_SERVICE, `${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
         return !isExcluded;
     }
     constructor(githubToken, anthropicApiKey) {
@@ -37233,7 +37773,7 @@ class GitService {
                 this.octokit = github.getOctokit(this.githubToken);
             }
             catch (error) {
-                console.warn('[GIT-SERVICE] Failed to initialize GitHub API client:', error);
+                logger_1.logger.warn(constants_1.LoggerServices.GIT_SERVICE, `Failed to initialize GitHub API client: ${error}`);
             }
         }
         // Initialize AI analyzer - use environment variable if not provided
@@ -37244,11 +37784,11 @@ class GitService {
         this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(apiKey);
     }
     async getEnhancedChangedFiles() {
-        console.log('[GIT-SERVICE] Getting enhanced changed files with AI code analysis');
+        logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'Getting enhanced changed files with AI code analysis');
         // Get basic changed files first
         const changedFiles = await this.getChangedFiles();
         if (changedFiles.length === 0) {
-            console.log('[GIT-SERVICE] No changed files to analyze');
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'No changed files to analyze');
             return [];
         }
         // Prepare files for concurrent AI analysis
@@ -37259,21 +37799,21 @@ class GitService {
                 ? 'deleted'
                 : file.status,
         }));
-        console.log(`[GIT-SERVICE] Starting AI analysis of ${filesToAnalyze.length} files`);
+        logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Starting AI analysis of ${filesToAnalyze.length} files`);
         // Use AICodeAnalyzer for processing changed files
         const codeChanges = await this.aiAnalyzer.processChangedFilesConcurrently(filesToAnalyze);
-        console.log(`[GIT-SERVICE] AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
+        logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `AI analysis completed: ${codeChanges.length}/${filesToAnalyze.length} files processed successfully`);
         // Log cache statistics
         const cacheStats = this.aiAnalyzer.getCacheStats();
-        console.log(`[GIT-SERVICE] Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
+        logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Cache stats: ${cacheStats.size} entries, TTL: ${cacheStats.ttlMs}ms`);
         return codeChanges;
     }
     async getPullRequestContext() {
-        // Production mode: Only handle GitHub Actions PR context
+        // Production mode: Handle GitHub Actions PR context
         if (github.context.eventName === 'pull_request') {
             const pr = github.context.payload.pull_request;
             if (pr) {
-                console.log(`[GIT-SERVICE] Using GitHub Actions PR context: #${pr.number}`);
+                logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Using GitHub Actions PR context: #${pr.number}`);
                 return {
                     number: pr.number,
                     title: pr.title,
@@ -37285,22 +37825,41 @@ class GitService {
                 };
             }
         }
-        console.log('[GIT-SERVICE] No PR context found in GitHub Actions');
-        return null;
+        // Fallback for manual runs: Try to detect PR from current branch
+        logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Event: ${github.context.eventName}, attempting PR detection for current branch`);
+        return await this.detectCurrentBranchPR();
     }
     async getChangedFiles() {
         const prContext = await this.getPullRequestContext();
-        if (!prContext) {
-            console.log('[GIT-SERVICE] No PR context available, returning empty file list');
-            return [];
-        }
-        console.log(`[GIT-SERVICE] PR Context: #${prContext.number}, event=${github.context.eventName}`);
-        // Production mode: Use GitHub API for PR files
-        if (prContext.number > 0 && this.octokit) {
-            console.log(`[GIT-SERVICE] Using GitHub API for PR #${prContext.number}`);
+        // Try GitHub API first if we have PR context
+        if (prContext && prContext.number > 0 && this.octokit) {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `PR Context: #${prContext.number}, event=${github.context.eventName}`);
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Using GitHub API for PR #${prContext.number}`);
             return await this.getChangedFilesFromGitHub(prContext.number);
         }
-        console.log('[GIT-SERVICE] No GitHub API access or invalid PR context');
+        // Fallback to git-based diff if we have PR context but no GitHub API access
+        if (prContext) {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'PR context found but no GitHub API access, using git diff');
+            return await this.getChangedFilesFromGit(prContext.baseBranch, prContext.headBranch);
+        }
+        // Last resort: try to compare current branch against common base branches
+        logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'No PR context available, attempting git-based detection');
+        const currentBranch = await this.getCurrentBranch();
+        if (currentBranch) {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Current branch: ${currentBranch}`);
+            // Try common base branches
+            const baseBranches = ['main', 'master', 'develop'];
+            for (const baseBranch of baseBranches) {
+                if (await this.branchExists(baseBranch) && currentBranch !== baseBranch) {
+                    logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Comparing ${currentBranch} against ${baseBranch}`);
+                    const files = await this.getChangedFilesFromGit(baseBranch, currentBranch);
+                    if (files.length > 0) {
+                        return files;
+                    }
+                }
+            }
+        }
+        logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'No changed files found using any method');
         return [];
     }
     async getChangedFilesFromGitHub(prNumber) {
@@ -37325,7 +37884,7 @@ class GitService {
                 page++;
                 // Safety limit to prevent infinite loops
                 if (page > 10) {
-                    console.warn('[GIT-SERVICE] Reached pagination limit, stopping at 1000 files');
+                    logger_1.logger.warn(constants_1.LoggerServices.GIT_SERVICE, 'Reached pagination limit, stopping at 1000 files');
                     break;
                 }
             }
@@ -37338,11 +37897,11 @@ class GitService {
                 deletions: file.deletions,
                 patch: file.patch,
             }));
-            console.log(`[GIT-SERVICE] GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `GitHub API: Filtered ${allFiles.length} files down to ${changedFiles.length} for analysis`);
             return changedFiles;
         }
         catch (error) {
-            console.error('Failed to get changed files from GitHub:', error);
+            logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get changed files from GitHub: ${error}`);
             return [];
         }
     }
@@ -37358,9 +37917,171 @@ class GitService {
             });
         }
         catch (error) {
-            console.error('Failed to get diff content:', error);
+            logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get diff content: ${error}`);
         }
         return diffOutput;
+    }
+    /**
+     * Get current git branch name
+     */
+    async getCurrentBranch() {
+        let branchOutput = '';
+        try {
+            await exec.exec('git', ['branch', '--show-current'], {
+                listeners: {
+                    stdout: (data) => {
+                        branchOutput += data.toString();
+                    },
+                },
+            });
+            const branch = branchOutput.trim();
+            logger_1.logger.debug(constants_1.LoggerServices.GIT_SERVICE, `Current branch: ${branch}`);
+            return branch || null;
+        }
+        catch (error) {
+            logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get current branch: ${error}`);
+            return null;
+        }
+    }
+    /**
+     * Check if a branch exists
+     */
+    async branchExists(branchName) {
+        try {
+            await exec.exec('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`]);
+            return true;
+        }
+        catch (error) {
+            // Try remote branch
+            try {
+                await exec.exec('git', ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${branchName}`]);
+                return true;
+            }
+            catch (remoteError) {
+                return false;
+            }
+        }
+    }
+    /**
+     * Detect PR context from current branch using GitHub API
+     */
+    async detectCurrentBranchPR() {
+        if (!this.octokit) {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'No GitHub API client available for PR detection');
+            return null;
+        }
+        const currentBranch = await this.getCurrentBranch();
+        if (!currentBranch) {
+            logger_1.logger.warn(constants_1.LoggerServices.GIT_SERVICE, 'Could not determine current branch');
+            return null;
+        }
+        try {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Searching for open PRs from branch: ${currentBranch}`);
+            // Search for open PRs from current branch
+            const { data: pullRequests } = await this.octokit.rest.pulls.list({
+                ...github.context.repo,
+                state: 'open',
+                head: `${github.context.repo.owner}:${currentBranch}`,
+            });
+            if (pullRequests.length > 0) {
+                const pr = pullRequests[0]; // Use the first matching PR
+                logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Found PR #${pr.number} for branch ${currentBranch}`);
+                return {
+                    number: pr.number,
+                    title: pr.title,
+                    body: pr.body || '',
+                    baseBranch: pr.base.ref,
+                    headBranch: pr.head.ref,
+                    baseSha: pr.base.sha,
+                    headSha: pr.head.sha,
+                };
+            }
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `No open PR found for branch: ${currentBranch}`);
+            return null;
+        }
+        catch (error) {
+            logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to search for PRs: ${error}`);
+            return null;
+        }
+    }
+    /**
+     * Get changed files using git diff commands
+     */
+    async getChangedFilesFromGit(baseBranch, headBranch) {
+        try {
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Getting changed files via git diff: ${baseBranch}...${headBranch}`);
+            // Get list of changed files with status
+            let filesOutput = '';
+            await exec.exec('git', ['diff', '--name-status', `${baseBranch}...${headBranch}`], {
+                listeners: {
+                    stdout: (data) => {
+                        filesOutput += data.toString();
+                    },
+                },
+            });
+            if (!filesOutput.trim()) {
+                logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, 'No files changed according to git diff');
+                return [];
+            }
+            // Parse the output
+            const lines = filesOutput.trim().split('\n');
+            const changedFiles = [];
+            for (const line of lines) {
+                const match = line.match(/^([AMDRT])\s+(.+)$/);
+                if (match) {
+                    const [, statusChar, filename] = match;
+                    // Skip excluded files
+                    if (!this.shouldIncludeFile(filename)) {
+                        continue;
+                    }
+                    const status = this.mapGitStatusToChangeStatus(statusChar);
+                    // Get the patch for this file
+                    let patch = '';
+                    try {
+                        await exec.exec('git', ['diff', `${baseBranch}...${headBranch}`, '--', filename], {
+                            listeners: {
+                                stdout: (data) => {
+                                    patch += data.toString();
+                                },
+                            },
+                        });
+                    }
+                    catch (patchError) {
+                        logger_1.logger.warn(constants_1.LoggerServices.GIT_SERVICE, `Failed to get patch for ${filename}: ${patchError}`);
+                    }
+                    changedFiles.push({
+                        filename,
+                        status,
+                        patch: patch || undefined,
+                    });
+                }
+            }
+            logger_1.logger.info(constants_1.LoggerServices.GIT_SERVICE, `Git diff: Found ${changedFiles.length} changed files`);
+            return changedFiles;
+        }
+        catch (error) {
+            logger_1.logger.error(constants_1.LoggerServices.GIT_SERVICE, `Failed to get changed files from git: ${error}`);
+            return [];
+        }
+    }
+    /**
+     * Map git status characters to ChangedFile status
+     */
+    mapGitStatusToChangeStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'M':
+                return 'modified';
+            case 'D':
+                return 'removed';
+            case 'R':
+                return 'renamed';
+            case 'T': // Type change (rare)
+                return 'modified';
+            default:
+                return 'modified';
+        }
     }
 }
 exports.GitService = GitService;
@@ -37421,6 +38142,7 @@ const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
 const code_analysis_cache_1 = __nccwpck_require__(5061);
 const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
 /**
  * AI-powered code analyzer that replaces regex-based analysis
  * Uses Claude to understand code structure across all programming languages
@@ -37474,7 +38196,7 @@ class AICodeAnalyzer {
             }
             catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                console.warn(`[AI-CODE-ANALYZER] AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`);
+                logger_1.logger.warn(constants_1.LoggerServices.AI_ANALYZER, `AI analysis failed for ${filename}, using minimal analysis: ${errorMessage}`);
                 return this.createMinimalAnalysis(filename, diffPatch, changeType);
             }
         });
@@ -37844,6 +38566,8 @@ exports.ClaudeClient = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
 const secure_file_namer_1 = __nccwpck_require__(5584);
 const performance_tracker_1 = __nccwpck_require__(9600);
+const logger_1 = __nccwpck_require__(9000);
+const constants_1 = __nccwpck_require__(6895);
 /**
  * Enhanced Claude client with performance tracking and global rate limiting
  */
@@ -37911,12 +38635,12 @@ class ClaudeClient {
         const logInterval = setInterval(() => {
             if (ClaudeClient.requestQueue.length > 0 || ClaudeClient.activeRequests > 0) {
                 const cbActive = Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil;
-                console.log(`[CLAUDE-DIAGNOSTIC] active: ${ClaudeClient.activeRequests}/${ClaudeClient.MAX_CONCURRENT_REQUESTS}, queue: ${ClaudeClient.requestQueue.length}, processed: ${ClaudeClient.queueMetrics.totalProcessed}/${ClaudeClient.queueMetrics.totalQueued}${cbActive ? ', CB-ACTIVE' : ''}`);
+                logger_1.logger.debug(constants_1.LoggerServices.CLAUDE_CLIENT, `active: ${ClaudeClient.activeRequests}/${ClaudeClient.MAX_CONCURRENT_REQUESTS}, queue: ${ClaudeClient.requestQueue.length}, processed: ${ClaudeClient.queueMetrics.totalProcessed}/${ClaudeClient.queueMetrics.totalQueued}${cbActive ? ', CB-ACTIVE' : ''}`);
             }
             else if (ClaudeClient.queueMetrics.totalProcessed > 0) {
                 // Stop logging when queue is empty and some work was done
                 clearInterval(logInterval);
-                console.log('[CLAUDE-DIAGNOSTIC] Queue empty, stopping logs');
+                logger_1.logger.debug(constants_1.LoggerServices.CLAUDE_CLIENT, 'Queue empty, stopping logs');
             }
         }, 10000); // Every 10 seconds
     }
@@ -37935,12 +38659,12 @@ class ClaudeClient {
             }
             // Log diagnostics every 5 seconds while processing
             if (Date.now() - lastDiagnosticLog > 5000) {
-                console.log(`[CLAUDE-QUEUE] Loop #${loopIterations} | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}`);
+                logger_1.logger.debug(constants_1.LoggerServices.CLAUDE_CLIENT, `Loop #${loopIterations} | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}`);
                 lastDiagnosticLog = Date.now();
             }
             // Check circuit breaker
             if (Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil) {
-                console.log('[CLAUDE-QUEUE] Circuit breaker active, sleeping 1000ms');
+                logger_1.logger.warn(constants_1.LoggerServices.CLAUDE_CLIENT, 'Circuit breaker active, sleeping 1000ms');
                 await ClaudeClient.sleep(1000);
                 continue;
             }
@@ -37952,20 +38676,20 @@ class ClaudeClient {
                 const queueItem = ClaudeClient.requestQueue.shift();
                 ClaudeClient.activeRequests++;
                 ClaudeClient.lastRequestTime = Date.now();
-                console.log(`[CLAUDE-QUEUE] Starting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
+                logger_1.logger.debug(constants_1.LoggerServices.CLAUDE_CLIENT, `Starting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
                 // Process request asynchronously
                 ClaudeClient.processRequest(queueItem);
             }
             else {
                 // Log why we can't start a new request (only if there are items in queue)
                 if (hasItemsInQueue && loopIterations % 100 === 0) { // Log every 100 iterations (5 seconds)
-                    console.log(`[CLAUDE-QUEUE] Waiting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, reason: ${!hasCapacity ? 'capacity' : !intervalPassed ? 'interval' : 'unknown'}`);
+                    logger_1.logger.debug(constants_1.LoggerServices.CLAUDE_CLIENT, `Waiting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, reason: ${!hasCapacity ? 'capacity' : !intervalPassed ? 'interval' : 'unknown'}`);
                 }
                 // Wait briefly before checking again
                 await ClaudeClient.sleep(50);
             }
         }
-        console.log(`[CLAUDE-QUEUE] Complete all | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, iterations: ${loopIterations}`);
+        logger_1.logger.info(constants_1.LoggerServices.CLAUDE_CLIENT, `Complete all | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, iterations: ${loopIterations}`);
         ClaudeClient.isProcessing = false;
         ClaudeClient.processingPromise = null;
     }
@@ -38002,7 +38726,7 @@ class ClaudeClient {
         }
         finally {
             ClaudeClient.activeRequests--;
-            console.log(`[CLAUDE-QUEUE] Complete | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
+            logger_1.logger.debug(constants_1.LoggerServices.CLAUDE_CLIENT, `Complete | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
             // Remove from active context tracking
             const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
             if (currentActive <= 1) {
@@ -38021,17 +38745,17 @@ class ClaudeClient {
         const isRateLimitError = ClaudeClient.isRateLimitError(errorMessage);
         if (isRateLimitError) {
             ClaudeClient.queueMetrics.consecutiveRateLimitErrors++;
-            console.error(`[CLAUDE-RATE-LIMIT] Rate limit detected: ${errorMessage}`);
+            logger_1.logger.warn(constants_1.LoggerServices.CLAUDE_CLIENT, `Rate limit detected: ${errorMessage}`);
             // Circuit breaker: pause processing after 5 consecutive rate limit errors
             if (ClaudeClient.queueMetrics.consecutiveRateLimitErrors >= 5) {
                 ClaudeClient.queueMetrics.circuitBreakerUntil = Date.now() + 30000; // 30 seconds
-                console.error('[CLAUDE-RATE-LIMIT] Circuit breaker activated for 30s');
+                logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, 'Circuit breaker activated for 30s');
             }
             // Retry with exponential backoff
-            if (queueItem.retryCount < 3) {
+            if (queueItem.retryCount < 5) {
                 queueItem.retryCount++;
-                const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s
-                console.error(`[CLAUDE-RATE-LIMIT] Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/3)`);
+                const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s, 16s, 32s
+                logger_1.logger.warn(constants_1.LoggerServices.CLAUDE_CLIENT, `Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/5)`);
                 setTimeout(() => {
                     ClaudeClient.requestQueue.unshift(queueItem); // Add back to front of queue
                 }, backoffDelay);
@@ -38040,7 +38764,7 @@ class ClaudeClient {
         }
         // Failed permanently
         ClaudeClient.queueMetrics.totalFailed++;
-        console.error(`[CLAUDE-ERROR] Request failed permanently: ${errorMessage}`);
+        logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Request failed permanently: ${errorMessage}`);
         queueItem.reject(new Error(`Claude API call failed: ${errorMessage}`));
     }
     /**
@@ -38091,10 +38815,10 @@ class ClaudeClient {
                     // Log prompt size and first few lines for debugging
                     const promptLines = prompt.split('\n');
                     const promptPreview = promptLines.slice(0, 5).join('\n');
-                    console.error(`[CLAUDE-ERROR] Exit code: ${exitCode}`);
-                    console.error(`[CLAUDE-ERROR] Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
-                    console.error(`[CLAUDE-ERROR] Prompt preview: ${promptPreview}...`);
-                    console.error(`[CLAUDE-ERROR] Error output: ${errorOutput}`);
+                    logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Exit code: ${exitCode}`);
+                    logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
+                    logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Prompt preview: ${promptPreview}...`);
+                    logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Error output: ${errorOutput}`);
                     throw new Error(`Claude CLI failed with exit code ${exitCode}. ` +
                         `Error: ${errorOutput || 'No error output'}. ` +
                         `Prompt was ${prompt.length} chars.`);
@@ -38197,10 +38921,10 @@ class ClaudeClient {
                 enumerable: true,
                 configurable: true,
             });
-            console.log(`[CLAUDE-QUEUE] Max concurrency set to ${limit}`);
+            logger_1.logger.info(constants_1.LoggerServices.CLAUDE_CLIENT, `Max concurrency set to ${limit}`);
         }
         else {
-            console.warn(`[CLAUDE-QUEUE] Invalid concurrency limit: ${limit}`);
+            logger_1.logger.warn(constants_1.LoggerServices.CLAUDE_CLIENT, `Invalid concurrency limit: ${limit}`);
         }
     }
     /**
@@ -38241,7 +38965,7 @@ class ClaudeClient {
             .join(', ');
         const waitingDesc = waitingBreakdown || '0';
         const activeDesc = activeBreakdown || '0';
-        console.log(`[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`);
+        logger_1.logger.info(constants_1.LoggerServices.CLAUDE_CLIENT, `Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`);
     }
     /**
      * Get category statistics for waiting queue items
@@ -39111,36 +39835,10 @@ function validateInputs() {
     if (!anthropicApiKey.trim()) {
         throw new Error('Anthropic API key is required');
     }
-    // Set deduplication environment variables from inputs
-    setDeduplicationEnvironmentVariables();
     return {
         githubToken,
         anthropicApiKey,
     };
-}
-function setDeduplicationEnvironmentVariables() {
-    // Convert kebab-case input names to SCREAMING_SNAKE_CASE env var names
-    const inputToEnvMap = {
-        'skip-batch-dedup': 'SKIP_BATCH_DEDUP',
-        'skip-second-pass-dedup': 'SKIP_SECOND_PASS_DEDUP',
-        'skip-cross-level-dedup': 'SKIP_CROSS_LEVEL_DEDUP',
-        'cross-level-dedup-threshold': 'CROSS_LEVEL_DEDUP_THRESHOLD',
-        'allow-overlap-merging': 'ALLOW_OVERLAP_MERGING',
-        'min-themes-for-batch-dedup': 'MIN_THEMES_FOR_BATCH_DEDUP',
-        'min-themes-for-second-pass-dedup': 'MIN_THEMES_FOR_SECOND_PASS_DEDUP',
-        'min-themes-for-cross-level-dedup': 'MIN_THEMES_FOR_CROSS_LEVEL_DEDUP',
-        'verbose-dedup-logging': 'VERBOSE_DEDUP_LOGGING',
-        // PRD Compliance Controls
-        're-evaluate-after-merge': 'RE_EVALUATE_AFTER_MERGE',
-        'strict-atomic-limits': 'STRICT_ATOMIC_LIMITS'
-    };
-    for (const [inputName, envName] of Object.entries(inputToEnvMap)) {
-        const inputValue = core.getInput(inputName);
-        if (inputValue) {
-            process.env[envName] = inputValue;
-            core.info(`Set ${envName}=${inputValue} from input ${inputName}`);
-        }
-    }
 }
 
 

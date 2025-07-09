@@ -284,13 +284,13 @@ export declare const ResponseSchemas: {
     }, "strip", z.ZodTypeAny, {
         confidence: number;
         reasoning: string;
+        relationship: "none" | "parent_child" | "duplicate";
         action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
-        relationship: "none" | "duplicate" | "parent_child";
     }, {
         confidence: number;
         reasoning: string;
+        relationship: "none" | "parent_child" | "duplicate";
         action: "keep_both" | "merge_into_parent" | "merge_into_child" | "make_sibling";
-        relationship: "none" | "duplicate" | "parent_child";
     }>;
 };
 export declare const CacheTTLConfig: {

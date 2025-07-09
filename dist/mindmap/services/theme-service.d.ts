@@ -4,7 +4,6 @@ export declare class ThemeService {
     private readonly anthropicApiKey;
     private similarityService;
     private expansionService;
-    private hierarchicalSimilarityService;
     private expansionEnabled;
     constructor(anthropicApiKey: string, consolidationConfig?: Partial<ConsolidationConfig>);
     analyzeThemesWithEnhancedContext(gitService: import('@/shared/interfaces/git-service-interface').IGitService): Promise<ThemeAnalysisResult>;
@@ -32,8 +31,4 @@ export declare class ThemeService {
      * Get effectiveness metrics from expansion service
      */
     getExpansionEffectiveness(): unknown;
-    /**
-     * Get effectiveness metrics from hierarchical similarity service
-     */
-    getHierarchicalEffectiveness(): unknown;
 }

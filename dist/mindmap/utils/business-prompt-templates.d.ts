@@ -17,11 +17,48 @@ export interface ProgressiveLanguageConfig {
     allowedTerms: string[];
     forbiddenTerms: string[];
 }
+export interface NamingStrategy {
+    changeComplexity: 'simple' | 'moderate' | 'complex';
+    namingApproach: 'technical-specific' | 'hybrid' | 'business-focused';
+    maxWords: number;
+    allowTechnicalTerms: boolean;
+}
+export interface ComplexityAnalysis {
+    isSimpleTechnicalChange: boolean;
+    isComplexBusinessFeature: boolean;
+    confidence: number;
+    reasoning: string;
+}
 export declare class BusinessPromptTemplates extends PromptTemplates {
     /**
      * Business capability identification prompt - transforms technical changes to user value
+     * Now includes complexity-aware naming strategy
      */
-    static createBusinessImpactPrompt(filePath: string, codeChanges: string, technicalContext: string): string;
+    static createBusinessImpactPrompt(filePath: string, codeChanges: string, technicalContext: string, changeComplexity?: 'simple' | 'moderate' | 'complex'): string;
+    /**
+     * Create prompt based on naming strategy
+     */
+    private static createComplexityAwarePrompt;
+    /**
+     * Determine naming strategy based on change complexity and patterns
+     */
+    private static determineNamingStrategy;
+    /**
+     * Analyze code changes to determine complexity
+     */
+    private static analyzeChangeComplexity;
+    /**
+     * Get naming instructions based on strategy
+     */
+    private static getNamingInstructions;
+    /**
+     * Get analysis questions based on strategy
+     */
+    private static getAnalysisQuestions;
+    /**
+     * Get name prompt based on strategy
+     */
+    private static getNamePrompt;
     /**
      * Business domain classification - maps code to business capabilities
      */

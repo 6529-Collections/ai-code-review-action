@@ -14,8 +14,8 @@ export class UncommittedMode extends BaseDiffMode {
     /node_modules\//, // Exclude dependencies
     /\.map$/, // Exclude source maps
     /package-lock\.json$/, // Exclude lock files
-    /mindmap-prd\.txt$/, // Exclude PRD files
-    /review-prd\.md$/, // Exclude PRD files
+    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
+    /command-center\/review-prd\.md$/, // Exclude PRD files
     /\.md$/, // Exclude all markdown files
     /\.txt$/, // Exclude all text files
     /\.json$/, // Exclude all json files

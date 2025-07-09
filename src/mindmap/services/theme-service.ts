@@ -3,7 +3,6 @@ import * as exec from '@actions/exec';
 import { SecureFileNamer } from '../utils/secure-file-namer';
 import { ThemeSimilarityService } from './theme-similarity';
 import { ThemeExpansionService } from './theme-expansion';
-import { HierarchicalSimilarityService } from './hierarchical-similarity';
 import {
   ConsolidatedTheme,
   ConsolidationConfig,
@@ -25,6 +24,7 @@ import {
   ThemeAnalysisResult
 } from '@/shared/types/theme-types';
 import { BusinessPromptTemplates } from '../utils/business-prompt-templates';
+import { logger } from '@/shared/logger/logger';
 
 // Processing configuration
 const PROCESSING_CONFIG = {
@@ -69,8 +69,35 @@ class ClaudeService {
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
-      return this.createFallbackAnalysis(chunk);
+      throw new Error(`Theme analysis failed for ${chunk.filename}: ${error}`);
     }
+  }
+
+  async analyzeChunkWithRetry(
+    chunk: CodeChunk,
+    context: string,
+    codeChange?: CodeChange
+  ): Promise<ChunkAnalysis> {
+    const MAX_RETRIES = 5;
+    let lastError: Error;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await this.analyzeChunk(chunk, context, codeChange);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        logger.warn('THEME_SERVICE', `AI analysis attempt ${attempt}/${MAX_RETRIES} failed for ${chunk.filename}: ${lastError.message}`);
+        
+        if (attempt === MAX_RETRIES) {
+          throw new Error(`AI theme analysis failed after ${MAX_RETRIES} attempts for ${chunk.filename}: ${lastError.message}`);
+        }
+        
+        // Brief delay before retry (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 500));
+      }
+    }
+    
+    throw lastError!;
   }
 
   private buildAnalysisPrompt(
@@ -198,46 +225,10 @@ class ClaudeService {
       };
     }
 
-    // Use the better fallback that includes filename
-    return this.createFallbackAnalysis(chunk);
+    // PRD-compliant: Hard error instead of algorithmic fallback
+    throw new Error(`Failed to parse Claude response for ${chunk.filename}. Raw output: ${output.substring(0, 200)}...`);
   }
 
-  private createFallbackAnalysis(chunk: CodeChunk): ChunkAnalysis {
-    // Try to infer business capability from filename
-    const fileName = chunk.filename.toLowerCase();
-    let businessCapability = 'User Experience Enhancement';
-    let userValue = 'Users benefit from improved system functionality';
-    let businessProcess = 'General system improvement and optimization';
-    
-    if (fileName.includes('auth') || fileName.includes('login')) {
-      businessCapability = 'User Account Management';
-      userValue = 'Users access their accounts securely and efficiently';
-      businessProcess = 'Secure user authentication and access control';
-    } else if (fileName.includes('test') || fileName.includes('spec')) {
-      businessCapability = 'Development Workflow Optimization';
-      userValue = 'Developers catch issues before users experience them';
-      businessProcess = 'Quality assurance and automated testing';
-    } else if (fileName.includes('config') || fileName.includes('setting')) {
-      businessCapability = 'Development Workflow Optimization';
-      userValue = 'Developers deploy and maintain systems reliably';
-      businessProcess = 'System configuration and deployment management';
-    } else if (fileName.includes('ui') || fileName.includes('component')) {
-      businessCapability = 'User Experience Enhancement';
-      userValue = 'Users accomplish tasks intuitively and efficiently';
-      businessProcess = 'Intuitive user interface and interaction design';
-    }
-    
-    return {
-      themeName: businessCapability,
-      description: userValue,
-      businessImpact: businessProcess,
-      confidence: 0.4,
-      codePattern: 'User Experience Enhancement',
-      suggestedParent: undefined,
-      detailedDescription: `Business analysis unavailable - inferred from file: ${chunk.filename}`,
-      technicalSummary: `Modifications in ${chunk.filename}`,
-    };
-  }
 }
 
 class ChunkProcessor {
@@ -267,7 +258,7 @@ class ThemeContextManager {
 
   async processChunk(chunk: CodeChunk): Promise<void> {
     const contextString = this.buildContextForClaude();
-    const analysis = await this.claudeService.analyzeChunk(
+    const analysis = await this.claudeService.analyzeChunkWithRetry(
       chunk,
       contextString
     );
@@ -281,18 +272,14 @@ class ThemeContextManager {
   ): Promise<ChunkAnalysisResult> {
     try {
       const contextString = this.buildContextForClaude();
-      const analysis = await this.claudeService.analyzeChunk(
+      const analysis = await this.claudeService.analyzeChunkWithRetry(
         chunk,
         contextString,
         codeChange
       );
       return { chunk, analysis };
     } catch (error) {
-      return {
-        chunk,
-        analysis: this.createFallbackAnalysis(chunk),
-        error: error instanceof Error ? error.message : String(error),
-      };
+      throw new Error(`Batch analysis failed for ${chunk.filename}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -309,16 +296,6 @@ class ThemeContextManager {
     }
   }
 
-  private createFallbackAnalysis(chunk: CodeChunk): ChunkAnalysis {
-    return {
-      themeName: `Changes in ${chunk.filename}`,
-      description: 'Analysis unavailable - using fallback',
-      businessImpact: 'Unknown impact',
-      confidence: 0.3,
-      codePattern: 'File modification',
-      suggestedParent: undefined,
-    };
-  }
 
   private buildContextForClaude(): string {
     const existingThemes = Array.from(this.context.themes.values())
@@ -472,7 +449,6 @@ class ThemeContextManager {
 export class ThemeService {
   private similarityService: ThemeSimilarityService;
   private expansionService: ThemeExpansionService;
-  private hierarchicalSimilarityService: HierarchicalSimilarityService;
   private expansionEnabled: boolean;
 
   constructor(
@@ -486,9 +462,6 @@ export class ThemeService {
 
     // Initialize expansion services with simplified AI-driven approach
     this.expansionService = new ThemeExpansionService(anthropicApiKey);
-    this.hierarchicalSimilarityService = new HierarchicalSimilarityService(
-      anthropicApiKey
-    );
 
     // Enable expansion by default
     this.expansionEnabled = consolidationConfig?.expansionEnabled ?? true;
@@ -646,32 +619,6 @@ export class ThemeService {
               consolidatedThemes
             );
 
-          // Apply cross-level deduplication
-          const minThemesForCrossLevel = parseInt(
-            process.env.MIN_THEMES_FOR_CROSS_LEVEL_DEDUP || '20'
-          );
-          if (
-            process.env.SKIP_CROSS_LEVEL_DEDUP !== 'true' &&
-            expandedThemes.length >= minThemesForCrossLevel
-          ) {
-            performanceTracker.startTiming('Cross-Level Deduplication');
-            const beforeDedup = expandedThemes.length;
-            const dedupStartTime = Date.now();
-
-            await this.hierarchicalSimilarityService.deduplicateHierarchy(
-              expandedThemes
-            );
-
-            // Track deduplication effectiveness
-            performanceTracker.trackEffectiveness(
-              'Cross-Level Deduplication',
-              beforeDedup,
-              expandedThemes.length,
-              Date.now() - dedupStartTime
-            );
-
-            performanceTracker.endTiming('Cross-Level Deduplication');
-          }
 
           // Track expansion effectiveness
           performanceTracker.trackEffectiveness(
@@ -681,8 +628,8 @@ export class ThemeService {
             Date.now() - expansionStartTime
           );
 
-          // Update consolidated themes with expanded and deduplicated results
-          consolidatedThemes = expandedThemes; // For now, use expanded themes directly
+          // Update consolidated themes with expanded results
+          consolidatedThemes = expandedThemes;
 
           // Calculate expansion statistics
           expansionStats = this.calculateExpansionStats(consolidatedThemes);
@@ -934,10 +881,4 @@ export class ThemeService {
     return this.expansionService.getEffectiveness();
   }
 
-  /**
-   * Get effectiveness metrics from hierarchical similarity service
-   */
-  getHierarchicalEffectiveness(): unknown {
-    return this.hierarchicalSimilarityService.getEffectiveness();
-  }
 }

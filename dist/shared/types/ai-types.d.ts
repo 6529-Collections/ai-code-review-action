@@ -33,18 +33,6 @@ export interface DomainData {
     confidence: number;
     userValue: string;
 }
-export interface BatchSimilarityResult {
-    pairId: string;
-    shouldMerge: boolean;
-    confidence: number;
-    scores: {
-        name: number;
-        description: number;
-        pattern: number;
-        business: number;
-        semantic: number;
-    };
-}
 export interface AIAnalysisResult {
     functionsChanged: string[];
     classesChanged: string[];
@@ -99,11 +87,5 @@ export interface DomainExtractionResult {
 export interface ThemeNamingResult {
     themeName: string;
     alternativeNames?: string[];
-    reasoning: string;
-}
-export interface CrossLevelSimilarityResult {
-    relationship: 'parent_child' | 'duplicate' | 'none';
-    confidence: number;
-    action: 'keep_both' | 'merge_into_parent' | 'merge_into_child' | 'make_sibling';
     reasoning: string;
 }

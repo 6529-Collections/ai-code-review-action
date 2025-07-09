@@ -41,7 +41,6 @@ jobs:
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
   id: theme-analysis
   env:
-    SKIP_CROSS_LEVEL_DEDUP: 'false'  # Optional: Skip cross-level deduplication
     LOG_LEVEL: 'INFO'                # Optional: Set logging level
     LOG_TIMESTAMPS: 'true'           # Optional: Include timestamps in logs
 
@@ -194,9 +193,6 @@ ANTHROPIC_API_KEY=your_anthropic_api_key_here
 Optional configuration:
 
 ```env
-# Performance and optimization
-SKIP_CROSS_LEVEL_DEDUP=false          # Skip cross-level deduplication for faster processing
-
 # Logging configuration
 LOG_LEVEL=INFO                         # Set log level: ERROR, WARN, INFO, DEBUG, TRACE
 LOG_TIMESTAMPS=true                    # Include timestamps in log output

@@ -1,6 +1,8 @@
 import * as exec from '@actions/exec';
 import { SecureFileNamer } from '@/mindmap/utils/secure-file-namer';
 import { performanceTracker } from './performance-tracker';
+import { logger } from '@/shared/logger/logger';
+import { LoggerServices } from '@/shared/logger/constants';
 
 /**
  * Performance tracking for AI calls
@@ -165,11 +167,11 @@ export class ClaudeClient {
     const logInterval = setInterval(() => {
       if (ClaudeClient.requestQueue.length > 0 || ClaudeClient.activeRequests > 0) {
         const cbActive = Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil;
-        console.log(`[CLAUDE-DIAGNOSTIC] active: ${ClaudeClient.activeRequests}/${ClaudeClient.MAX_CONCURRENT_REQUESTS}, queue: ${ClaudeClient.requestQueue.length}, processed: ${ClaudeClient.queueMetrics.totalProcessed}/${ClaudeClient.queueMetrics.totalQueued}${cbActive ? ', CB-ACTIVE' : ''}`);
+        logger.debug(LoggerServices.CLAUDE_CLIENT, `active: ${ClaudeClient.activeRequests}/${ClaudeClient.MAX_CONCURRENT_REQUESTS}, queue: ${ClaudeClient.requestQueue.length}, processed: ${ClaudeClient.queueMetrics.totalProcessed}/${ClaudeClient.queueMetrics.totalQueued}${cbActive ? ', CB-ACTIVE' : ''}`);
       } else if (ClaudeClient.queueMetrics.totalProcessed > 0) {
         // Stop logging when queue is empty and some work was done
         clearInterval(logInterval);
-        console.log('[CLAUDE-DIAGNOSTIC] Queue empty, stopping logs');
+        logger.debug(LoggerServices.CLAUDE_CLIENT, 'Queue empty, stopping logs');
       }
     }, 10000); // Every 10 seconds
   }
@@ -194,13 +196,13 @@ export class ClaudeClient {
       
       // Log diagnostics every 5 seconds while processing
       if (Date.now() - lastDiagnosticLog > 5000) {
-        console.log(`[CLAUDE-QUEUE] Loop #${loopIterations} | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}`);
+        logger.debug(LoggerServices.CLAUDE_CLIENT, `Loop #${loopIterations} | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}`);
         lastDiagnosticLog = Date.now();
       }
       
       // Check circuit breaker
       if (Date.now() < ClaudeClient.queueMetrics.circuitBreakerUntil) {
-        console.log('[CLAUDE-QUEUE] Circuit breaker active, sleeping 1000ms');
+        logger.warn(LoggerServices.CLAUDE_CLIENT, 'Circuit breaker active, sleeping 1000ms');
         await ClaudeClient.sleep(1000);
         continue;
       }
@@ -215,14 +217,14 @@ export class ClaudeClient {
         ClaudeClient.activeRequests++;
         ClaudeClient.lastRequestTime = Date.now();
         
-        console.log(`[CLAUDE-QUEUE] Starting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
+        logger.debug(LoggerServices.CLAUDE_CLIENT, `Starting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
 
         // Process request asynchronously
         ClaudeClient.processRequest(queueItem);
       } else {
         // Log why we can't start a new request (only if there are items in queue)
         if (hasItemsInQueue && loopIterations % 100 === 0) { // Log every 100 iterations (5 seconds)
-          console.log(`[CLAUDE-QUEUE] Waiting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, reason: ${!hasCapacity ? 'capacity' : !intervalPassed ? 'interval' : 'unknown'}`);
+          logger.debug(LoggerServices.CLAUDE_CLIENT, `Waiting | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, reason: ${!hasCapacity ? 'capacity' : !intervalPassed ? 'interval' : 'unknown'}`);
         }
         
         // Wait briefly before checking again
@@ -230,7 +232,7 @@ export class ClaudeClient {
       }
     }
 
-    console.log(`[CLAUDE-QUEUE] Complete all | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, iterations: ${loopIterations}`);
+    logger.info(LoggerServices.CLAUDE_CLIENT, `Complete all | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, iterations: ${loopIterations}`);
     
     ClaudeClient.isProcessing = false;
     ClaudeClient.processingPromise = null;
@@ -285,7 +287,7 @@ export class ClaudeClient {
     } finally {
       ClaudeClient.activeRequests--;
       
-      console.log(`[CLAUDE-QUEUE] Complete | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
+      logger.debug(LoggerServices.CLAUDE_CLIENT, `Complete | active: ${ClaudeClient.activeRequests}, queue: ${ClaudeClient.requestQueue.length}, label: ${queueItem.context}`);
       
       // Remove from active context tracking
       const currentActive = ClaudeClient.activeRequestsByContext.get(contextKey) || 0;
@@ -309,22 +311,20 @@ export class ClaudeClient {
 
     if (isRateLimitError) {
       ClaudeClient.queueMetrics.consecutiveRateLimitErrors++;
-      console.error(`[CLAUDE-RATE-LIMIT] Rate limit detected: ${errorMessage}`);
+      logger.warn(LoggerServices.CLAUDE_CLIENT, `Rate limit detected: ${errorMessage}`);
 
       // Circuit breaker: pause processing after 5 consecutive rate limit errors
       if (ClaudeClient.queueMetrics.consecutiveRateLimitErrors >= 5) {
         ClaudeClient.queueMetrics.circuitBreakerUntil = Date.now() + 30000; // 30 seconds
-        console.error('[CLAUDE-RATE-LIMIT] Circuit breaker activated for 30s');
+        logger.error(LoggerServices.CLAUDE_CLIENT, 'Circuit breaker activated for 30s');
       }
 
       // Retry with exponential backoff
-      if (queueItem.retryCount < 3) {
+      if (queueItem.retryCount < 5) {
         queueItem.retryCount++;
-        const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s
+        const backoffDelay = Math.pow(2, queueItem.retryCount) * 1000; // 2s, 4s, 8s, 16s, 32s
 
-        console.error(
-          `[CLAUDE-RATE-LIMIT] Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/3)`
-        );
+        logger.warn(LoggerServices.CLAUDE_CLIENT, `Retrying in ${backoffDelay}ms (attempt ${queueItem.retryCount}/5)`);
 
         setTimeout(() => {
           ClaudeClient.requestQueue.unshift(queueItem); // Add back to front of queue
@@ -336,7 +336,7 @@ export class ClaudeClient {
 
     // Failed permanently
     ClaudeClient.queueMetrics.totalFailed++;
-    console.error(`[CLAUDE-ERROR] Request failed permanently: ${errorMessage}`);
+    logger.error(LoggerServices.CLAUDE_CLIENT, `Request failed permanently: ${errorMessage}`);
     queueItem.reject(new Error(`Claude API call failed: ${errorMessage}`));
   }
 
@@ -402,12 +402,10 @@ export class ClaudeClient {
           // Log prompt size and first few lines for debugging
           const promptLines = prompt.split('\n');
           const promptPreview = promptLines.slice(0, 5).join('\n');
-          console.error(`[CLAUDE-ERROR] Exit code: ${exitCode}`);
-          console.error(
-            `[CLAUDE-ERROR] Prompt size: ${prompt.length} chars, ${promptLines.length} lines`
-          );
-          console.error(`[CLAUDE-ERROR] Prompt preview: ${promptPreview}...`);
-          console.error(`[CLAUDE-ERROR] Error output: ${errorOutput}`);
+          logger.error(LoggerServices.CLAUDE_CLIENT, `Exit code: ${exitCode}`);
+          logger.error(LoggerServices.CLAUDE_CLIENT, `Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
+          logger.error(LoggerServices.CLAUDE_CLIENT, `Prompt preview: ${promptPreview}...`);
+          logger.error(LoggerServices.CLAUDE_CLIENT, `Error output: ${errorOutput}`);
 
           throw new Error(
             `Claude CLI failed with exit code ${exitCode}. ` +
@@ -527,9 +525,9 @@ export class ClaudeClient {
         enumerable: true,
         configurable: true,
       });
-      console.log(`[CLAUDE-QUEUE] Max concurrency set to ${limit}`);
+      logger.info(LoggerServices.CLAUDE_CLIENT, `Max concurrency set to ${limit}`);
     } else {
-      console.warn(`[CLAUDE-QUEUE] Invalid concurrency limit: ${limit}`);
+      logger.warn(LoggerServices.CLAUDE_CLIENT, `Invalid concurrency limit: ${limit}`);
     }
   }
 
@@ -581,9 +579,7 @@ export class ClaudeClient {
     const waitingDesc = waitingBreakdown || '0';
     const activeDesc = activeBreakdown || '0';
     
-    console.log(
-      `[CLAUDE-QUEUE] Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`
-    );
+    logger.info(LoggerServices.CLAUDE_CLIENT, `Queue: ${ClaudeClient.requestQueue.length} waiting (${waitingDesc}), ${ClaudeClient.activeRequests} active (${activeDesc}), ${ClaudeClient.queueMetrics.totalProcessed} completed`);
   }
 
   /**

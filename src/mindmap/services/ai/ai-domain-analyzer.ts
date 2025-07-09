@@ -7,6 +7,7 @@ import { ClaudeClient } from '@/shared/utils/claude-client';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { logInfo } from '../../../utils';
 import { BusinessPromptTemplates } from '../../utils/business-prompt-templates';
+import { ComplexityAnalyzer, ChangeComplexityProfile } from '../../utils/complexity-analyzer';
 
 /**
  * AI-driven business domain analyzer
@@ -21,14 +22,16 @@ export class AIDomainAnalyzer {
   }
 
   /**
-   * Classify business capability using AI semantic understanding
+   * Classify business capability using AI semantic understanding with complexity awareness
    * PRD: Root level represents "distinct user flow, story, or business capability"
    */
   async classifyBusinessDomain(
     context: AIAnalysisContext,
     semanticDiff?: SemanticDiff
   ): Promise<AIDomainClassification> {
-    const prompt = this.buildDomainClassificationPrompt(context, semanticDiff);
+    // Generate complexity profile to inform naming strategy
+    const complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+    const prompt = this.buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile);
 
     try {
       const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
@@ -402,6 +405,73 @@ RESPOND WITH ONLY VALID JSON:
     }
   ]
 }`;
+  }
+
+  /**
+   * Generate complexity profile for the given context
+   */
+  private generateComplexityProfile(
+    context: AIAnalysisContext,
+    semanticDiff?: SemanticDiff
+  ): ChangeComplexityProfile {
+    const themeCount = semanticDiff?.totalComplexity || 1;
+    const affectedFiles = semanticDiff?.files.map(f => f.path) || [context.filePath];
+    
+    // Extract theme-like information from context
+    const fileName = context.filePath.split('/').pop() || '';
+    const themeName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
+    const themeDescription = context.commitMessage || context.prDescription || '';
+    
+    return ComplexityAnalyzer.generateComplexityProfile(
+      themeCount,
+      affectedFiles,
+      themeName,
+      themeDescription,
+      context.completeDiff,
+      context.surroundingContext
+    );
+  }
+
+  /**
+   * Build complexity-aware domain classification prompt
+   */
+  private buildComplexityAwareDomainClassificationPrompt(
+    context: AIAnalysisContext,
+    semanticDiff?: SemanticDiff,
+    complexityProfile?: ChangeComplexityProfile
+  ): string {
+    // If no complexity profile provided, generate one
+    if (!complexityProfile) {
+      complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+    }
+
+    const additionalContext = semanticDiff
+      ? this.formatSemanticDiffContext(semanticDiff)
+      : '';
+
+    // Enhanced functional context with complexity information
+    const functionalContext = `
+${context.surroundingContext}
+
+${additionalContext}
+
+COMPLEXITY ANALYSIS:
+Complexity Level: ${complexityProfile.complexity.toUpperCase()}
+Recommended Approach: ${complexityProfile.recommendedApproach}
+Reasoning: ${complexityProfile.reasoning}
+Detected Patterns: ${complexityProfile.detectedPatterns.join(', ')}
+
+COMMIT CONTEXT:
+${context.commitMessage ? `Commit: ${context.commitMessage}` : ''}
+${context.prDescription ? `PR Description: ${context.prDescription}` : ''}`;
+
+    // Use the enhanced business prompt templates with complexity awareness
+    return BusinessPromptTemplates.createBusinessImpactPrompt(
+      context.filePath,
+      context.completeDiff,
+      functionalContext,
+      complexityProfile.complexity
+    );
   }
 
   /**

@@ -10,6 +10,8 @@ import { ThemeService } from '@/mindmap/services/theme-service';
 import { ThemeFormatter } from '@/mindmap/utils/theme-formatter';
 import { logger, Logger } from '@/shared/logger/logger';
 import { performanceTracker } from '@/shared/utils/performance-tracker';
+import { ReviewService } from '@/review/services/review-service';
+import { GitHubCommentService } from '@/review/services/github-comment-service';
 
 /**
  * Detect if we're running in local testing mode
@@ -27,9 +29,6 @@ export async function run(): Promise<void> {
   try {
     // Initialize live logging for local testing
     if (isLocal) {
-      // Clean all previous analysis files for fresh start
-      OutputSaver.cleanAllAnalyses();
-      
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       logFilePath = await OutputSaver.initializeLogFile(timestamp);
       Logger.initializeLiveLogging(logFilePath);
@@ -44,6 +43,52 @@ export async function run(): Promise<void> {
 
     // Set Anthropic API key for Claude CLI
     process.env.ANTHROPIC_API_KEY = inputs.anthropicApiKey;
+
+    // Development Mode: Skip to Phase 2 review if requested
+    if (process.env.SKIP_PHASE1 === 'true') {
+      logger.info('MAIN', 'Development mode: Skipping Phase 1, running Phase 2 review only');
+      
+      try {
+        performanceTracker.startTiming('Phase 2 Development Review');
+        
+        const reviewService = new ReviewService(inputs.anthropicApiKey);
+        const testFile = process.env.TEST_OUTPUT_FILE;
+        
+        const reviewResult = testFile 
+          ? await reviewService.reviewFromTestOutput(testFile)
+          : await reviewService.reviewFromTestOutput();
+        
+        logger.info('MAIN', `Development review completed: ${reviewResult.overallRecommendation} (${reviewResult.nodeReviews.length} nodes)`);
+        logger.info('MAIN', reviewResult.summary);
+        
+        if (isLocal) {
+          try {
+            const savedPath = await OutputSaver.saveReviewResults(
+              reviewResult,
+              'development-mode'
+            );
+            logInfo(`Development review results saved to: ${savedPath}`);
+          } catch (saveError) {
+            logger.warn('MAIN', `Failed to save development review results: ${saveError}`);
+          }
+        }
+        
+        performanceTracker.endTiming('Phase 2 Development Review');
+        performanceTracker.endTiming('Total AI Code Review');
+        performanceTracker.generateReport();
+        
+        return;
+      } catch (devError) {
+        logger.error('MAIN', `Development mode review failed: ${devError}`);
+        throw devError;
+      }
+    }
+
+    // Clean previous analysis files only for full pipeline runs (not development mode)
+    if (isLocal) {
+      logger.info('MAIN', 'Full pipeline mode: Cleaning previous analysis files for fresh start');
+      OutputSaver.cleanAllAnalyses();
+    }
 
     // Log mode (isLocal already defined above)
     logInfo(`Running in ${isLocal ? 'LOCAL TESTING' : 'PRODUCTION'} mode`);
@@ -156,10 +201,11 @@ export async function run(): Promise<void> {
       );
       logger.debug('MAIN', `Summary created, length: ${safeSummary?.length || 'undefined'}`);
 
-      logger.debug('MAIN', 'Setting outputs...');
-      core.setOutput('themes', detailedThemes);
-      core.setOutput('summary', safeSummary);
-      logger.debug('MAIN', 'Outputs set successfully');
+      // TODO: Remove production output writing (debugging only)
+      // logger.debug('MAIN', 'Setting outputs...');
+      // core.setOutput('themes', detailedThemes);
+      // core.setOutput('summary', safeSummary);
+      // logger.debug('MAIN', 'Outputs set successfully');
 
       // Save analysis results for local testing
       if (isLocal && gitService instanceof LocalGitService) {
@@ -177,7 +223,8 @@ export async function run(): Promise<void> {
         }
       }
 
-      logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
+      // TODO: Remove production output logging (debugging only)
+      // logInfo(`Set outputs - ${themeAnalysis.totalThemes} themes processed`);
 
       // Log expansion statistics if available
       if (themeAnalysis.expansionStats) {
@@ -191,8 +238,9 @@ export async function run(): Promise<void> {
         logger.debug('MAIN', `Error stack: ${error.stack}`);
       }
       logger.error('MAIN', `Failed to set outputs: ${error}`);
-      core.setOutput('themes', 'No themes found');
-      core.setOutput('summary', 'Output generation failed');
+      // TODO: Remove production output writing (debugging only)
+      // core.setOutput('themes', 'No themes found');
+      // core.setOutput('summary', 'Output generation failed');
     }
     performanceTracker.endTiming('Output Generation');
 
@@ -209,6 +257,69 @@ export async function run(): Promise<void> {
       logger.info('MAIN', 
         `Expansion: ${themeAnalysis.expansionStats.expandedThemes} themes expanded, max depth: ${themeAnalysis.expansionStats.maxDepth}`
       );
+    }
+
+    // Phase 2: Code Review (if not in development mode that skips Phase 1)
+    const shouldRunReview = process.env.SKIP_PHASE1 !== 'true';
+    if (shouldRunReview) {
+      performanceTracker.startTiming('Phase 2 Review');
+      
+      try {
+        logger.info('MAIN', 'Starting Phase 2: AI Code Review...');
+        
+        const reviewService = new ReviewService(inputs.anthropicApiKey);
+        const reviewResult = await reviewService.reviewThemes(themeAnalysis.themes);
+        
+        logger.info('MAIN', `Review completed: ${reviewResult.overallRecommendation} (${reviewResult.nodeReviews.length} nodes reviewed)`);
+        logger.info('MAIN', reviewResult.summary);
+        
+        // Handle output based on environment
+        if (isLocal && gitService instanceof LocalGitService) {
+          // Local testing: Save to files
+          try {
+            const modeInfo = gitService.getCurrentMode();
+            const savedPath = await OutputSaver.saveReviewResults(
+              reviewResult,
+              modeInfo.name
+            );
+            logInfo(`Review results saved to: ${savedPath}`);
+          } catch (saveError) {
+            logger.warn('MAIN', `Failed to save review results: ${saveError}`);
+          }
+        } else {
+          // Production: Post to PR comments
+          try {
+            logger.info('MAIN', 'Posting review results to PR comments...');
+            
+            const commentService = new GitHubCommentService(inputs.githubToken || '');
+            
+            // Post main review comment
+            await commentService.postMainReviewComment(reviewResult);
+            
+            // Post detailed comments for significant issues
+            await commentService.postDetailedNodeComments(reviewResult);
+            
+            // Post action items summary if there are critical/major issues
+            if (reviewResult.overallRecommendation !== 'approve') {
+              await commentService.postActionItemsSummary(reviewResult);
+            }
+            
+            logger.info('MAIN', 'PR comments posted successfully');
+            
+          } catch (commentError) {
+            logger.error('MAIN', `Failed to post PR comments: ${commentError}`);
+            // Don't fail the pipeline for comment errors
+          }
+        }
+        
+      } catch (reviewError) {
+        logger.error('MAIN', `Phase 2 review failed: ${reviewError}`);
+        // Continue execution - review failure shouldn't break the pipeline
+      }
+      
+      performanceTracker.endTiming('Phase 2 Review');
+    } else {
+      logger.info('MAIN', 'Skipping Phase 2 review (SKIP_PHASE1=true for development mode)');
     }
 
     // End total timing and generate comprehensive performance report
