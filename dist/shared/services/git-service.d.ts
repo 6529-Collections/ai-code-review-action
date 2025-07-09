@@ -16,7 +16,6 @@ export interface PullRequestContext {
 }
 export declare class GitService implements IGitService {
     private readonly githubToken;
-    private static readonly EXCLUDED_PATTERNS;
     private octokit;
     private aiAnalyzer;
     private shouldIncludeFile;

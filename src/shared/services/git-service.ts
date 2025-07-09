@@ -4,6 +4,7 @@ import { AICodeAnalyzer, CodeChange } from '../utils/ai-code-analyzer';
 import { IGitService } from '../interfaces/git-service-interface';
 import { logger } from '@/shared/logger/logger';
 import { LoggerServices } from '@/shared/logger/constants';
+import { FileExclusionPatterns } from '../utils/file-exclusion-patterns';
 
 export interface ChangedFile {
   filename: string;
@@ -22,24 +23,13 @@ export interface PullRequestContext {
 }
 
 export class GitService implements IGitService {
-  // Patterns for files to exclude from analysis
-  private static readonly EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-  ];
-
   private octokit: ReturnType<typeof github.getOctokit> | null = null;
   private aiAnalyzer: AICodeAnalyzer;
 
   private shouldIncludeFile(filename: string): boolean {
-    const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) =>
-      pattern.test(filename)
-    );
-    logger.debug(LoggerServices.GIT_SERVICE, `${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
-    return !isExcluded;
+    const isIncluded = FileExclusionPatterns.shouldIncludeFile(filename);
+    logger.debug(LoggerServices.GIT_SERVICE, `${filename}: ${isIncluded ? 'INCLUDED' : 'EXCLUDED'}`);
+    return isIncluded;
   }
 
   constructor(

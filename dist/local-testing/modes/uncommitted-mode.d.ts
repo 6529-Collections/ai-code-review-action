@@ -5,7 +5,6 @@ import { ChangedFile } from '@/shared/services/git-service';
  * This is the default mode for local testing
  */
 export declare class UncommittedMode extends BaseDiffMode {
-    private static readonly EXCLUDED_PATTERNS;
     getName(): string;
     getDescription(): string;
     private shouldIncludeFile;

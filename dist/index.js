@@ -30386,6 +30386,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.UncommittedMode = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
 const base_diff_mode_1 = __nccwpck_require__(432);
+const file_exclusion_patterns_1 = __nccwpck_require__(4006);
 /**
  * UncommittedMode analyzes all uncommitted changes (staged + unstaged)
  * This is the default mode for local testing
@@ -30398,8 +30399,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
         return 'Analyzes all uncommitted changes (staged and unstaged)';
     }
     shouldIncludeFile(filename) {
-        const isExcluded = UncommittedMode.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        return !isExcluded;
+        return file_exclusion_patterns_1.FileExclusionPatterns.shouldIncludeFile(filename);
     }
     async getChangedFiles() {
         const files = [];
@@ -30606,19 +30606,6 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
     }
 }
 exports.UncommittedMode = UncommittedMode;
-// Patterns for files to exclude from analysis
-UncommittedMode.EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
-    /command-center\/review-prd\.md$/, // Exclude PRD files
-    /\.md$/, // Exclude all markdown files
-    /\.txt$/, // Exclude all text files
-    /\.json$/, // Exclude all json files
-];
 
 
 /***/ }),
@@ -37978,11 +37965,12 @@ const exec = __importStar(__nccwpck_require__(5236));
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const logger_1 = __nccwpck_require__(9000);
 const constants_1 = __nccwpck_require__(6895);
+const file_exclusion_patterns_1 = __nccwpck_require__(4006);
 class GitService {
     shouldIncludeFile(filename) {
-        const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        logger_1.logger.debug(constants_1.LoggerServices.GIT_SERVICE, `${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
-        return !isExcluded;
+        const isIncluded = file_exclusion_patterns_1.FileExclusionPatterns.shouldIncludeFile(filename);
+        logger_1.logger.debug(constants_1.LoggerServices.GIT_SERVICE, `${filename}: ${isIncluded ? 'INCLUDED' : 'EXCLUDED'}`);
+        return isIncluded;
     }
     constructor(githubToken, anthropicApiKey) {
         this.githubToken = githubToken;
@@ -38410,14 +38398,6 @@ class GitService {
     }
 }
 exports.GitService = GitService;
-// Patterns for files to exclude from analysis
-GitService.EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-];
 
 
 /***/ }),
@@ -39351,6 +39331,61 @@ ClaudeClient.queueMetrics = {
     consecutiveRateLimitErrors: 0,
     circuitBreakerUntil: 0,
 };
+
+
+/***/ }),
+
+/***/ 4006:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FileExclusionPatterns = void 0;
+/**
+ * Centralized file exclusion patterns for consistent filtering
+ * across all file analysis operations
+ */
+class FileExclusionPatterns {
+    /**
+     * Check if a file should be included in analysis
+     */
+    static shouldIncludeFile(filename) {
+        return !this.PATTERNS.some(pattern => pattern.test(filename));
+    }
+    /**
+     * Get all exclusion patterns for debugging
+     */
+    static getPatterns() {
+        return [...this.PATTERNS];
+    }
+    /**
+     * Get pattern count for metrics
+     */
+    static getPatternCount() {
+        return this.PATTERNS.length;
+    }
+}
+exports.FileExclusionPatterns = FileExclusionPatterns;
+/**
+ * Comprehensive exclusion patterns based on UncommittedMode patterns
+ * These patterns exclude files that typically don't need code review
+ */
+FileExclusionPatterns.PATTERNS = [
+    // Build artifacts and dependencies
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /package-lock\.json$/, // Exclude lock files
+    // Documentation and configuration
+    /\.md$/, // Exclude all markdown files
+    /\.txt$/, // Exclude all text files
+    /\.json$/, // Exclude all json files
+    // Specific PRD files
+    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
+    /command-center\/review-prd\.md$/, // Exclude PRD files
+];
 
 
 /***/ }),
