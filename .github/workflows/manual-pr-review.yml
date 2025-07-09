@@ -66,24 +66,37 @@ jobs:
     - name: Install dependencies
       run: npm install
     
-    - name: Run AI Code Review (Full Pipeline)
-      uses: ./
-      id: review
-      with:
-        anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        # Only actual parameter from action.yml
-        max-atomic-size: '15'
+    - name: Build project
+      run: npm run build
+    
+    - name: Test PR Comment Posting
+      run: node test-comment.js
       env:
-        LOG_LEVEL: INFO
-        LOG_TIMESTAMPS: true
-        NODE_ENV: production
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Override context for manual PR review
         GITHUB_CONTEXT_ISSUE_NUMBER: ${{ github.event.inputs.pr_number }}
         GITHUB_CONTEXT_PR_BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         GITHUB_CONTEXT_PR_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-        # Ensure production mode (not development mode)
-        DEV_MODE_PHASE2_ONLY: 'false'
+    
+    # Commented out for testing - uncomment when comment posting works
+    # - name: Run AI Code Review (Full Pipeline)
+    #   uses: ./
+    #   id: review
+    #   with:
+    #     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+    #     github-token: ${{ secrets.GITHUB_TOKEN }}
+    #     # Only actual parameter from action.yml
+    #     max-atomic-size: '15'
+    #   env:
+    #     LOG_LEVEL: INFO
+    #     LOG_TIMESTAMPS: true
+    #     NODE_ENV: production
+    #     # Override context for manual PR review
+    #     GITHUB_CONTEXT_ISSUE_NUMBER: ${{ github.event.inputs.pr_number }}
+    #     GITHUB_CONTEXT_PR_BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+    #     GITHUB_CONTEXT_PR_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+    #     # Ensure production mode (not development mode)
+    #     DEV_MODE_PHASE2_ONLY: 'false'
     
     - name: Review Summary
       if: always()

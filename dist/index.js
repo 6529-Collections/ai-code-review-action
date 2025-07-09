@@ -36462,7 +36462,7 @@ class GitHubCommentService {
             const { data: existingComments } = await this.octokit.rest.issues.listComments({
                 owner: this.context.repo.owner,
                 repo: this.context.repo.repo,
-                issue_number: this.context.issue.number,
+                issue_number: this.getPRNumber(),
             });
             // Check if we already posted a review comment (to update instead of duplicate)
             const existingComment = existingComments.find(c => c.body?.includes('🤖 AI Code Review Results') && c.user?.login === 'github-actions[bot]');
@@ -36481,7 +36481,7 @@ class GitHubCommentService {
                 const { data: newComment } = await this.octokit.rest.issues.createComment({
                     owner: this.context.repo.owner,
                     repo: this.context.repo.repo,
-                    issue_number: this.context.issue.number,
+                    issue_number: this.getPRNumber(),
                     body: comment,
                 });
                 logger_1.logger.info('GITHUB_COMMENT', `Posted new review comment (ID: ${newComment.id})`);
@@ -36520,7 +36520,7 @@ class GitHubCommentService {
             const { data: newComment } = await this.octokit.rest.issues.createComment({
                 owner: this.context.repo.owner,
                 repo: this.context.repo.repo,
-                issue_number: this.context.issue.number,
+                issue_number: this.getPRNumber(),
                 body: comment,
             });
             logger_1.logger.info('GITHUB_COMMENT', `Posted detailed comment for node "${nodeReview.nodeName}" (ID: ${newComment.id})`);
@@ -36556,7 +36556,7 @@ class GitHubCommentService {
             const { data: newComment } = await this.octokit.rest.issues.createComment({
                 owner: this.context.repo.owner,
                 repo: this.context.repo.repo,
-                issue_number: this.context.issue.number,
+                issue_number: this.getPRNumber(),
                 body: comment,
             });
             logger_1.logger.info('GITHUB_COMMENT', `Posted action items summary (ID: ${newComment.id})`);
@@ -36570,7 +36570,16 @@ class GitHubCommentService {
     isPullRequestContext() {
         return this.context.eventName === 'pull_request' ||
             this.context.eventName === 'pull_request_target' ||
-            !!this.context.issue?.number; // For local testing with issue number
+            !!this.context.issue?.number || // For local testing with issue number
+            !!process.env.GITHUB_CONTEXT_ISSUE_NUMBER; // For manual PR review via workflow_dispatch
+    }
+    getPRNumber() {
+        // Check manual PR review environment variable first
+        if (process.env.GITHUB_CONTEXT_ISSUE_NUMBER) {
+            return parseInt(process.env.GITHUB_CONTEXT_ISSUE_NUMBER);
+        }
+        // Fallback to context issue number
+        return this.context.issue.number;
     }
     hasSignificantIssues(nodeReview) {
         const criticalIssues = nodeReview.findings.issues.filter(i => i.severity === 'critical').length;

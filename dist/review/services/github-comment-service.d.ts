@@ -28,6 +28,7 @@ export declare class GitHubCommentService {
      */
     postActionItemsSummary(reviewResult: ReviewResult): Promise<void>;
     private isPullRequestContext;
+    private getPRNumber;
     private hasSignificantIssues;
     private extractActionItems;
     private formatActionItemsComment;
