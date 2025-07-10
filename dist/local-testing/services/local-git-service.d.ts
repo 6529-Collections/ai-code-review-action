@@ -11,6 +11,11 @@ export declare class LocalGitService implements IGitService {
     private localDiffService;
     constructor(anthropicApiKey: string, diffModeConfig?: DiffModeConfig);
     /**
+     * Get diff mode configuration from environment variables
+     * Supports DIFF_MODE environment variable with values: 'uncommitted', 'branch'
+     */
+    private getDiffModeFromEnv;
+    /**
      * Get enhanced changed files with AI code analysis for local testing
      */
     getEnhancedChangedFiles(): Promise<CodeChange[]>;

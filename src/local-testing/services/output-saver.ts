@@ -164,22 +164,29 @@ export class OutputSaver {
   }
 
   /**
-   * Clean up all analysis files for fresh start
+   * Clean up entire output directory for fresh start
+   * Removes all files and subdirectories in the output directory
    */
   static cleanAllAnalyses(): void {
     if (!fs.existsSync(this.LOCAL_DIR)) {
       return;
     }
 
-    // Get all analysis files (both JSON and log)
-    const allFiles = fs.readdirSync(this.LOCAL_DIR)
-      .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')));
+    // Get all files in the output directory
+    const allFiles = fs.readdirSync(this.LOCAL_DIR);
 
-    // Delete all analysis files
+    // Delete all files in the directory
     for (const filename of allFiles) {
       try {
         const filepath = path.join(this.LOCAL_DIR, filename);
-        fs.unlinkSync(filepath);
+        const stat = fs.statSync(filepath);
+        
+        if (stat.isFile()) {
+          fs.unlinkSync(filepath);
+        } else if (stat.isDirectory()) {
+          // Recursively remove subdirectories
+          fs.rmSync(filepath, { recursive: true, force: true });
+        }
       } catch (error) {
         // Ignore errors, continue cleanup
       }

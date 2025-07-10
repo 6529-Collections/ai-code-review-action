@@ -43,14 +43,14 @@ logger.error(LoggerServices.CACHE, 'Cache miss occurred');
 
 ### `logger.warn()` - Important warnings, fallbacks
 - Fallback mechanisms activated
-- Performance degradation
+- Actual system failures (not AI processing time)
 - Unexpected but recoverable conditions
 - Configuration issues
 
 ```typescript
 // ✅ Good
 logger.warn(LoggerServices.EXPANSION, 'Using fallback expansion due to AI failure');
-logger.warn(LoggerServices.PERF, 'Operation took longer than expected: 30s');
+logger.info(LoggerServices.PERF, 'AI analysis completed: 5.2 minutes');
 
 // ❌ Bad - not a warning
 logger.warn(LoggerServices.MAIN, 'Starting analysis');
@@ -195,11 +195,26 @@ const startTime = Date.now();
 // operation
 const duration = Date.now() - startTime;
 logger.info(LoggerServices.PERF, `Operation completed in ${duration}ms`);
+
+// For AI operations (multi-minute processing is normal)
+logger.info(LoggerServices.PERF, `AI theme analysis completed in ${Math.round(duration/1000/60)} minutes`);
 ```
 
 ### Progress Updates
 ```typescript
 logger.info(LoggerServices.SERVICE_NAME, `Processing ${current}/${total} items`);
 ```
+
+## AI Processing Time Guidelines
+
+**Important**: AI operations typically take 3-10 minutes and this is expected behavior:
+- Theme analysis: 5-8 minutes normal
+- Review processing: 2-5 minutes normal  
+- Mindmap generation: 3-6 minutes normal
+
+**Logging AI timing**:
+- ✅ Log completion time as `info` level: `"AI analysis completed: 5.2 minutes"`
+- ❌ Never log AI processing time as warnings or errors
+- ❌ Don't flag multi-minute processing as "performance degradation"
 
 Remember: Every log entry should help developers understand what the system is doing and aid in debugging. If a log doesn't serve that purpose, remove it.

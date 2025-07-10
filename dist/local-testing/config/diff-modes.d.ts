@@ -2,7 +2,8 @@
  * Configuration and types for local testing diff modes
  */
 export declare enum DiffModeType {
-    UNCOMMITTED = "uncommitted"
+    UNCOMMITTED = "uncommitted",
+    BRANCH = "branch"
 }
 export interface DiffModeConfig {
     mode: DiffModeType;

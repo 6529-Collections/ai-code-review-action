@@ -182,6 +182,42 @@ brew install act
 yarn test:act
 ```
 
+#### Local Testing Diff Modes
+
+The action supports different diff modes for local testing:
+
+**Default Mode (Uncommitted Changes)**
+```bash
+# Analyze all uncommitted changes (staged + unstaged + untracked)
+yarn test:act
+# or explicitly set
+DIFF_MODE=uncommitted yarn test:act
+```
+
+**Branch Mode (PR Context Required)**
+```bash
+# Analyze changes between current branch and target branch
+DIFF_MODE=branch yarn test:act
+```
+
+**Branch Mode Requirements:**
+- Must be on a feature branch (not main/master)
+- Branch must have upstream tracking set up
+- Target branch (main/master/develop) must exist in remote
+- **Hard error if not in PR context** - no fallbacks
+
+**Setup for Branch Mode:**
+```bash
+# Create and switch to feature branch
+git checkout -b feature/my-feature
+
+# Set up upstream tracking
+git push -u origin feature/my-feature
+
+# Now branch mode will work
+DIFF_MODE=branch yarn test:act
+```
+
 ### Environment Variables
 
 For local development, create a `.env` file:
@@ -193,6 +229,10 @@ ANTHROPIC_API_KEY=your_anthropic_api_key_here
 Optional configuration:
 
 ```env
+# Local testing diff mode configuration
+DIFF_MODE=uncommitted                  # Default: analyze uncommitted changes (staged + unstaged + untracked)
+# DIFF_MODE=branch                     # Analyze changes between current branch and target branch (requires PR context)
+
 # Logging configuration
 LOG_LEVEL=INFO                         # Set log level: ERROR, WARN, INFO, DEBUG, TRACE
 LOG_TIMESTAMPS=true                    # Include timestamps in log output

@@ -4,10 +4,10 @@
 
 export enum DiffModeType {
   UNCOMMITTED = 'uncommitted',
+  BRANCH = 'branch',
   // Future modes can be added here
   // STAGED = 'staged',
   // LAST_COMMIT = 'last-commit',
-  // BRANCH = 'branch',
   // PR = 'pr'
 }
 

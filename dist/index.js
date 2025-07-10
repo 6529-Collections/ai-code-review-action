@@ -30025,9 +30025,9 @@ async function run() {
                 throw devError;
             }
         }
-        // Clean previous analysis files only for full pipeline runs (not development mode)
+        // Clean previous output files only for full pipeline runs (not development mode)
         if (isLocal) {
-            logger_1.logger.info('MAIN', 'Full pipeline mode: Cleaning previous analysis files for fresh start');
+            logger_1.logger.info('MAIN', 'Full pipeline mode: Cleaning previous output files for fresh start');
             output_saver_1.OutputSaver.cleanAllAnalyses();
         }
         // Log mode (isLocal already defined above)
@@ -30245,10 +30245,10 @@ exports.DEFAULT_DIFF_MODE_CONFIG = exports.DiffModeType = void 0;
 var DiffModeType;
 (function (DiffModeType) {
     DiffModeType["UNCOMMITTED"] = "uncommitted";
+    DiffModeType["BRANCH"] = "branch";
     // Future modes can be added here
     // STAGED = 'staged',
     // LAST_COMMIT = 'last-commit',
-    // BRANCH = 'branch',
     // PR = 'pr'
 })(DiffModeType || (exports.DiffModeType = DiffModeType = {}));
 exports.DEFAULT_DIFF_MODE_CONFIG = {
@@ -30322,6 +30322,276 @@ exports.BaseDiffMode = BaseDiffMode;
 
 /***/ }),
 
+/***/ 7797:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BranchMode = void 0;
+const exec = __importStar(__nccwpck_require__(5236));
+const base_diff_mode_1 = __nccwpck_require__(432);
+const file_exclusion_patterns_1 = __nccwpck_require__(4006);
+/**
+ * BranchMode analyzes changes between current branch and target branch
+ * REQUIRES: Must be in PR context (branch with upstream tracking)
+ * ERRORS: Hard error if not in PR context - no fallbacks
+ */
+class BranchMode extends base_diff_mode_1.BaseDiffMode {
+    constructor() {
+        super(...arguments);
+        this.targetBranch = null;
+    }
+    getName() {
+        return 'diff-compare';
+    }
+    getDescription() {
+        return 'Compares current ref against target ref (requires PR context)';
+    }
+    shouldIncludeFile(filename) {
+        return file_exclusion_patterns_1.FileExclusionPatterns.shouldIncludeFile(filename);
+    }
+    /**
+     * Strict PR detection with hard error handling
+     * NO FALLBACKS - Fail fast if not in PR context
+     */
+    async validatePRContext() {
+        try {
+            // Get current branch name
+            const currentBranch = await this.getCurrentBranch();
+            console.log(`[BRANCH-MODE] Current ref: ${currentBranch}`);
+            // Check if current branch has upstream tracking
+            const upstreamBranch = await this.getUpstreamBranch(currentBranch);
+            console.log(`[BRANCH-MODE] Upstream ref: ${upstreamBranch}`);
+            // Resolve target branch (what this PR would merge into)
+            const targetBranch = await this.getTargetBranch(upstreamBranch);
+            console.log(`[BRANCH-MODE] Target ref: ${targetBranch}`);
+            return targetBranch;
+        }
+        catch (error) {
+            throw new Error(`BRANCH mode requires PR context but validation failed: ${error instanceof Error ? error.message : 'Unknown error'}\n` +
+                `\nBRANCH mode can only be used when:\n` +
+                `1. You are on a feature branch (not main/master)\n` +
+                `2. The branch has upstream tracking set up\n` +
+                `3. There is a clear target branch to compare against\n` +
+                `\nFor uncommitted changes, use UNCOMMITTED mode instead.`);
+        }
+    }
+    async getCurrentBranch() {
+        let branchName = '';
+        try {
+            await exec.exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        branchName = data.toString().trim();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error('Failed to get current branch name');
+        }
+        if (!branchName) {
+            throw new Error('Could not determine current branch name');
+        }
+        // Hard error if on main/master branch
+        if (branchName === 'main' || branchName === 'master') {
+            throw new Error(`Cannot use BRANCH mode on main/master branch. ` +
+                `BRANCH mode is for feature branches in PR context only.`);
+        }
+        return branchName;
+    }
+    async getUpstreamBranch(currentBranch) {
+        let upstreamBranch = '';
+        try {
+            await exec.exec('git', ['rev-parse', '--abbrev-ref', `${currentBranch}@{upstream}`], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        upstreamBranch = data.toString().trim();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Branch '${currentBranch}' has no upstream tracking branch. ` +
+                `Set up upstream tracking with: git push -u origin ${currentBranch}`);
+        }
+        if (!upstreamBranch) {
+            throw new Error(`Could not determine upstream branch for '${currentBranch}'`);
+        }
+        return upstreamBranch;
+    }
+    async getTargetBranch(upstreamBranch) {
+        // Extract remote and branch from upstream (e.g., "origin/feature-branch" -> "origin")
+        const parts = upstreamBranch.split('/');
+        if (parts.length < 2) {
+            throw new Error(`Invalid upstream branch format: ${upstreamBranch}`);
+        }
+        const remote = parts[0];
+        // Check for common target branches in order of preference
+        const candidateTargets = [`${remote}/main`, `${remote}/master`, `${remote}/develop`];
+        for (const candidate of candidateTargets) {
+            try {
+                // Check if the branch exists
+                await exec.exec('git', ['rev-parse', '--verify', candidate], {
+                    silent: true,
+                });
+                // Found valid target branch
+                return candidate;
+            }
+            catch (error) {
+                // Branch doesn't exist, try next candidate
+                continue;
+            }
+        }
+        throw new Error(`Could not determine target branch. Tried: ${candidateTargets.join(', ')}\n` +
+            `Make sure the target branch exists in remote '${remote}'.`);
+    }
+    async getChangedFiles() {
+        // Ensure we're in PR context first
+        this.targetBranch = await this.validatePRContext();
+        // Log the target branch for debugging
+        console.log(`[BRANCH-MODE] Comparing against target: ${this.targetBranch}`);
+        const files = [];
+        let fileList = '';
+        try {
+            // Get changed files between current branch and target branch
+            await exec.exec('git', ['diff', '--name-status', `${this.targetBranch}...HEAD`], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Failed to get changed files between current branch and ${this.targetBranch}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const line of fileLines) {
+            const [status, filename] = line.split('\t');
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, status);
+            if (file)
+                files.push(file);
+        }
+        // Filter files according to exclusion patterns
+        const filteredFiles = files.filter(file => this.shouldIncludeFile(file.filename));
+        return filteredFiles;
+    }
+    async getDiffContent() {
+        // Ensure we're in PR context first
+        if (!this.targetBranch) {
+            this.targetBranch = await this.validatePRContext();
+        }
+        let diffOutput = '';
+        try {
+            // Get diff between current branch and target branch
+            await exec.exec('git', ['diff', `${this.targetBranch}...HEAD`], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Failed to get diff content between current branch and ${this.targetBranch}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        return diffOutput;
+    }
+    async createChangedFile(filename, gitStatus) {
+        try {
+            // Get patch for this file
+            const patch = await this.getFilePatch(filename);
+            return {
+                filename,
+                status: this.mapGitStatusToChangedFileStatus(gitStatus),
+                patch,
+            };
+        }
+        catch (error) {
+            return null;
+        }
+    }
+    async getFilePatch(filename) {
+        if (!this.targetBranch) {
+            throw new Error('Target branch not set - call validatePRContext first');
+        }
+        let patch = '';
+        try {
+            await exec.exec('git', ['diff', `${this.targetBranch}...HEAD`, '--', filename], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        patch += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Failed to get patch for file ${filename}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        return patch;
+    }
+    mapGitStatusToChangedFileStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'D':
+                return 'removed';
+            case 'M':
+                return 'modified';
+            case 'R':
+                return 'renamed';
+            default:
+                return 'modified';
+        }
+    }
+}
+exports.BranchMode = BranchMode;
+
+
+/***/ }),
+
 /***/ 7881:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -30331,15 +30601,16 @@ exports.BaseDiffMode = BaseDiffMode;
  * Export barrel for all diff modes
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.UncommittedMode = exports.BaseDiffMode = void 0;
+exports.BranchMode = exports.UncommittedMode = exports.BaseDiffMode = void 0;
 var base_diff_mode_1 = __nccwpck_require__(432);
 Object.defineProperty(exports, "BaseDiffMode", ({ enumerable: true, get: function () { return base_diff_mode_1.BaseDiffMode; } }));
 var uncommitted_mode_1 = __nccwpck_require__(1852);
 Object.defineProperty(exports, "UncommittedMode", ({ enumerable: true, get: function () { return uncommitted_mode_1.UncommittedMode; } }));
+var branch_mode_1 = __nccwpck_require__(7797);
+Object.defineProperty(exports, "BranchMode", ({ enumerable: true, get: function () { return branch_mode_1.BranchMode; } }));
 // Future modes can be exported here
 // export { StagedMode } from './staged-mode';
 // export { LastCommitMode } from './last-commit-mode';
-// export { BranchMode } from './branch-mode';
 
 
 /***/ }),
@@ -30656,13 +30927,13 @@ class LocalDiffService {
         switch (config.mode) {
             case diff_modes_1.DiffModeType.UNCOMMITTED:
                 return new modes_1.UncommittedMode();
+            case diff_modes_1.DiffModeType.BRANCH:
+                return new modes_1.BranchMode();
             // Future modes can be added here
             // case DiffModeType.STAGED:
             //   return new StagedMode();
             // case DiffModeType.LAST_COMMIT:
             //   return new LastCommitMode();
-            // case DiffModeType.BRANCH:
-            //   return new BranchMode(config.baseBranch || 'main');
             default:
                 return new modes_1.UncommittedMode();
         }
@@ -30682,6 +30953,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LocalGitService = void 0;
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const local_diff_service_1 = __nccwpck_require__(3836);
+const diff_modes_1 = __nccwpck_require__(6219);
 /**
  * LocalGitService provides Git operations specifically for local testing
  * Simplified version focused on uncommitted changes analysis
@@ -30692,7 +30964,22 @@ class LocalGitService {
             throw new Error('ANTHROPIC_API_KEY is required for AI code analysis');
         }
         this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(anthropicApiKey);
-        this.localDiffService = new local_diff_service_1.LocalDiffService(diffModeConfig);
+        // Use provided config, otherwise check environment, otherwise use default
+        const config = diffModeConfig || this.getDiffModeFromEnv();
+        this.localDiffService = new local_diff_service_1.LocalDiffService(config);
+    }
+    /**
+     * Get diff mode configuration from environment variables
+     * Supports DIFF_MODE environment variable with values: 'uncommitted', 'branch'
+     */
+    getDiffModeFromEnv() {
+        const envMode = process.env.DIFF_MODE;
+        // Validate the environment variable value
+        if (envMode && Object.values(diff_modes_1.DiffModeType).includes(envMode)) {
+            return { mode: envMode };
+        }
+        // Return default if no valid environment variable found
+        return diff_modes_1.DEFAULT_DIFF_MODE_CONFIG;
     }
     /**
      * Get enhanced changed files with AI code analysis for local testing
@@ -30904,20 +31191,27 @@ class OutputSaver {
         }
     }
     /**
-     * Clean up all analysis files for fresh start
+     * Clean up entire output directory for fresh start
+     * Removes all files and subdirectories in the output directory
      */
     static cleanAllAnalyses() {
         if (!fs.existsSync(this.LOCAL_DIR)) {
             return;
         }
-        // Get all analysis files (both JSON and log)
-        const allFiles = fs.readdirSync(this.LOCAL_DIR)
-            .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')));
-        // Delete all analysis files
+        // Get all files in the output directory
+        const allFiles = fs.readdirSync(this.LOCAL_DIR);
+        // Delete all files in the directory
         for (const filename of allFiles) {
             try {
                 const filepath = path.join(this.LOCAL_DIR, filename);
-                fs.unlinkSync(filepath);
+                const stat = fs.statSync(filepath);
+                if (stat.isFile()) {
+                    fs.unlinkSync(filepath);
+                }
+                else if (stat.isDirectory()) {
+                    // Recursively remove subdirectories
+                    fs.rmSync(filepath, { recursive: true, force: true });
+                }
             }
             catch (error) {
                 // Ignore errors, continue cleanup

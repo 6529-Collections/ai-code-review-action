@@ -87,9 +87,9 @@ export async function run(): Promise<void> {
       }
     }
 
-    // Clean previous analysis files only for full pipeline runs (not development mode)
+    // Clean previous output files only for full pipeline runs (not development mode)
     if (isLocal) {
-      logger.info('MAIN', 'Full pipeline mode: Cleaning previous analysis files for fresh start');
+      logger.info('MAIN', 'Full pipeline mode: Cleaning previous output files for fresh start');
       OutputSaver.cleanAllAnalyses();
     }
 
