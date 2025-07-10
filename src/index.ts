@@ -12,6 +12,8 @@ import { logger, Logger } from '@/shared/logger/logger';
 import { performanceTracker } from '@/shared/utils/performance-tracker';
 import { ReviewService } from '@/review/services/review-service';
 import { GitHubCommentService } from '@/review/services/github-comment-service';
+import { ReviewResult } from '@/review/types/review-types';
+
 
 /**
  * Detect if we're running in local testing mode
@@ -85,9 +87,9 @@ export async function run(): Promise<void> {
       }
     }
 
-    // Clean previous analysis files only for full pipeline runs (not development mode)
+    // Clean previous output files only for full pipeline runs (not development mode)
     if (isLocal) {
-      logger.info('MAIN', 'Full pipeline mode: Cleaning previous analysis files for fresh start');
+      logger.info('MAIN', 'Full pipeline mode: Cleaning previous output files for fresh start');
       OutputSaver.cleanAllAnalyses();
     }
 

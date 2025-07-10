@@ -41,4 +41,28 @@ export declare class ReviewService {
      * Generate human-readable review summary
      */
     private generateReviewSummary;
+    /**
+     * Extract file context from theme data
+     */
+    private extractFileContext;
+    /**
+     * Build enhanced code context with file/function information
+     */
+    private buildEnhancedCodeContext;
+    /**
+     * Extract diff hunks with line numbers from theme data
+     */
+    private extractDiffHunks;
+    /**
+     * Extract file path from diff content
+     */
+    private extractFileFromDiff;
+    /**
+     * Enrich findings with location context
+     */
+    private enrichFindingsWithLocation;
+    /**
+     * Map issue to specific file location
+     */
+    private mapIssueToLocation;
 }

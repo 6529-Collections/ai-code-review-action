@@ -43,4 +43,5 @@ jobs:
       env:
         LOG_LEVEL: INFO
         LOG_TIMESTAMPS: true
+        DIFF_MODE: ${{ env.DIFF_MODE }}
     

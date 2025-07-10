@@ -1,6 +1,6 @@
 import { ChangedFile } from '@/shared/services/git-service';
 import { DiffModeConfig, DiffModeType, DEFAULT_DIFF_MODE_CONFIG } from '../config/diff-modes';
-import { BaseDiffMode, UncommittedMode } from '../modes';
+import { BaseDiffMode, UncommittedMode, BranchMode } from '../modes';
 
 /**
  * LocalDiffService orchestrates different diff modes for local testing
@@ -46,13 +46,14 @@ export class LocalDiffService {
       case DiffModeType.UNCOMMITTED:
         return new UncommittedMode();
       
+      case DiffModeType.BRANCH:
+        return new BranchMode();
+      
       // Future modes can be added here
       // case DiffModeType.STAGED:
       //   return new StagedMode();
       // case DiffModeType.LAST_COMMIT:
       //   return new LastCommitMode();
-      // case DiffModeType.BRANCH:
-      //   return new BranchMode(config.baseBranch || 'main');
       
       default:
         return new UncommittedMode();

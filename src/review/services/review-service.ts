@@ -4,7 +4,9 @@ import {
   NodeReview, 
   ReviewFindings, 
   NodeTypeClassification, 
-  ReviewConfig 
+  ReviewConfig,
+  FileContextMap,
+  DiffHunkInfo
 } from '../types/review-types';
 import { TestDataLoader } from './test-data-loader';
 import { ClaudeClient } from '@/shared/utils/claude-client';
@@ -190,7 +192,9 @@ RESPOND WITH ONLY VALID JSON:
    * AI analyzes node for review findings
    */
   private async analyzeNodeFindings(theme: ConsolidatedTheme, nodeType: string): Promise<ReviewFindings> {
-    const codeContext = theme.codeSnippets?.join('\n\n') || 'No code snippets available';
+    // Extract file context from existing theme data
+    const fileContext = this.extractFileContext(theme);
+    const enhancedCodeContext = this.buildEnhancedCodeContext(theme, fileContext);
     
     const prompt = `You are performing a code review with ${nodeType.toUpperCase()} focus.
 
@@ -202,7 +206,7 @@ Node Type: ${nodeType}
 Files Affected: ${theme.affectedFiles?.join(', ') || 'Not specified'}
 
 CODE CHANGES:
-${codeContext}
+${enhancedCodeContext}
 
 TASK: Provide a thorough code review focusing on the node type.
 
@@ -252,7 +256,8 @@ RESPOND WITH ONLY VALID JSON:
       
       logger.debug('REVIEW_SERVICE', `Found ${parsed.issues.length} issues, risk level: ${parsed.riskLevel}`);
       
-      return parsed;
+      // Enrich findings with location context
+      return this.enrichFindingsWithLocation(parsed, fileContext);
     } catch (error) {
       logger.warn('REVIEW_SERVICE', `Failed to analyze node findings: ${error}`);
       return {
@@ -347,5 +352,170 @@ RESPOND WITH ONLY VALID JSON:
       .join(', ');
     
     return `Reviewed ${nodeReviews.length} changes (${typesSummary}). Found ${totalIssues} issues: ${criticalIssues} critical, ${majorIssues} major, ${minorIssues} minor. Average confidence: ${(avgConfidence * 100).toFixed(1)}%`;
+  }
+
+  /**
+   * Extract file context from theme data
+   */
+  private extractFileContext(theme: ConsolidatedTheme): FileContextMap {
+    return {
+      files: theme.affectedFiles || [],
+      codeExamples: theme.codeExamples || [],
+      functions: theme.mainFunctionsChanged || [],
+      classes: theme.mainClassesChanged || [],
+      diffHunks: this.extractDiffHunks(theme)
+    };
+  }
+
+  /**
+   * Build enhanced code context with file/function information
+   */
+  private buildEnhancedCodeContext(theme: ConsolidatedTheme, fileContext: FileContextMap): string {
+    const sections: string[] = [];
+    
+    // Basic code snippets
+    if (theme.codeSnippets?.length > 0) {
+      sections.push('=== CODE SNIPPETS ===');
+      sections.push(theme.codeSnippets.join('\n\n'));
+    }
+    
+    // File-specific code examples with context
+    if (fileContext.codeExamples.length > 0) {
+      sections.push('\n=== FILE-SPECIFIC CHANGES ===');
+      fileContext.codeExamples.forEach(example => {
+        sections.push(`\n📁 File: ${example.file}`);
+        sections.push(`Description: ${example.description}`);
+        sections.push('```');
+        sections.push(example.snippet);
+        sections.push('```');
+      });
+    }
+    
+    // Functions/classes context
+    if (fileContext.functions.length > 0 || fileContext.classes.length > 0) {
+      sections.push('\n=== AFFECTED COMPONENTS ===');
+      if (fileContext.functions.length > 0) {
+        sections.push(`Functions: ${fileContext.functions.join(', ')}`);
+      }
+      if (fileContext.classes.length > 0) {
+        sections.push(`Classes: ${fileContext.classes.join(', ')}`);
+      }
+    }
+    
+    return sections.length > 0 ? sections.join('\n') : 'No code snippets available';
+  }
+
+  /**
+   * Extract diff hunks with line numbers from theme data
+   */
+  private extractDiffHunks(theme: ConsolidatedTheme): DiffHunkInfo[] {
+    const diffHunks: DiffHunkInfo[] = [];
+    
+    // Extract from theme's codeSnippets that contain diff format
+    theme.codeSnippets?.forEach(snippet => {
+      const hunkMatches = snippet.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@.*$/gm);
+      if (hunkMatches) {
+        hunkMatches.forEach(match => {
+          const lineMatch = match.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/);
+          if (lineMatch) {
+            const [, oldStart, newStart] = lineMatch;
+            diffHunks.push({
+              oldLineStart: parseInt(oldStart, 10),
+              newLineStart: parseInt(newStart, 10),
+              content: snippet,
+              filePath: this.extractFileFromDiff(snippet)
+            });
+          }
+        });
+      }
+    });
+    
+    return diffHunks;
+  }
+
+  /**
+   * Extract file path from diff content
+   */
+  private extractFileFromDiff(diffContent: string): string | undefined {
+    const fileMatch = diffContent.match(/^[\+\-]{3}\s+(.+)$/m);
+    return fileMatch ? fileMatch[1].replace(/^[ab]\//, '') : undefined;
+  }
+
+  /**
+   * Enrich findings with location context
+   */
+  private enrichFindingsWithLocation(findings: ReviewFindings, fileContext: FileContextMap): ReviewFindings {
+    return {
+      ...findings,
+      issues: findings.issues.map(issue => ({
+        ...issue,
+        locationContext: this.mapIssueToLocation(issue, fileContext)
+      }))
+    };
+  }
+
+  /**
+   * Map issue to specific file location
+   */
+  private mapIssueToLocation(issue: any, fileContext: FileContextMap): any {
+    // Try to match issue description to specific file/function context
+    const issueText = issue.description.toLowerCase();
+    
+    // Find matching file
+    let filePath = fileContext.files[0]; // Default to first file
+    for (const file of fileContext.files) {
+      const fileName = file.split('/').pop()?.toLowerCase() || '';
+      if (issueText.includes(fileName.replace('.ts', '').replace('.js', ''))) {
+        filePath = file;
+        break;
+      }
+    }
+    
+    // Find matching function
+    let functionName: string | undefined;
+    for (const func of fileContext.functions) {
+      if (issueText.includes(func.toLowerCase())) {
+        functionName = func;
+        break;
+      }
+    }
+    
+    // Find matching class
+    let className: string | undefined;
+    for (const cls of fileContext.classes) {
+      if (issueText.includes(cls.toLowerCase())) {
+        className = cls;
+        break;
+      }
+    }
+    
+    // Find matching code example
+    let codeSnippet: string | undefined;
+    for (const example of fileContext.codeExamples) {
+      if (example.file === filePath) {
+        codeSnippet = example.snippet;
+        break;
+      }
+    }
+    
+    // Estimate line number from diff hunks
+    let lineNumber: number | undefined;
+    if (filePath) {
+      const relevantHunk = fileContext.diffHunks.find(hunk => 
+        hunk.filePath === filePath || 
+        filePath.endsWith(hunk.filePath || '')
+      );
+      if (relevantHunk) {
+        lineNumber = relevantHunk.newLineStart;
+      }
+    }
+    
+    return filePath ? {
+      filePath,
+      functionName,
+      className,
+      lineNumber,
+      codeSnippet
+    } : undefined;
   }
 }

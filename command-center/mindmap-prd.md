@@ -190,11 +190,10 @@ Root: "Improve Error Handling"
 - Balance completeness with clarity
 - Manage cross-references intelligently
 
-### Performance
-- Lazy expansion for large PRs
-- Efficient cross-reference indexing
-- Cache intermediate analysis results
-- Progressive rendering of deep trees
+### Technical Robustness
+- Reliable expansion handling for complex PRs
+- Complete cross-reference maintenance
+- Thorough analysis coverage
 
 ### Validation
 - Ensure all code is represented at least once
@@ -202,19 +201,19 @@ Root: "Improve Error Handling"
 - Check for excessive duplication
 - Validate context completeness
 
-## Scalability & Performance Requirements
+## System Reliability Requirements
 
-### Concurrency Management
-- **Adaptive concurrency**: Start with 5 concurrent operations, adjust based on API response times
+### Processing Approach
+- **Quality-first processing**: Prioritize accuracy and thoroughness over speed
+- **Expected processing time**: 10-20 minutes for complex analysis is normal and acceptable
 - **Retry strategy**: Exponential backoff with jitter (base delay: 1000ms, multiplier: 2)
-- **Dynamic batch sizing**: 4 items for small PRs, up to 10 for large PRs
-- **Progress reporting**: Real-time updates for operations taking >5 seconds
+- **Batch processing**: Process items in logical groups for AI analysis
+- **Progress reporting**: Status updates for multi-minute operations
 
-### Caching & Efficiency
-- **Analysis caching**: Store AI results with 1-hour TTL to avoid redundant API calls
-- **Pattern caching**: Cache identified business patterns for reuse within same PR
-- **Incremental updates**: Only re-analyze changed portions during iterative development
-- **Smart invalidation**: Clear cache selectively based on file modifications
+### Analysis Reliability
+- **Complete analysis**: Ensure all code changes are properly analyzed
+- **Context preservation**: Maintain rich context throughout all processing stages
+- **Quality validation**: Verify analysis completeness and accuracy
 
 
 ## Quality Assurance

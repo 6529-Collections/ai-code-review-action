@@ -30025,9 +30025,9 @@ async function run() {
                 throw devError;
             }
         }
-        // Clean previous analysis files only for full pipeline runs (not development mode)
+        // Clean previous output files only for full pipeline runs (not development mode)
         if (isLocal) {
-            logger_1.logger.info('MAIN', 'Full pipeline mode: Cleaning previous analysis files for fresh start');
+            logger_1.logger.info('MAIN', 'Full pipeline mode: Cleaning previous output files for fresh start');
             output_saver_1.OutputSaver.cleanAllAnalyses();
         }
         // Log mode (isLocal already defined above)
@@ -30245,10 +30245,10 @@ exports.DEFAULT_DIFF_MODE_CONFIG = exports.DiffModeType = void 0;
 var DiffModeType;
 (function (DiffModeType) {
     DiffModeType["UNCOMMITTED"] = "uncommitted";
+    DiffModeType["BRANCH"] = "branch";
     // Future modes can be added here
     // STAGED = 'staged',
     // LAST_COMMIT = 'last-commit',
-    // BRANCH = 'branch',
     // PR = 'pr'
 })(DiffModeType || (exports.DiffModeType = DiffModeType = {}));
 exports.DEFAULT_DIFF_MODE_CONFIG = {
@@ -30322,6 +30322,276 @@ exports.BaseDiffMode = BaseDiffMode;
 
 /***/ }),
 
+/***/ 7797:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BranchMode = void 0;
+const exec = __importStar(__nccwpck_require__(5236));
+const base_diff_mode_1 = __nccwpck_require__(432);
+const file_exclusion_patterns_1 = __nccwpck_require__(4006);
+/**
+ * BranchMode analyzes changes between current branch and target branch
+ * REQUIRES: Must be in PR context (branch with upstream tracking)
+ * ERRORS: Hard error if not in PR context - no fallbacks
+ */
+class BranchMode extends base_diff_mode_1.BaseDiffMode {
+    constructor() {
+        super(...arguments);
+        this.targetBranch = null;
+    }
+    getName() {
+        return 'diff-compare';
+    }
+    getDescription() {
+        return 'Compares current ref against target ref (requires PR context)';
+    }
+    shouldIncludeFile(filename) {
+        return file_exclusion_patterns_1.FileExclusionPatterns.shouldIncludeFile(filename);
+    }
+    /**
+     * Strict PR detection with hard error handling
+     * NO FALLBACKS - Fail fast if not in PR context
+     */
+    async validatePRContext() {
+        try {
+            // Get current branch name
+            const currentBranch = await this.getCurrentBranch();
+            console.log(`[BRANCH-MODE] Current ref: ${currentBranch}`);
+            // Check if current branch has upstream tracking
+            const upstreamBranch = await this.getUpstreamBranch(currentBranch);
+            console.log(`[BRANCH-MODE] Upstream ref: ${upstreamBranch}`);
+            // Resolve target branch (what this PR would merge into)
+            const targetBranch = await this.getTargetBranch(upstreamBranch);
+            console.log(`[BRANCH-MODE] Target ref: ${targetBranch}`);
+            return targetBranch;
+        }
+        catch (error) {
+            throw new Error(`BRANCH mode requires PR context but validation failed: ${error instanceof Error ? error.message : 'Unknown error'}\n` +
+                `\nBRANCH mode can only be used when:\n` +
+                `1. You are on a feature branch (not main/master)\n` +
+                `2. The branch has upstream tracking set up\n` +
+                `3. There is a clear target branch to compare against\n` +
+                `\nFor uncommitted changes, use UNCOMMITTED mode instead.`);
+        }
+    }
+    async getCurrentBranch() {
+        let branchName = '';
+        try {
+            await exec.exec('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        branchName = data.toString().trim();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error('Failed to get current branch name');
+        }
+        if (!branchName) {
+            throw new Error('Could not determine current branch name');
+        }
+        // Hard error if on main/master branch
+        if (branchName === 'main' || branchName === 'master') {
+            throw new Error(`Cannot use BRANCH mode on main/master branch. ` +
+                `BRANCH mode is for feature branches in PR context only.`);
+        }
+        return branchName;
+    }
+    async getUpstreamBranch(currentBranch) {
+        let upstreamBranch = '';
+        try {
+            await exec.exec('git', ['rev-parse', '--abbrev-ref', `${currentBranch}@{upstream}`], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        upstreamBranch = data.toString().trim();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Branch '${currentBranch}' has no upstream tracking branch. ` +
+                `Set up upstream tracking with: git push -u origin ${currentBranch}`);
+        }
+        if (!upstreamBranch) {
+            throw new Error(`Could not determine upstream branch for '${currentBranch}'`);
+        }
+        return upstreamBranch;
+    }
+    async getTargetBranch(upstreamBranch) {
+        // Extract remote and branch from upstream (e.g., "origin/feature-branch" -> "origin")
+        const parts = upstreamBranch.split('/');
+        if (parts.length < 2) {
+            throw new Error(`Invalid upstream branch format: ${upstreamBranch}`);
+        }
+        const remote = parts[0];
+        // Check for common target branches in order of preference
+        const candidateTargets = [`${remote}/main`, `${remote}/master`, `${remote}/develop`];
+        for (const candidate of candidateTargets) {
+            try {
+                // Check if the branch exists
+                await exec.exec('git', ['rev-parse', '--verify', candidate], {
+                    silent: true,
+                });
+                // Found valid target branch
+                return candidate;
+            }
+            catch (error) {
+                // Branch doesn't exist, try next candidate
+                continue;
+            }
+        }
+        throw new Error(`Could not determine target branch. Tried: ${candidateTargets.join(', ')}\n` +
+            `Make sure the target branch exists in remote '${remote}'.`);
+    }
+    async getChangedFiles() {
+        // Ensure we're in PR context first
+        this.targetBranch = await this.validatePRContext();
+        // Log the target branch for debugging
+        console.log(`[BRANCH-MODE] Comparing against target: ${this.targetBranch}`);
+        const files = [];
+        let fileList = '';
+        try {
+            // Get changed files between current branch and target branch
+            await exec.exec('git', ['diff', '--name-status', `${this.targetBranch}...HEAD`], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        fileList += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Failed to get changed files between current branch and ${this.targetBranch}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        const fileLines = fileList.trim().split('\n').filter(line => line.trim());
+        for (const line of fileLines) {
+            const [status, filename] = line.split('\t');
+            if (!filename)
+                continue;
+            const file = await this.createChangedFile(filename, status);
+            if (file)
+                files.push(file);
+        }
+        // Filter files according to exclusion patterns
+        const filteredFiles = files.filter(file => this.shouldIncludeFile(file.filename));
+        return filteredFiles;
+    }
+    async getDiffContent() {
+        // Ensure we're in PR context first
+        if (!this.targetBranch) {
+            this.targetBranch = await this.validatePRContext();
+        }
+        let diffOutput = '';
+        try {
+            // Get diff between current branch and target branch
+            await exec.exec('git', ['diff', `${this.targetBranch}...HEAD`], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        diffOutput += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Failed to get diff content between current branch and ${this.targetBranch}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        return diffOutput;
+    }
+    async createChangedFile(filename, gitStatus) {
+        try {
+            // Get patch for this file
+            const patch = await this.getFilePatch(filename);
+            return {
+                filename,
+                status: this.mapGitStatusToChangedFileStatus(gitStatus),
+                patch,
+            };
+        }
+        catch (error) {
+            return null;
+        }
+    }
+    async getFilePatch(filename) {
+        if (!this.targetBranch) {
+            throw new Error('Target branch not set - call validatePRContext first');
+        }
+        let patch = '';
+        try {
+            await exec.exec('git', ['diff', `${this.targetBranch}...HEAD`, '--', filename], {
+                silent: true,
+                listeners: {
+                    stdout: (data) => {
+                        patch += data.toString();
+                    },
+                },
+            });
+        }
+        catch (error) {
+            throw new Error(`Failed to get patch for file ${filename}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+        return patch;
+    }
+    mapGitStatusToChangedFileStatus(gitStatus) {
+        switch (gitStatus) {
+            case 'A':
+                return 'added';
+            case 'D':
+                return 'removed';
+            case 'M':
+                return 'modified';
+            case 'R':
+                return 'renamed';
+            default:
+                return 'modified';
+        }
+    }
+}
+exports.BranchMode = BranchMode;
+
+
+/***/ }),
+
 /***/ 7881:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -30331,15 +30601,16 @@ exports.BaseDiffMode = BaseDiffMode;
  * Export barrel for all diff modes
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.UncommittedMode = exports.BaseDiffMode = void 0;
+exports.BranchMode = exports.UncommittedMode = exports.BaseDiffMode = void 0;
 var base_diff_mode_1 = __nccwpck_require__(432);
 Object.defineProperty(exports, "BaseDiffMode", ({ enumerable: true, get: function () { return base_diff_mode_1.BaseDiffMode; } }));
 var uncommitted_mode_1 = __nccwpck_require__(1852);
 Object.defineProperty(exports, "UncommittedMode", ({ enumerable: true, get: function () { return uncommitted_mode_1.UncommittedMode; } }));
+var branch_mode_1 = __nccwpck_require__(7797);
+Object.defineProperty(exports, "BranchMode", ({ enumerable: true, get: function () { return branch_mode_1.BranchMode; } }));
 // Future modes can be exported here
 // export { StagedMode } from './staged-mode';
 // export { LastCommitMode } from './last-commit-mode';
-// export { BranchMode } from './branch-mode';
 
 
 /***/ }),
@@ -30386,6 +30657,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.UncommittedMode = void 0;
 const exec = __importStar(__nccwpck_require__(5236));
 const base_diff_mode_1 = __nccwpck_require__(432);
+const file_exclusion_patterns_1 = __nccwpck_require__(4006);
 /**
  * UncommittedMode analyzes all uncommitted changes (staged + unstaged)
  * This is the default mode for local testing
@@ -30398,8 +30670,7 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
         return 'Analyzes all uncommitted changes (staged and unstaged)';
     }
     shouldIncludeFile(filename) {
-        const isExcluded = UncommittedMode.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        return !isExcluded;
+        return file_exclusion_patterns_1.FileExclusionPatterns.shouldIncludeFile(filename);
     }
     async getChangedFiles() {
         const files = [];
@@ -30606,19 +30877,6 @@ class UncommittedMode extends base_diff_mode_1.BaseDiffMode {
     }
 }
 exports.UncommittedMode = UncommittedMode;
-// Patterns for files to exclude from analysis
-UncommittedMode.EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
-    /command-center\/review-prd\.md$/, // Exclude PRD files
-    /\.md$/, // Exclude all markdown files
-    /\.txt$/, // Exclude all text files
-    /\.json$/, // Exclude all json files
-];
 
 
 /***/ }),
@@ -30669,13 +30927,13 @@ class LocalDiffService {
         switch (config.mode) {
             case diff_modes_1.DiffModeType.UNCOMMITTED:
                 return new modes_1.UncommittedMode();
+            case diff_modes_1.DiffModeType.BRANCH:
+                return new modes_1.BranchMode();
             // Future modes can be added here
             // case DiffModeType.STAGED:
             //   return new StagedMode();
             // case DiffModeType.LAST_COMMIT:
             //   return new LastCommitMode();
-            // case DiffModeType.BRANCH:
-            //   return new BranchMode(config.baseBranch || 'main');
             default:
                 return new modes_1.UncommittedMode();
         }
@@ -30695,6 +30953,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LocalGitService = void 0;
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const local_diff_service_1 = __nccwpck_require__(3836);
+const diff_modes_1 = __nccwpck_require__(6219);
 /**
  * LocalGitService provides Git operations specifically for local testing
  * Simplified version focused on uncommitted changes analysis
@@ -30705,7 +30964,22 @@ class LocalGitService {
             throw new Error('ANTHROPIC_API_KEY is required for AI code analysis');
         }
         this.aiAnalyzer = new ai_code_analyzer_1.AICodeAnalyzer(anthropicApiKey);
-        this.localDiffService = new local_diff_service_1.LocalDiffService(diffModeConfig);
+        // Use provided config, otherwise check environment, otherwise use default
+        const config = diffModeConfig || this.getDiffModeFromEnv();
+        this.localDiffService = new local_diff_service_1.LocalDiffService(config);
+    }
+    /**
+     * Get diff mode configuration from environment variables
+     * Supports DIFF_MODE environment variable with values: 'uncommitted', 'branch'
+     */
+    getDiffModeFromEnv() {
+        const envMode = process.env.DIFF_MODE;
+        // Validate the environment variable value
+        if (envMode && Object.values(diff_modes_1.DiffModeType).includes(envMode)) {
+            return { mode: envMode };
+        }
+        // Return default if no valid environment variable found
+        return diff_modes_1.DEFAULT_DIFF_MODE_CONFIG;
     }
     /**
      * Get enhanced changed files with AI code analysis for local testing
@@ -30917,20 +31191,27 @@ class OutputSaver {
         }
     }
     /**
-     * Clean up all analysis files for fresh start
+     * Clean up entire output directory for fresh start
+     * Removes all files and subdirectories in the output directory
      */
     static cleanAllAnalyses() {
         if (!fs.existsSync(this.LOCAL_DIR)) {
             return;
         }
-        // Get all analysis files (both JSON and log)
-        const allFiles = fs.readdirSync(this.LOCAL_DIR)
-            .filter(file => file.startsWith('analysis-') && (file.endsWith('.json') || file.endsWith('.log')));
-        // Delete all analysis files
+        // Get all files in the output directory
+        const allFiles = fs.readdirSync(this.LOCAL_DIR);
+        // Delete all files in the directory
         for (const filename of allFiles) {
             try {
                 const filepath = path.join(this.LOCAL_DIR, filename);
-                fs.unlinkSync(filepath);
+                const stat = fs.statSync(filepath);
+                if (stat.isFile()) {
+                    fs.unlinkSync(filepath);
+                }
+                else if (stat.isDirectory()) {
+                    // Recursively remove subdirectories
+                    fs.rmSync(filepath, { recursive: true, force: true });
+                }
             }
             catch (error) {
                 // Ignore errors, continue cleanup
@@ -36462,7 +36743,7 @@ class GitHubCommentService {
             const { data: existingComments } = await this.octokit.rest.issues.listComments({
                 owner: this.context.repo.owner,
                 repo: this.context.repo.repo,
-                issue_number: this.context.issue.number,
+                issue_number: this.getPRNumber(),
             });
             // Check if we already posted a review comment (to update instead of duplicate)
             const existingComment = existingComments.find(c => c.body?.includes('🤖 AI Code Review Results') && c.user?.login === 'github-actions[bot]');
@@ -36481,7 +36762,7 @@ class GitHubCommentService {
                 const { data: newComment } = await this.octokit.rest.issues.createComment({
                     owner: this.context.repo.owner,
                     repo: this.context.repo.repo,
-                    issue_number: this.context.issue.number,
+                    issue_number: this.getPRNumber(),
                     body: comment,
                 });
                 logger_1.logger.info('GITHUB_COMMENT', `Posted new review comment (ID: ${newComment.id})`);
@@ -36520,7 +36801,7 @@ class GitHubCommentService {
             const { data: newComment } = await this.octokit.rest.issues.createComment({
                 owner: this.context.repo.owner,
                 repo: this.context.repo.repo,
-                issue_number: this.context.issue.number,
+                issue_number: this.getPRNumber(),
                 body: comment,
             });
             logger_1.logger.info('GITHUB_COMMENT', `Posted detailed comment for node "${nodeReview.nodeName}" (ID: ${newComment.id})`);
@@ -36546,6 +36827,10 @@ class GitHubCommentService {
      * Post a summary comment with key action items
      */
     async postActionItemsSummary(reviewResult) {
+        if (!this.isPullRequestContext()) {
+            logger_1.logger.warn('GITHUB_COMMENT', 'Not in PR context, skipping action items summary');
+            return;
+        }
         const actionItems = this.extractActionItems(reviewResult);
         if (actionItems.length === 0) {
             logger_1.logger.info('GITHUB_COMMENT', 'No action items to post');
@@ -36556,7 +36841,7 @@ class GitHubCommentService {
             const { data: newComment } = await this.octokit.rest.issues.createComment({
                 owner: this.context.repo.owner,
                 repo: this.context.repo.repo,
-                issue_number: this.context.issue.number,
+                issue_number: this.getPRNumber(),
                 body: comment,
             });
             logger_1.logger.info('GITHUB_COMMENT', `Posted action items summary (ID: ${newComment.id})`);
@@ -36570,7 +36855,16 @@ class GitHubCommentService {
     isPullRequestContext() {
         return this.context.eventName === 'pull_request' ||
             this.context.eventName === 'pull_request_target' ||
-            !!this.context.issue?.number; // For local testing with issue number
+            !!this.context.issue?.number || // For local testing with issue number
+            !!process.env.GITHUB_CONTEXT_ISSUE_NUMBER; // For manual PR review via workflow_dispatch
+    }
+    getPRNumber() {
+        // Check manual PR review environment variable first
+        if (process.env.GITHUB_CONTEXT_ISSUE_NUMBER) {
+            return parseInt(process.env.GITHUB_CONTEXT_ISSUE_NUMBER);
+        }
+        // Fallback to context issue number
+        return this.context.issue.number;
     }
     hasSignificantIssues(nodeReview) {
         const criticalIssues = nodeReview.findings.issues.filter(i => i.severity === 'critical').length;
@@ -36798,7 +37092,9 @@ RESPOND WITH ONLY VALID JSON:
      * AI analyzes node for review findings
      */
     async analyzeNodeFindings(theme, nodeType) {
-        const codeContext = theme.codeSnippets?.join('\n\n') || 'No code snippets available';
+        // Extract file context from existing theme data
+        const fileContext = this.extractFileContext(theme);
+        const enhancedCodeContext = this.buildEnhancedCodeContext(theme, fileContext);
         const prompt = `You are performing a code review with ${nodeType.toUpperCase()} focus.
 
 CONTEXT:
@@ -36809,7 +37105,7 @@ Node Type: ${nodeType}
 Files Affected: ${theme.affectedFiles?.join(', ') || 'Not specified'}
 
 CODE CHANGES:
-${codeContext}
+${enhancedCodeContext}
 
 TASK: Provide a thorough code review focusing on the node type.
 
@@ -36853,7 +37149,8 @@ RESPOND WITH ONLY VALID JSON:
                 parsed.riskLevel = 'medium';
             }
             logger_1.logger.debug('REVIEW_SERVICE', `Found ${parsed.issues.length} issues, risk level: ${parsed.riskLevel}`);
-            return parsed;
+            // Enrich findings with location context
+            return this.enrichFindingsWithLocation(parsed, fileContext);
         }
         catch (error) {
             logger_1.logger.warn('REVIEW_SERVICE', `Failed to analyze node findings: ${error}`);
@@ -36922,6 +37219,151 @@ RESPOND WITH ONLY VALID JSON:
             .map(([type, count]) => `${count} ${type}`)
             .join(', ');
         return `Reviewed ${nodeReviews.length} changes (${typesSummary}). Found ${totalIssues} issues: ${criticalIssues} critical, ${majorIssues} major, ${minorIssues} minor. Average confidence: ${(avgConfidence * 100).toFixed(1)}%`;
+    }
+    /**
+     * Extract file context from theme data
+     */
+    extractFileContext(theme) {
+        return {
+            files: theme.affectedFiles || [],
+            codeExamples: theme.codeExamples || [],
+            functions: theme.mainFunctionsChanged || [],
+            classes: theme.mainClassesChanged || [],
+            diffHunks: this.extractDiffHunks(theme)
+        };
+    }
+    /**
+     * Build enhanced code context with file/function information
+     */
+    buildEnhancedCodeContext(theme, fileContext) {
+        const sections = [];
+        // Basic code snippets
+        if (theme.codeSnippets?.length > 0) {
+            sections.push('=== CODE SNIPPETS ===');
+            sections.push(theme.codeSnippets.join('\n\n'));
+        }
+        // File-specific code examples with context
+        if (fileContext.codeExamples.length > 0) {
+            sections.push('\n=== FILE-SPECIFIC CHANGES ===');
+            fileContext.codeExamples.forEach(example => {
+                sections.push(`\n📁 File: ${example.file}`);
+                sections.push(`Description: ${example.description}`);
+                sections.push('```');
+                sections.push(example.snippet);
+                sections.push('```');
+            });
+        }
+        // Functions/classes context
+        if (fileContext.functions.length > 0 || fileContext.classes.length > 0) {
+            sections.push('\n=== AFFECTED COMPONENTS ===');
+            if (fileContext.functions.length > 0) {
+                sections.push(`Functions: ${fileContext.functions.join(', ')}`);
+            }
+            if (fileContext.classes.length > 0) {
+                sections.push(`Classes: ${fileContext.classes.join(', ')}`);
+            }
+        }
+        return sections.length > 0 ? sections.join('\n') : 'No code snippets available';
+    }
+    /**
+     * Extract diff hunks with line numbers from theme data
+     */
+    extractDiffHunks(theme) {
+        const diffHunks = [];
+        // Extract from theme's codeSnippets that contain diff format
+        theme.codeSnippets?.forEach(snippet => {
+            const hunkMatches = snippet.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@.*$/gm);
+            if (hunkMatches) {
+                hunkMatches.forEach(match => {
+                    const lineMatch = match.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/);
+                    if (lineMatch) {
+                        const [, oldStart, newStart] = lineMatch;
+                        diffHunks.push({
+                            oldLineStart: parseInt(oldStart, 10),
+                            newLineStart: parseInt(newStart, 10),
+                            content: snippet,
+                            filePath: this.extractFileFromDiff(snippet)
+                        });
+                    }
+                });
+            }
+        });
+        return diffHunks;
+    }
+    /**
+     * Extract file path from diff content
+     */
+    extractFileFromDiff(diffContent) {
+        const fileMatch = diffContent.match(/^[\+\-]{3}\s+(.+)$/m);
+        return fileMatch ? fileMatch[1].replace(/^[ab]\//, '') : undefined;
+    }
+    /**
+     * Enrich findings with location context
+     */
+    enrichFindingsWithLocation(findings, fileContext) {
+        return {
+            ...findings,
+            issues: findings.issues.map(issue => ({
+                ...issue,
+                locationContext: this.mapIssueToLocation(issue, fileContext)
+            }))
+        };
+    }
+    /**
+     * Map issue to specific file location
+     */
+    mapIssueToLocation(issue, fileContext) {
+        // Try to match issue description to specific file/function context
+        const issueText = issue.description.toLowerCase();
+        // Find matching file
+        let filePath = fileContext.files[0]; // Default to first file
+        for (const file of fileContext.files) {
+            const fileName = file.split('/').pop()?.toLowerCase() || '';
+            if (issueText.includes(fileName.replace('.ts', '').replace('.js', ''))) {
+                filePath = file;
+                break;
+            }
+        }
+        // Find matching function
+        let functionName;
+        for (const func of fileContext.functions) {
+            if (issueText.includes(func.toLowerCase())) {
+                functionName = func;
+                break;
+            }
+        }
+        // Find matching class
+        let className;
+        for (const cls of fileContext.classes) {
+            if (issueText.includes(cls.toLowerCase())) {
+                className = cls;
+                break;
+            }
+        }
+        // Find matching code example
+        let codeSnippet;
+        for (const example of fileContext.codeExamples) {
+            if (example.file === filePath) {
+                codeSnippet = example.snippet;
+                break;
+            }
+        }
+        // Estimate line number from diff hunks
+        let lineNumber;
+        if (filePath) {
+            const relevantHunk = fileContext.diffHunks.find(hunk => hunk.filePath === filePath ||
+                filePath.endsWith(hunk.filePath || ''));
+            if (relevantHunk) {
+                lineNumber = relevantHunk.newLineStart;
+            }
+        }
+        return filePath ? {
+            filePath,
+            functionName,
+            className,
+            lineNumber,
+            codeSnippet
+        } : undefined;
     }
 }
 exports.ReviewService = ReviewService;
@@ -37108,6 +37550,7 @@ class PRCommentFormatter {
         sections.push(`## 🤖 AI Code Review Results ${recommendationEmoji}`);
         sections.push('');
         sections.push(`**Recommendation:** ${this.formatRecommendation(overallRecommendation)}`);
+        sections.push(`**Review Date:** ${new Date(metadata.timestamp).toLocaleDateString()}`);
         sections.push('');
         // Summary
         sections.push(`**Summary:** ${summary}`);
@@ -37115,7 +37558,7 @@ class PRCommentFormatter {
         // Key metrics
         sections.push('### 📊 Review Metrics');
         sections.push(`- **Nodes Reviewed:** ${metadata.totalNodes}`);
-        sections.push(`- **Average Confidence:** ${(metadata.averageConfidence * 100).toFixed(1)}%`);
+        sections.push(`- **AI Confidence:** ${(metadata.averageConfidence * 100).toFixed(1)}% ${this.getConfidenceEmoji(metadata.averageConfidence)}`);
         sections.push(`- **Processing Time:** ${(reviewResult.processingTime / 1000).toFixed(1)}s`);
         sections.push('');
         // Critical/Major issues summary
@@ -37140,8 +37583,12 @@ class PRCommentFormatter {
         });
         // Footer
         sections.push('---');
+        sections.push('### 💡 For Reviewers');
+        sections.push('- **Critical/Major issues** should be addressed before merging');
+        sections.push('- **Minor issues** can be addressed in follow-up PRs');
+        sections.push('- **Suggestions** are optional improvements');
+        sections.push('');
         sections.push('*🤖 Generated by AI Code Review Action powered by Claude AI*');
-        sections.push('*💡 This review focuses on code quality, security, and maintainability*');
         return sections.join('\n');
     }
     /**
@@ -37193,6 +37640,15 @@ class PRCommentFormatter {
         const sections = [];
         sections.push(`${severityEmoji} **${issue.severity.toUpperCase()}** (${issue.category})`);
         sections.push('');
+        // Add location context for inline comments
+        if (issue.locationContext) {
+            const { functionName, className } = issue.locationContext;
+            if (className || functionName) {
+                const context = className ? `${className}${functionName ? '.' + functionName : ''}` : functionName;
+                sections.push(`🔧 **Context**: \`${context}()\``);
+                sections.push('');
+            }
+        }
         sections.push(issue.description);
         if (issue.suggestedFix) {
             sections.push('');
@@ -37212,6 +37668,15 @@ class PRCommentFormatter {
             case 'needs-discussion': return '💬';
             default: return '❓';
         }
+    }
+    static getConfidenceEmoji(confidence) {
+        if (confidence >= 0.9)
+            return '🎯';
+        if (confidence >= 0.7)
+            return '👍';
+        if (confidence >= 0.5)
+            return '⚠️';
+        return '❓';
     }
     static formatRecommendation(recommendation) {
         switch (recommendation) {
@@ -37252,7 +37717,25 @@ class PRCommentFormatter {
         const sections = [];
         sections.push(`#### ${index}. ${severityEmoji} ${issue.severity.toUpperCase()} - ${issue.category}`);
         sections.push('');
+        // Add file/line context if available
+        if (issue.locationContext) {
+            const { filePath, functionName, className, lineNumber, codeSnippet } = issue.locationContext;
+            sections.push(`📁 **File**: \`${filePath}\`${lineNumber ? ` (line ${lineNumber})` : ''}`);
+            if (className || functionName) {
+                const context = className ? `${className}${functionName ? '.' + functionName : ''}` : functionName;
+                sections.push(`🔧 **Context**: \`${context}()\``);
+            }
+            sections.push('');
+        }
         sections.push(issue.description);
+        // Add code snippet if available
+        if (issue.locationContext?.codeSnippet) {
+            sections.push('');
+            sections.push('**Code:**');
+            sections.push('```typescript');
+            sections.push(issue.locationContext.codeSnippet);
+            sections.push('```');
+        }
         if (issue.suggestedFix) {
             sections.push('');
             sections.push(`**💡 Suggested fix:** ${issue.suggestedFix}`);
@@ -37776,11 +38259,12 @@ const exec = __importStar(__nccwpck_require__(5236));
 const ai_code_analyzer_1 = __nccwpck_require__(3562);
 const logger_1 = __nccwpck_require__(9000);
 const constants_1 = __nccwpck_require__(6895);
+const file_exclusion_patterns_1 = __nccwpck_require__(4006);
 class GitService {
     shouldIncludeFile(filename) {
-        const isExcluded = GitService.EXCLUDED_PATTERNS.some((pattern) => pattern.test(filename));
-        logger_1.logger.debug(constants_1.LoggerServices.GIT_SERVICE, `${filename}: ${isExcluded ? 'EXCLUDED' : 'INCLUDED'}`);
-        return !isExcluded;
+        const isIncluded = file_exclusion_patterns_1.FileExclusionPatterns.shouldIncludeFile(filename);
+        logger_1.logger.debug(constants_1.LoggerServices.GIT_SERVICE, `${filename}: ${isIncluded ? 'INCLUDED' : 'EXCLUDED'}`);
+        return isIncluded;
     }
     constructor(githubToken, anthropicApiKey) {
         this.githubToken = githubToken;
@@ -38208,14 +38692,6 @@ class GitService {
     }
 }
 exports.GitService = GitService;
-// Patterns for files to exclude from analysis
-GitService.EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-];
 
 
 /***/ }),
@@ -39149,6 +39625,61 @@ ClaudeClient.queueMetrics = {
     consecutiveRateLimitErrors: 0,
     circuitBreakerUntil: 0,
 };
+
+
+/***/ }),
+
+/***/ 4006:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.FileExclusionPatterns = void 0;
+/**
+ * Centralized file exclusion patterns for consistent filtering
+ * across all file analysis operations
+ */
+class FileExclusionPatterns {
+    /**
+     * Check if a file should be included in analysis
+     */
+    static shouldIncludeFile(filename) {
+        return !this.PATTERNS.some(pattern => pattern.test(filename));
+    }
+    /**
+     * Get all exclusion patterns for debugging
+     */
+    static getPatterns() {
+        return [...this.PATTERNS];
+    }
+    /**
+     * Get pattern count for metrics
+     */
+    static getPatternCount() {
+        return this.PATTERNS.length;
+    }
+}
+exports.FileExclusionPatterns = FileExclusionPatterns;
+/**
+ * Comprehensive exclusion patterns based on UncommittedMode patterns
+ * These patterns exclude files that typically don't need code review
+ */
+FileExclusionPatterns.PATTERNS = [
+    // Build artifacts and dependencies
+    /^dist\//, // Exclude dist folder
+    /\.d\.ts$/, // Exclude TypeScript declaration files
+    /node_modules\//, // Exclude dependencies
+    /\.map$/, // Exclude source maps
+    /package-lock\.json$/, // Exclude lock files
+    // Documentation and configuration
+    /\.md$/, // Exclude all markdown files
+    /\.txt$/, // Exclude all text files
+    /\.json$/, // Exclude all json files
+    // Specific PRD files
+    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
+    /command-center\/review-prd\.md$/, // Exclude PRD files
+];
 
 
 /***/ }),

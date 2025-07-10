@@ -1,26 +1,13 @@
 import * as exec from '@actions/exec';
 import { BaseDiffMode } from './base-diff-mode';
 import { ChangedFile } from '@/shared/services/git-service';
+import { FileExclusionPatterns } from '@/shared/utils/file-exclusion-patterns';
 
 /**
  * UncommittedMode analyzes all uncommitted changes (staged + unstaged)
  * This is the default mode for local testing
  */
 export class UncommittedMode extends BaseDiffMode {
-  // Patterns for files to exclude from analysis
-  private static readonly EXCLUDED_PATTERNS = [
-    /^dist\//, // Exclude dist folder
-    /\.d\.ts$/, // Exclude TypeScript declaration files
-    /node_modules\//, // Exclude dependencies
-    /\.map$/, // Exclude source maps
-    /package-lock\.json$/, // Exclude lock files
-    /command-center\/mindmap-prd\.md$/, // Exclude PRD files
-    /command-center\/review-prd\.md$/, // Exclude PRD files
-    /\.md$/, // Exclude all markdown files
-    /\.txt$/, // Exclude all text files
-    /\.json$/, // Exclude all json files
-  ];
-
   getName(): string {
     return 'uncommitted';
   }
@@ -30,10 +17,7 @@ export class UncommittedMode extends BaseDiffMode {
   }
 
   private shouldIncludeFile(filename: string): boolean {
-    const isExcluded = UncommittedMode.EXCLUDED_PATTERNS.some((pattern) =>
-      pattern.test(filename)
-    );
-    return !isExcluded;
+    return FileExclusionPatterns.shouldIncludeFile(filename);
   }
 
   async getChangedFiles(): Promise<ChangedFile[]> {

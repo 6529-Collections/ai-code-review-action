@@ -2,7 +2,7 @@ import { AICodeAnalyzer, CodeChange } from '@/shared/utils/ai-code-analyzer';
 import { ChangedFile, PullRequestContext } from '@/shared/services/git-service';
 import { IGitService } from '@/shared/interfaces/git-service-interface';
 import { LocalDiffService } from './local-diff-service';
-import { DiffModeConfig } from '../config/diff-modes';
+import { DiffModeConfig, DiffModeType, DEFAULT_DIFF_MODE_CONFIG } from '../config/diff-modes';
 
 /**
  * LocalGitService provides Git operations specifically for local testing
@@ -17,7 +17,26 @@ export class LocalGitService implements IGitService {
       throw new Error('ANTHROPIC_API_KEY is required for AI code analysis');
     }
     this.aiAnalyzer = new AICodeAnalyzer(anthropicApiKey);
-    this.localDiffService = new LocalDiffService(diffModeConfig);
+    
+    // Use provided config, otherwise check environment, otherwise use default
+    const config = diffModeConfig || this.getDiffModeFromEnv();
+    this.localDiffService = new LocalDiffService(config);
+  }
+
+  /**
+   * Get diff mode configuration from environment variables
+   * Supports DIFF_MODE environment variable with values: 'uncommitted', 'branch'
+   */
+  private getDiffModeFromEnv(): DiffModeConfig {
+    const envMode = process.env.DIFF_MODE as DiffModeType;
+    
+    // Validate the environment variable value
+    if (envMode && Object.values(DiffModeType).includes(envMode)) {
+      return { mode: envMode };
+    }
+    
+    // Return default if no valid environment variable found
+    return DEFAULT_DIFF_MODE_CONFIG;
   }
 
   /**

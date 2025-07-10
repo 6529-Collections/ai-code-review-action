@@ -44,6 +44,15 @@ export interface ReviewIssue {
   description: string;
   suggestedFix?: string;
   codeContext?: string;
+  
+  // File/line context from Phase 1 theme data
+  locationContext?: {
+    filePath: string;        // From theme.affectedFiles
+    functionName?: string;   // From theme.mainFunctionsChanged
+    className?: string;      // From theme.mainClassesChanged
+    lineNumber?: number;     // Parsed from diffHunk
+    codeSnippet?: string;    // From theme.codeExamples
+  };
 }
 
 /**
@@ -63,4 +72,25 @@ export interface ReviewConfig {
   testOutputFile?: string;
   maxRetries?: number;
   timeoutMs?: number;
+}
+
+/**
+ * File context mapping for location-aware review analysis
+ */
+export interface FileContextMap {
+  files: string[];
+  codeExamples: Array<{ file: string; snippet: string; description: string; }>;
+  functions: string[];
+  classes: string[];
+  diffHunks: DiffHunkInfo[];
+}
+
+/**
+ * Parsed diff hunk information with line numbers
+ */
+export interface DiffHunkInfo {
+  oldLineStart: number;
+  newLineStart: number;
+  content: string;
+  filePath?: string;
 }

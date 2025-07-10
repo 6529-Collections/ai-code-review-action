@@ -43,14 +43,14 @@ logger.error(LoggerServices.CACHE, 'Cache miss occurred');
 
 ### `logger.warn()` - Important warnings, fallbacks
 - Fallback mechanisms activated
-- Performance degradation
+- Actual system failures (not AI processing time)
 - Unexpected but recoverable conditions
 - Configuration issues
 
 ```typescript
 // ✅ Good
 logger.warn(LoggerServices.EXPANSION, 'Using fallback expansion due to AI failure');
-logger.warn(LoggerServices.PERF, 'Operation took longer than expected: 30s');
+logger.info(LoggerServices.PERF, 'AI analysis completed: 5.2 minutes');
 
 // ❌ Bad - not a warning
 logger.warn(LoggerServices.MAIN, 'Starting analysis');
@@ -195,11 +195,40 @@ const startTime = Date.now();
 // operation
 const duration = Date.now() - startTime;
 logger.info(LoggerServices.PERF, `Operation completed in ${duration}ms`);
+
+// For AI operations (multi-minute processing is normal)
+logger.info(LoggerServices.PERF, `AI theme analysis completed in ${Math.round(duration/1000/60)} minutes`);
 ```
 
 ### Progress Updates
 ```typescript
 logger.info(LoggerServices.SERVICE_NAME, `Processing ${current}/${total} items`);
 ```
+
+## AI Processing Time Guidelines
+
+**CRITICAL**: AI operations typically take 5-15 minutes and this is NORMAL, EXPECTED behavior:
+- Complete analysis pipeline: 10-15 minutes normal for 8+ files
+- Theme analysis: 5-10 minutes normal
+- Review processing: 2-5 minutes normal  
+- Mindmap generation: 3-8 minutes normal
+- Complex PR analysis: Up to 20 minutes is acceptable
+
+**Processing Time Philosophy**:
+- **Quality over Speed**: AI analysis prioritizes accuracy and thorough reasoning
+- **Normal Operations**: Multi-minute processing indicates sophisticated AI reasoning, not problems
+- **Expected Behavior**: Longer processing often correlates with higher quality outcomes
+
+**Logging AI timing**:
+- ✅ Log completion time as `info` level: `"AI analysis completed: 11.2 minutes"`
+- ✅ Frame timing as normal: `"Complex analysis completed in expected 12.5 minutes"`
+- ❌ NEVER log AI processing time as warnings, errors, or "bottlenecks"
+- ❌ NEVER flag multi-minute processing as "performance degradation", "crisis", or needing "optimization"
+- ❌ NEVER treat timing as a primary success metric - focus on quality outcomes
+
+**Analysis Command Guidelines**:
+- Processing time is informational context, not a problem indicator
+- Success is measured by accuracy, confidence, and quality of insights
+- 15+ minute analysis time with high-quality results is preferable to 2-minute analysis with poor results
 
 Remember: Every log entry should help developers understand what the system is doing and aid in debugging. If a log doesn't serve that purpose, remove it.
