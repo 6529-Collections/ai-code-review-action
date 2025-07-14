@@ -13,6 +13,7 @@ export declare class Logger {
     private static parseLogLevel;
     private static formatMessage;
     static initializeLiveLogging(logFilePath: string): void;
+    static flushLiveLogging(): void;
     static closeLiveLogging(): void;
     static getLogHistory(): string;
     static clearLogHistory(): void;

@@ -19,6 +19,8 @@ export class AIDomainAnalyzer {
 
   constructor(anthropicApiKey: string) {
     this.claudeClient = new ClaudeClient(anthropicApiKey);
+    // Initialize ComplexityAnalyzer for AI-driven analysis
+    ComplexityAnalyzer.initialize(anthropicApiKey);
   }
 
   /**
@@ -30,8 +32,8 @@ export class AIDomainAnalyzer {
     semanticDiff?: SemanticDiff
   ): Promise<AIDomainClassification> {
     // Generate complexity profile to inform naming strategy
-    const complexityProfile = this.generateComplexityProfile(context, semanticDiff);
-    const prompt = this.buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile);
+    const complexityProfile = await this.generateComplexityProfile(context, semanticDiff);
+    const prompt = await this.buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile);
 
     try {
       const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
@@ -56,12 +58,16 @@ export class AIDomainAnalyzer {
         };
         return this.transformToAIDomainClassification(data);
       }
+      
+      throw new Error(`JSON extraction failed: ${result.error}`);
     } catch (error) {
-      logInfo(`AI business capability classification failed: ${error}`);
+      throw new Error(
+        `AI business capability classification failed: ${error}\n` +
+        `This indicates an AI configuration or API issue that must be resolved.\n` +
+        `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+        `No algorithmic fallback is available - fix AI integration to proceed.`
+      );
     }
-
-    // Graceful degradation: return generic domain with low confidence
-    return this.createFallbackDomain(context);
   }
 
   /**
@@ -178,96 +184,6 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
     };
   }
 
-  /**
-   * Create fallback business capability when AI analysis fails
-   * PRD: "Graceful degradation - never fail completely"
-   */
-  private createFallbackDomain(
-    context: AIAnalysisContext
-  ): AIDomainClassification {
-    const fileName = context.filePath.split('/').pop() || 'unknown';
-    const isTest =
-      context.filePath.includes('test') || context.filePath.includes('spec');
-    const isConfig =
-      context.filePath.includes('config') || fileName.endsWith('.json');
-    const isUI =
-      context.filePath.includes('component') || context.filePath.includes('ui');
-    const isAuth =
-      context.filePath.includes('auth') || context.filePath.includes('login');
-    const isLogger =
-      context.filePath.includes('log') || context.filePath.includes('debug');
-
-    if (isTest) {
-      return {
-        domain: 'Development Workflow Optimization',
-        userValue: 'Developers catch issues before users experience them',
-        businessCapability: 'Maintain high-quality user experience through automated testing',
-        confidence: 0.4,
-        reasoning: 'Test file detected - quality assurance capability',
-        subDomains: ['Software developers'],
-        userJourney: 'Quality assurance and testing workflow',
-      };
-    }
-
-    if (isAuth) {
-      return {
-        domain: 'User Account Management',
-        userValue: 'Users access their accounts securely and efficiently',
-        businessCapability: 'Enable secure user authentication and access control',
-        confidence: 0.5,
-        reasoning: 'Authentication file detected - user security capability',
-        subDomains: ['End users', 'Account holders'],
-        userJourney: 'User login and authentication process',
-      };
-    }
-
-    if (isLogger) {
-      return {
-        domain: 'Development Workflow Optimization', 
-        userValue: 'Developers diagnose and resolve issues faster',
-        businessCapability: 'Enable efficient troubleshooting and system monitoring',
-        confidence: 0.5,
-        reasoning: 'Logging file detected - debugging and monitoring capability',
-        subDomains: ['Software developers', 'DevOps engineers'],
-        userJourney: 'Error investigation and system monitoring workflow',
-      };
-    }
-
-    if (isConfig) {
-      return {
-        domain: 'Development Workflow Optimization',
-        userValue: 'Developers deploy and maintain systems reliably',
-        businessCapability: 'Configure system behavior for optimal user experience',
-        confidence: 0.4,
-        reasoning: 'Configuration file detected - system management capability',
-        subDomains: ['DevOps engineers', 'System administrators'],
-        userJourney: 'System deployment and configuration workflow',
-      };
-    }
-
-    if (isUI) {
-      return {
-        domain: 'User Experience Enhancement',
-        userValue: 'Users accomplish tasks intuitively and efficiently',
-        businessCapability: 'Enable smooth and intuitive user interactions',
-        confidence: 0.4,
-        reasoning: 'UI component detected - user interface capability',
-        subDomains: ['End users', 'All user types'],
-        userJourney: 'User interface interaction and navigation',
-      };
-    }
-
-    // Generic fallback
-    return {
-      domain: 'User Experience Enhancement',
-      userValue: 'Users benefit from improved system functionality',
-      businessCapability: 'Enhance overall system capabilities for better user outcomes',
-      confidence: 0.3,
-      reasoning: 'AI analysis unavailable - generic user experience capability',
-      subDomains: ['All users'],
-      userJourney: 'General system usage and interaction',
-    };
-  }
 
   /**
    * Analyze multiple changes for domain grouping
@@ -303,48 +219,16 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
           }>;
         };
       }
+      
+      throw new Error(`JSON extraction failed: ${result.error}`);
     } catch (error) {
-      logInfo(`Multi-domain analysis failed: ${error}`);
+      throw new Error(
+        `AI multi-domain analysis failed: ${error}\n` +
+        `This indicates an AI configuration or API issue that must be resolved.\n` +
+        `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+        `No algorithmic fallback is available - fix AI integration to proceed.`
+      );
     }
-
-    // Fallback: analyze each individually with concurrency control
-    console.log(
-      `[AI-DOMAIN] Fallback to individual analysis for ${contexts.length} contexts`
-    );
-
-    // Process all contexts concurrently - let ClaudeClient handle rate limiting
-    // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
-    console.log(`[AI-DOMAIN] Processing all ${contexts.length} contexts concurrently`);
-    
-    const contextPromises = contexts.map(async (ctx) => {
-      try {
-        const result = await this.classifyBusinessDomain(ctx);
-        return result;
-      } catch (error) {
-        console.warn(
-          `[AI-DOMAIN] Individual analysis failed, using fallback: ${error instanceof Error ? error.message : 'Unknown error'}`
-        );
-        // Return fallback domain for failed analysis
-        return {
-          domain: 'System Enhancement',
-          userValue: 'Improve system functionality',
-          businessCapability: 'Enhance system capabilities',
-          confidence: 0.3,
-          reasoning: 'AI analysis failed - using fallback',
-        };
-      }
-    });
-    
-    // Wait for all contexts to complete - ClaudeClient manages the 10 concurrent limit
-    const successfulDomains = await Promise.all(contextPromises);
-    
-    console.log(`[AI-DOMAIN] All ${successfulDomains.length} contexts processed`);
-
-    return {
-      primaryDomains: successfulDomains,
-      crossCuttingDomains: [],
-      domainRelationships: [],
-    };
   }
 
   /**
@@ -408,12 +292,12 @@ RESPOND WITH ONLY VALID JSON:
   }
 
   /**
-   * Generate complexity profile for the given context
+   * Generate AI-driven complexity profile for the given context
    */
-  private generateComplexityProfile(
+  private async generateComplexityProfile(
     context: AIAnalysisContext,
     semanticDiff?: SemanticDiff
-  ): ChangeComplexityProfile {
+  ): Promise<ChangeComplexityProfile> {
     const themeCount = semanticDiff?.totalComplexity || 1;
     const affectedFiles = semanticDiff?.files.map(f => f.path) || [context.filePath];
     
@@ -422,7 +306,7 @@ RESPOND WITH ONLY VALID JSON:
     const themeName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
     const themeDescription = context.commitMessage || context.prDescription || '';
     
-    return ComplexityAnalyzer.generateComplexityProfile(
+    return await ComplexityAnalyzer.generateComplexityProfile(
       themeCount,
       affectedFiles,
       themeName,
@@ -435,14 +319,14 @@ RESPOND WITH ONLY VALID JSON:
   /**
    * Build complexity-aware domain classification prompt
    */
-  private buildComplexityAwareDomainClassificationPrompt(
+  private async buildComplexityAwareDomainClassificationPrompt(
     context: AIAnalysisContext,
     semanticDiff?: SemanticDiff,
     complexityProfile?: ChangeComplexityProfile
-  ): string {
+  ): Promise<string> {
     // If no complexity profile provided, generate one
     if (!complexityProfile) {
-      complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+      complexityProfile = await this.generateComplexityProfile(context, semanticDiff);
     }
 
     const additionalContext = semanticDiff

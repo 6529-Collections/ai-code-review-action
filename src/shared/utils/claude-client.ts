@@ -405,6 +405,7 @@ export class ClaudeClient {
           logger.error(LoggerServices.CLAUDE_CLIENT, `Exit code: ${exitCode}`);
           logger.error(LoggerServices.CLAUDE_CLIENT, `Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
           logger.error(LoggerServices.CLAUDE_CLIENT, `Prompt preview: ${promptPreview}...`);
+          logger.error(LoggerServices.CLAUDE_CLIENT, `Standard output: ${output}`);
           logger.error(LoggerServices.CLAUDE_CLIENT, `Error output: ${errorOutput}`);
 
           throw new Error(
@@ -424,7 +425,9 @@ export class ClaudeClient {
         performanceTracker.trackTempFile(false);
       }
     } catch (error) {
-      throw new Error(`Claude API call failed: ${error}`);
+      logger.error(LoggerServices.CLAUDE_CLIENT, `Exception details: ${error instanceof Error ? error.message : String(error)}`);
+      logger.error(LoggerServices.CLAUDE_CLIENT, `Full error object: ${JSON.stringify(error, null, 2)}`);
+      throw new Error(`Claude API call failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

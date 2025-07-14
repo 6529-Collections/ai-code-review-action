@@ -58,6 +58,21 @@ export class Logger {
     }
   }
 
+  static flushLiveLogging(): void {
+    if (Logger.logFileStream) {
+      try {
+        // Force immediate write without waiting for buffer
+        Logger.logFileStream.write('');
+        // Use callback version to ensure it's written
+        Logger.logFileStream.once('drain', () => {
+          // Stream is ready, data has been written
+        });
+      } catch (error) {
+        // Ignore flush errors - don't break logging
+      }
+    }
+  }
+
   static closeLiveLogging(): void {
     if (Logger.logFileStream) {
       Logger.logFileStream.end();
@@ -97,6 +112,7 @@ export class Logger {
       const formatted = Logger.formatMessage('ERROR', service, message);
       console.error(formatted);
       Logger.writeToLog(formatted);
+      Logger.flushLiveLogging(); // Force flush errors immediately
     }
   }
 

@@ -105,51 +105,39 @@ export class ErrorHandler {
   }
 
   /**
-   * Execute operation with fallback when AI fails
+   * Execute AI operation with enhanced retry logic and hard error on failure
+   * AI-first approach: No fallbacks to algorithmic alternatives
    */
-  static async executeWithFallback<T>(
-    primaryOperation: () => Promise<T>,
-    fallbackOperation: () => T | Promise<T>,
+  static async executeWithAIRetry<T>(
+    aiOperation: () => Promise<T>,
     operationName: string,
+    config: Partial<RetryConfig> = {},
     input?: unknown
   ): Promise<T> {
+    const retryConfig = { ...DEFAULT_RETRY_CONFIG, maxRetries: 5, ...config };
+    
     try {
       return await this.retryWithBackoff(
-        primaryOperation,
+        aiOperation,
         `${operationName} (AI)`,
-        undefined,
+        retryConfig,
         input
       );
     } catch (error) {
-      logInfo(
-        `AI ${operationName} failed, using fallback: ${
+      throw new AIServiceError(
+        `AI operation '${operationName}' failed after ${retryConfig.maxRetries} attempts: ${
           error instanceof Error ? error.message : String(error)
-        }`
+        }\n` +
+        `This indicates an AI configuration or API issue that must be resolved.\n` +
+        `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+        `No algorithmic fallback is available - fix AI integration to proceed.`,
+        {
+          operation: operationName,
+          input,
+          originalError: error instanceof Error ? error : new Error(String(error)),
+        },
+        false
       );
-
-      try {
-        const fallbackResult = await fallbackOperation();
-        logInfo(`Fallback ${operationName} succeeded`);
-        return fallbackResult;
-      } catch (fallbackError) {
-        const fallbackErrorMessage =
-          fallbackError instanceof Error
-            ? fallbackError.message
-            : String(fallbackError);
-
-        throw new AIServiceError(
-          `Both AI and fallback ${operationName} failed. AI error: ${
-            error instanceof Error ? error.message : String(error)
-          }. Fallback error: ${fallbackErrorMessage}`,
-          {
-            operation: operationName,
-            input,
-            originalError:
-              error instanceof Error ? error : new Error(String(error)),
-          },
-          false
-        );
-      }
     }
   }
 
@@ -233,21 +221,19 @@ export class ErrorHandler {
   }
 
   /**
-   * Create error for analysis failures with fallback recommendations
+   * Create error for AI analysis failures with no fallback alternatives
+   * AI-first approach: Hard error when AI fails
    */
-  static createAnalysisError(
+  static createAIAnalysisError(
     operation: string,
     input: unknown,
-    error: Error,
-    fallbackAvailable = true
+    error: Error
   ): AIServiceError {
-    let message = `AI analysis failed for ${operation}: ${error.message}`;
-
-    if (fallbackAvailable) {
-      message += '\nFalling back to keyword-based analysis';
-    } else {
-      message += '\nNo fallback available, operation failed completely';
-    }
+    const message = 
+      `AI analysis failed for ${operation}: ${error.message}\n` +
+      `This indicates an AI configuration or API issue that must be resolved.\n` +
+      `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+      `No algorithmic fallback is available - fix AI integration to proceed.`;
 
     return new AIServiceError(
       message,
@@ -256,7 +242,7 @@ export class ErrorHandler {
         input,
         originalError: error,
       },
-      fallbackAvailable
+      false
     );
   }
 

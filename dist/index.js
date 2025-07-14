@@ -30215,6 +30215,16 @@ async function run() {
         performance_tracker_1.performanceTracker.generateReport();
     }
     catch (error) {
+        // Force log flush before error handling
+        if (isLocal && logFilePath) {
+            logger_1.Logger.flushLiveLogging();
+            // Brief delay to ensure write completion
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        logger_1.logger.error('MAIN', `Process failing with error: ${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof Error && error.stack) {
+            logger_1.logger.error('MAIN', `Error stack: ${error.stack}`);
+        }
         (0, utils_1.handleError)(error);
     }
     finally {
@@ -31289,7 +31299,6 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AIDomainAnalyzer = void 0;
 const claude_client_1 = __nccwpck_require__(3861);
 const json_extractor_1 = __nccwpck_require__(8168);
-const utils_1 = __nccwpck_require__(1798);
 const business_prompt_templates_1 = __nccwpck_require__(2813);
 const complexity_analyzer_1 = __nccwpck_require__(1981);
 /**
@@ -31300,6 +31309,8 @@ const complexity_analyzer_1 = __nccwpck_require__(1981);
 class AIDomainAnalyzer {
     constructor(anthropicApiKey) {
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
+        // Initialize ComplexityAnalyzer for AI-driven analysis
+        complexity_analyzer_1.ComplexityAnalyzer.initialize(anthropicApiKey);
     }
     /**
      * Classify business capability using AI semantic understanding with complexity awareness
@@ -31307,8 +31318,8 @@ class AIDomainAnalyzer {
      */
     async classifyBusinessDomain(context, semanticDiff) {
         // Generate complexity profile to inform naming strategy
-        const complexityProfile = this.generateComplexityProfile(context, semanticDiff);
-        const prompt = this.buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile);
+        const complexityProfile = await this.generateComplexityProfile(context, semanticDiff);
+        const prompt = await this.buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile);
         try {
             const response = await this.claudeClient.callClaude(prompt, 'business-capability-classification');
             const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', [
@@ -31322,12 +31333,14 @@ class AIDomainAnalyzer {
                 const data = result.data;
                 return this.transformToAIDomainClassification(data);
             }
+            throw new Error(`JSON extraction failed: ${result.error}`);
         }
         catch (error) {
-            (0, utils_1.logInfo)(`AI business capability classification failed: ${error}`);
+            throw new Error(`AI business capability classification failed: ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
         }
-        // Graceful degradation: return generic domain with low confidence
-        return this.createFallbackDomain(context);
     }
     /**
      * Build AI prompt for business capability classification
@@ -31400,83 +31413,6 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
         };
     }
     /**
-     * Create fallback business capability when AI analysis fails
-     * PRD: "Graceful degradation - never fail completely"
-     */
-    createFallbackDomain(context) {
-        const fileName = context.filePath.split('/').pop() || 'unknown';
-        const isTest = context.filePath.includes('test') || context.filePath.includes('spec');
-        const isConfig = context.filePath.includes('config') || fileName.endsWith('.json');
-        const isUI = context.filePath.includes('component') || context.filePath.includes('ui');
-        const isAuth = context.filePath.includes('auth') || context.filePath.includes('login');
-        const isLogger = context.filePath.includes('log') || context.filePath.includes('debug');
-        if (isTest) {
-            return {
-                domain: 'Development Workflow Optimization',
-                userValue: 'Developers catch issues before users experience them',
-                businessCapability: 'Maintain high-quality user experience through automated testing',
-                confidence: 0.4,
-                reasoning: 'Test file detected - quality assurance capability',
-                subDomains: ['Software developers'],
-                userJourney: 'Quality assurance and testing workflow',
-            };
-        }
-        if (isAuth) {
-            return {
-                domain: 'User Account Management',
-                userValue: 'Users access their accounts securely and efficiently',
-                businessCapability: 'Enable secure user authentication and access control',
-                confidence: 0.5,
-                reasoning: 'Authentication file detected - user security capability',
-                subDomains: ['End users', 'Account holders'],
-                userJourney: 'User login and authentication process',
-            };
-        }
-        if (isLogger) {
-            return {
-                domain: 'Development Workflow Optimization',
-                userValue: 'Developers diagnose and resolve issues faster',
-                businessCapability: 'Enable efficient troubleshooting and system monitoring',
-                confidence: 0.5,
-                reasoning: 'Logging file detected - debugging and monitoring capability',
-                subDomains: ['Software developers', 'DevOps engineers'],
-                userJourney: 'Error investigation and system monitoring workflow',
-            };
-        }
-        if (isConfig) {
-            return {
-                domain: 'Development Workflow Optimization',
-                userValue: 'Developers deploy and maintain systems reliably',
-                businessCapability: 'Configure system behavior for optimal user experience',
-                confidence: 0.4,
-                reasoning: 'Configuration file detected - system management capability',
-                subDomains: ['DevOps engineers', 'System administrators'],
-                userJourney: 'System deployment and configuration workflow',
-            };
-        }
-        if (isUI) {
-            return {
-                domain: 'User Experience Enhancement',
-                userValue: 'Users accomplish tasks intuitively and efficiently',
-                businessCapability: 'Enable smooth and intuitive user interactions',
-                confidence: 0.4,
-                reasoning: 'UI component detected - user interface capability',
-                subDomains: ['End users', 'All user types'],
-                userJourney: 'User interface interaction and navigation',
-            };
-        }
-        // Generic fallback
-        return {
-            domain: 'User Experience Enhancement',
-            userValue: 'Users benefit from improved system functionality',
-            businessCapability: 'Enhance overall system capabilities for better user outcomes',
-            confidence: 0.3,
-            reasoning: 'AI analysis unavailable - generic user experience capability',
-            subDomains: ['All users'],
-            userJourney: 'General system usage and interaction',
-        };
-    }
-    /**
      * Analyze multiple changes for domain grouping
      * PRD: "Intelligent cross-referencing" and domain relationships
      */
@@ -31490,40 +31426,14 @@ ${semanticDiff.crossFileRelationships.length} relationships detected
             if (result.success) {
                 return result.data;
             }
+            throw new Error(`JSON extraction failed: ${result.error}`);
         }
         catch (error) {
-            (0, utils_1.logInfo)(`Multi-domain analysis failed: ${error}`);
+            throw new Error(`AI multi-domain analysis failed: ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
         }
-        // Fallback: analyze each individually with concurrency control
-        console.log(`[AI-DOMAIN] Fallback to individual analysis for ${contexts.length} contexts`);
-        // Process all contexts concurrently - let ClaudeClient handle rate limiting
-        // This creates a continuous stream: 10→9→10→9→8→10 instead of batched 10→0→10→0
-        console.log(`[AI-DOMAIN] Processing all ${contexts.length} contexts concurrently`);
-        const contextPromises = contexts.map(async (ctx) => {
-            try {
-                const result = await this.classifyBusinessDomain(ctx);
-                return result;
-            }
-            catch (error) {
-                console.warn(`[AI-DOMAIN] Individual analysis failed, using fallback: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                // Return fallback domain for failed analysis
-                return {
-                    domain: 'System Enhancement',
-                    userValue: 'Improve system functionality',
-                    businessCapability: 'Enhance system capabilities',
-                    confidence: 0.3,
-                    reasoning: 'AI analysis failed - using fallback',
-                };
-            }
-        });
-        // Wait for all contexts to complete - ClaudeClient manages the 10 concurrent limit
-        const successfulDomains = await Promise.all(contextPromises);
-        console.log(`[AI-DOMAIN] All ${successfulDomains.length} contexts processed`);
-        return {
-            primaryDomains: successfulDomains,
-            crossCuttingDomains: [],
-            domainRelationships: [],
-        };
     }
     /**
      * Build prompt for multi-domain analysis
@@ -31580,24 +31490,24 @@ RESPOND WITH ONLY VALID JSON:
 }`;
     }
     /**
-     * Generate complexity profile for the given context
+     * Generate AI-driven complexity profile for the given context
      */
-    generateComplexityProfile(context, semanticDiff) {
+    async generateComplexityProfile(context, semanticDiff) {
         const themeCount = semanticDiff?.totalComplexity || 1;
         const affectedFiles = semanticDiff?.files.map(f => f.path) || [context.filePath];
         // Extract theme-like information from context
         const fileName = context.filePath.split('/').pop() || '';
         const themeName = fileName.replace(/\.[^/.]+$/, ''); // Remove extension
         const themeDescription = context.commitMessage || context.prDescription || '';
-        return complexity_analyzer_1.ComplexityAnalyzer.generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, context.completeDiff, context.surroundingContext);
+        return await complexity_analyzer_1.ComplexityAnalyzer.generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, context.completeDiff, context.surroundingContext);
     }
     /**
      * Build complexity-aware domain classification prompt
      */
-    buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile) {
+    async buildComplexityAwareDomainClassificationPrompt(context, semanticDiff, complexityProfile) {
         // If no complexity profile provided, generate one
         if (!complexityProfile) {
-            complexityProfile = this.generateComplexityProfile(context, semanticDiff);
+            complexityProfile = await this.generateComplexityProfile(context, semanticDiff);
         }
         const additionalContext = semanticDiff
             ? this.formatSemanticDiffContext(semanticDiff)
@@ -32173,13 +32083,11 @@ exports.AIMindmapService = AIMindmapService;
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AISimilarityService = void 0;
-const similarity_calculator_1 = __nccwpck_require__(241);
 const json_extractor_1 = __nccwpck_require__(8168);
 const claude_client_1 = __nccwpck_require__(3861);
+const logger_1 = __nccwpck_require__(9000);
 class AISimilarityService {
     constructor(anthropicApiKey) {
-        this.anthropicApiKey = anthropicApiKey;
-        this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
         this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
     }
     async calculateAISimilarity(theme1, theme2) {
@@ -32187,11 +32095,14 @@ class AISimilarityService {
         try {
             const output = await this.claudeClient.callClaude(prompt, 'similarity-analysis', `${theme1.name} vs ${theme2.name}`);
             const result = this.parseAISimilarityResponse(output);
+            logger_1.logger.debug('AI_SIMILARITY', `AI similarity analysis completed for ${theme1.name} vs ${theme2.name}`);
             return result;
         }
         catch (error) {
-            // Fallback to basic string matching
-            return this.createFallbackSimilarity(theme1, theme2);
+            throw new Error(`AI similarity analysis failed for themes "${theme1.name}" vs "${theme2.name}": ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
         }
     }
     /**
@@ -32301,23 +32212,6 @@ CRITICAL: Respond with ONLY valid JSON.
             shouldMerge: false,
             confidence: 0,
             reasoning: `Failed to parse AI response: ${extractionResult.error}`,
-        };
-    }
-    createFallbackSimilarity(theme1, theme2) {
-        // Fallback when AI fails - conservative approach
-        const nameScore = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
-        // Only merge if names are extremely similar (fallback is conservative)
-        const shouldMerge = nameScore > 0.9;
-        return {
-            shouldMerge,
-            confidence: 0.3, // Low confidence for fallback
-            reasoning: 'AI analysis failed - conservative fallback based on name similarity only',
-            semanticScore: shouldMerge ? 0.6 : 0.2,
-            // Legacy scores - not used
-            nameScore: 0,
-            descriptionScore: 0,
-            patternScore: 0,
-            businessScore: 0,
         };
     }
     /**
@@ -34745,7 +34639,6 @@ exports.ThemeService = ThemeService;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThemeSimilarityService = void 0;
 const similarity_cache_1 = __nccwpck_require__(667);
-const similarity_calculator_1 = __nccwpck_require__(241);
 const ai_similarity_1 = __nccwpck_require__(5776);
 const business_domain_1 = __nccwpck_require__(6);
 const theme_naming_1 = __nccwpck_require__(3111);
@@ -34771,7 +34664,6 @@ class ThemeSimilarityService {
         };
         // Initialize services
         this.similarityCache = new similarity_cache_1.SimilarityCache();
-        this.similarityCalculator = new similarity_calculator_1.SimilarityCalculator();
         this.aiSimilarityService = new ai_similarity_1.AISimilarityService(anthropicApiKey);
         this.businessDomainService = new business_domain_1.BusinessDomainService(anthropicApiKey);
         this.themeNamingService = new theme_naming_1.ThemeNamingService();
@@ -34800,22 +34692,7 @@ class ThemeSimilarityService {
         }
     }
     async doCalculateSimilarity(theme1, theme2, cacheKey) {
-        // Only skip if absolutely certain they're different
-        const fileOverlap = this.similarityCalculator.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
-        const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(theme1.name, theme2.name);
-        // Skip only if NO file overlap AND completely different names
-        if (fileOverlap === 0 && nameSimilarity < 0.1) {
-            const result = {
-                combinedScore: 0,
-                nameScore: 0,
-                descriptionScore: 0,
-                fileOverlap: 0,
-                patternScore: 0,
-                businessScore: 0,
-            };
-            this.similarityCache.cacheSimilarity(cacheKey, result);
-            return result;
-        }
+        // AI-first approach: No algorithmic pre-filtering
         // Ask Claude with full context
         const aiResult = await this.aiSimilarityService.calculateAISimilarity(theme1, theme2);
         // Convert to SimilarityMetrics using confidence as the primary score
@@ -34825,7 +34702,7 @@ class ThemeSimilarityService {
                 : (1 - aiResult.confidence) * 0.3,
             nameScore: 0, // Not used anymore
             descriptionScore: 0, // Not used anymore
-            fileOverlap, // Keep for reference
+            fileOverlap: 0, // Not used in AI-first approach
             patternScore: 0, // Not used anymore
             businessScore: 0, // Not used anymore
         };
@@ -35826,227 +35703,196 @@ exports.BusinessPromptTemplates = BusinessPromptTemplates;
 /***/ }),
 
 /***/ 1981:
-/***/ ((__unused_webpack_module, exports) => {
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
 /**
- * Utility for analyzing code change complexity for theme naming strategy
+ * AI-driven complexity analysis for theme naming strategy
+ * Replaces algorithmic pattern matching with Claude AI analysis
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ComplexityAnalyzer = void 0;
+const claude_client_1 = __nccwpck_require__(3861);
+const json_extractor_1 = __nccwpck_require__(8168);
+const logger_1 = __nccwpck_require__(9000);
 class ComplexityAnalyzer {
     /**
-     * Analyze code changes and file patterns to determine complexity
+     * Initialize with API key for AI analysis
      */
-    static analyzeChangeComplexity(codeChanges, filePath, contextSummary) {
-        const changeText = codeChanges.toLowerCase();
-        const pathText = filePath.toLowerCase();
-        const contextText = contextSummary?.toLowerCase() || '';
-        // Simple technical change patterns
-        const simplePatterns = [
-            /console\.(log|warn|error)/,
-            /import.*logger/i,
-            /logger\.(info|warn|error)/,
-            /\.warn\(/,
-            /console\.warn.*replaced.*logger/,
-            /add.*import/,
-            /replace.*console/,
-            /fix.*typo/,
-            /update.*comment/,
-            /rename.*variable/,
-            /add.*semicolon/,
-            /structured logging/,
-            /logger.*service/
-        ];
-        // Complex business feature patterns  
-        const complexPatterns = [
-            /authentication/,
-            /authorization/,
-            /payment/,
-            /checkout/,
-            /registration/,
-            /onboarding/,
-            /workflow/,
-            /business.*logic/,
-            /user.*flow/,
-            /feature.*flag/,
-            /user.*journey/,
-            /business.*process/
-        ];
-        const isSimple = simplePatterns.some(pattern => pattern.test(changeText) || pattern.test(contextText)) || pathText.includes('test') ||
-            pathText.includes('spec') ||
-            (changeText.includes('import') && changeText.split('\n').length < 5);
-        const isComplex = complexPatterns.some(pattern => pattern.test(changeText) || pattern.test(contextText)) || changeText.split('file').length > 3 ||
-            changeText.includes('new feature') ||
-            changeText.includes('business requirement');
-        return {
-            isSimpleTechnicalChange: isSimple,
-            isComplexBusinessFeature: isComplex,
-            confidence: isSimple || isComplex ? 0.9 : 0.6,
-            reasoning: isSimple ? 'Simple technical change detected' :
-                isComplex ? 'Complex business feature detected' :
-                    'Moderate complexity change'
-        };
+    static initialize(anthropicApiKey) {
+        this.claudeClient = new claude_client_1.ClaudeClient(anthropicApiKey);
     }
     /**
-     * Generate comprehensive complexity profile with recommendations
+     * AI-driven analysis of code change complexity
      */
-    static generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, codeChanges, contextSummary) {
-        const detectedPatterns = [];
-        // Single theme analysis
-        if (themeCount === 1 && affectedFiles.length <= 2) {
-            const isSimple = this.isSimpleTechnicalPattern(themeName || '', themeDescription || '', codeChanges, contextSummary);
-            if (isSimple) {
-                detectedPatterns.push('single-file-technical-change');
-                return {
-                    complexity: 'simple',
-                    confidence: 0.9,
-                    reasoning: 'Single theme with simple technical change',
-                    recommendedApproach: 'technical-specific',
-                    detectedPatterns
-                };
-            }
+    static async analyzeChangeComplexity(codeChanges, filePath, contextSummary) {
+        if (!this.claudeClient) {
+            throw new Error('ComplexityAnalyzer not initialized. Call initialize(apiKey) first.\n' +
+                'AI-driven complexity analysis requires Claude API access.');
         }
-        // Multiple themes or business features
-        if (themeCount >= 3 || this.hasBusinessFeaturePatterns(themeName, themeDescription, codeChanges)) {
-            detectedPatterns.push('multiple-themes-or-business-feature');
-            return {
-                complexity: 'complex',
-                confidence: 0.8,
-                reasoning: 'Multiple themes or business feature detected',
-                recommendedApproach: 'business-focused',
-                detectedPatterns
-            };
-        }
-        // Context-aware analysis
-        if (contextSummary) {
-            const contextAnalysis = this.analyzeContextPatterns(contextSummary);
-            if (contextAnalysis.isSimple) {
-                detectedPatterns.push('simple-context-pattern');
-                return {
-                    complexity: 'simple',
-                    confidence: 0.95,
-                    reasoning: 'Simple technical change pattern detected in context',
-                    recommendedApproach: 'technical-specific',
-                    detectedPatterns
-                };
+        const prompt = `You are analyzing code changes to determine their complexity and nature.
+
+CODE CHANGES:
+${codeChanges}
+
+FILE PATH: ${filePath}
+
+CONTEXT SUMMARY: ${contextSummary || 'Not provided'}
+
+TASK: Analyze the complexity and nature of this change.
+
+ANALYSIS CRITERIA:
+1. **Simple Technical Change**: Basic refactoring, imports, logging changes, minor fixes
+2. **Complex Business Feature**: User workflows, business logic, authentication, payments
+3. **Confidence**: How certain you are about this classification
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "isSimpleTechnicalChange": boolean,
+  "isComplexBusinessFeature": boolean,
+  "confidence": number (0.0-1.0),
+  "reasoning": "Explanation of why you classified it this way"
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'complexity-analysis', `complexity analysis for ${filePath}`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
             }
-        }
-        // Default moderate complexity
-        detectedPatterns.push('moderate-complexity-default');
-        return {
-            complexity: 'moderate',
-            confidence: 0.7,
-            reasoning: 'Moderate complexity change requiring hybrid approach',
-            recommendedApproach: 'hybrid',
-            detectedPatterns
-        };
-    }
-    /**
-     * Check for simple technical patterns
-     */
-    static isSimpleTechnicalPattern(name, description, codeChanges, contextSummary) {
-        const text = (name + ' ' + description + ' ' + (codeChanges || '') + ' ' + (contextSummary || '')).toLowerCase();
-        const patterns = [
-            /console\.warn/,
-            /logger/,
-            /import/,
-            /logging/,
-            /replace.*with/,
-            /add.*import/,
-            /fix.*typo/,
-            /update.*comment/,
-            /structured logging/,
-            /replaced.*console.*warn/
-        ];
-        return patterns.some(pattern => pattern.test(text));
-    }
-    /**
-     * Check for business feature patterns
-     */
-    static hasBusinessFeaturePatterns(name, description, codeChanges) {
-        const allText = (name + ' ' + description + ' ' + (codeChanges || '')).toLowerCase();
-        const patterns = [
-            /authentication/,
-            /authorization/,
-            /user.*flow/,
-            /business.*logic/,
-            /workflow/,
-            /onboarding/,
-            /payment/,
-            /checkout/,
-            /user.*journey/,
-            /business.*process/
-        ];
-        return patterns.some(pattern => pattern.test(allText));
-    }
-    /**
-     * Analyze context summary for complexity indicators
-     */
-    static analyzeContextPatterns(contextSummary) {
-        const contextText = contextSummary.toLowerCase();
-        // Simple technical patterns in context
-        const simplePatterns = [
-            /replaced console\.warn with/,
-            /add.*import/,
-            /logger.*service/,
-            /structured logging/,
-            /fix.*typo/,
-            /update.*comment/,
-            /single.*file.*change/,
-            /minor.*refactor/
-        ];
-        // Complex patterns in context
-        const complexPatterns = [
-            /multiple.*components/,
-            /business.*feature/,
-            /user.*workflow/,
-            /new.*functionality/,
-            /feature.*implementation/,
-            /system.*integration/
-        ];
-        return {
-            isSimple: simplePatterns.some(pattern => pattern.test(contextText)),
-            isComplex: complexPatterns.some(pattern => pattern.test(contextText))
-        };
-    }
-    /**
-     * Get examples for detected complexity patterns
-     */
-    static getPatternExamples(detectedPatterns) {
-        const examples = {
-            'single-file-technical-change': [
-                'Replace console.warn with logger.warn calls',
-                'Add LoggerServices import for centralized logging',
-                'Update error handling to use structured logging'
-            ],
-            'multiple-themes-or-business-feature': [
-                'Enable Secure User Authentication',
-                'Streamline Customer Onboarding Process',
-                'Improve Error Resolution Workflow'
-            ],
-            'simple-context-pattern': [
-                'Replace console.warn with structured logging',
-                'Add import statement for logger service',
-                'Update logging call to use centralized system'
-            ],
-            'moderate-complexity-default': [
-                'Implement Structured Logging for Error Diagnosis',
-                'Add OAuth2 Integration for User Security',
-                'Enhance API Validation for Data Integrity'
-            ]
-        };
-        const allExamples = [];
-        detectedPatterns.forEach(pattern => {
-            if (examples[pattern]) {
-                allExamples.push(...examples[pattern]);
+            const result = extractionResult.data;
+            // Validate response structure
+            if (typeof result.isSimpleTechnicalChange !== 'boolean' ||
+                typeof result.isComplexBusinessFeature !== 'boolean' ||
+                typeof result.confidence !== 'number' ||
+                typeof result.reasoning !== 'string') {
+                throw new Error('Invalid response structure from AI complexity analysis');
             }
-        });
-        return allExamples.length > 0 ? allExamples : examples['moderate-complexity-default'];
+            logger_1.logger.debug('COMPLEXITY_ANALYZER', `AI complexity analysis: ${result.isSimpleTechnicalChange ? 'simple' : result.isComplexBusinessFeature ? 'complex' : 'moderate'} (confidence: ${result.confidence})`);
+            return result;
+        }
+        catch (error) {
+            throw new Error(`AI complexity analysis failed for ${filePath}: ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
+        }
+    }
+    /**
+     * AI-driven comprehensive complexity profile generation
+     */
+    static async generateComplexityProfile(themeCount, affectedFiles, themeName, themeDescription, codeChanges, contextSummary) {
+        if (!this.claudeClient) {
+            throw new Error('ComplexityAnalyzer not initialized. Call initialize(apiKey) first.\n' +
+                'AI-driven complexity analysis requires Claude API access.');
+        }
+        const prompt = `You are analyzing code changes to create a comprehensive complexity profile.
+
+CONTEXT:
+- Theme Count: ${themeCount}
+- Affected Files: ${affectedFiles.join(', ')}
+- Theme Name: ${themeName || 'Not provided'}
+- Theme Description: ${themeDescription || 'Not provided'}
+- Code Changes: ${codeChanges || 'Not provided'}
+- Context Summary: ${contextSummary || 'Not provided'}
+
+TASK: Generate a comprehensive complexity profile with recommendations.
+
+ANALYSIS CRITERIA:
+1. **Complexity Levels**:
+   - simple: Single technical change, minor refactoring
+   - moderate: Mixed technical/business, moderate scope
+   - complex: Business features, multiple components, user workflows
+
+2. **Recommended Approaches**:
+   - technical-specific: Focus on technical implementation details
+   - hybrid: Balance technical and business perspectives
+   - business-focused: Emphasize user value and business impact
+
+3. **Pattern Detection**: Identify specific patterns in the change
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "complexity": "simple|moderate|complex",
+  "confidence": number (0.0-1.0),
+  "reasoning": "Detailed explanation of complexity assessment",
+  "recommendedApproach": "technical-specific|hybrid|business-focused",
+  "detectedPatterns": ["array", "of", "detected", "patterns"]
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'complexity-profile', `complexity profile for ${themeCount} themes`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const result = extractionResult.data;
+            // Validate response structure
+            if (!['simple', 'moderate', 'complex'].includes(result.complexity) ||
+                typeof result.confidence !== 'number' ||
+                typeof result.reasoning !== 'string' ||
+                !['technical-specific', 'hybrid', 'business-focused'].includes(result.recommendedApproach) ||
+                !Array.isArray(result.detectedPatterns)) {
+                throw new Error('Invalid response structure from AI complexity profile generation');
+            }
+            logger_1.logger.debug('COMPLEXITY_ANALYZER', `AI complexity profile: ${result.complexity} complexity, ${result.recommendedApproach} approach (confidence: ${result.confidence})`);
+            return result;
+        }
+        catch (error) {
+            throw new Error(`AI complexity profile generation failed: ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
+        }
+    }
+    /**
+     * AI-driven pattern examples generation
+     */
+    static async getPatternExamples(detectedPatterns) {
+        if (!this.claudeClient) {
+            throw new Error('ComplexityAnalyzer not initialized. Call initialize(apiKey) first.\n' +
+                'AI-driven pattern analysis requires Claude API access.');
+        }
+        if (detectedPatterns.length === 0) {
+            return ['No patterns detected for example generation'];
+        }
+        const prompt = `You are generating practical examples for detected code change patterns.
+
+DETECTED PATTERNS: ${detectedPatterns.join(', ')}
+
+TASK: Generate 3-5 clear, practical examples of changes that would match these patterns.
+
+GUIDELINES:
+- Examples should be specific and actionable
+- Focus on real-world scenarios
+- Include both technical and business perspectives where relevant
+- Each example should be a concise description (1-2 sentences)
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "examples": ["Array of practical examples matching the detected patterns"]
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'pattern-examples', `examples for ${detectedPatterns.length} patterns`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            if (!extractionResult.success) {
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const result = extractionResult.data;
+            if (!Array.isArray(result.examples)) {
+                throw new Error('Invalid response structure: examples must be an array');
+            }
+            return result.examples;
+        }
+        catch (error) {
+            throw new Error(`AI pattern examples generation failed: ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
+        }
     }
 }
 exports.ComplexityAnalyzer = ComplexityAnalyzer;
+ComplexityAnalyzer.claudeClient = null;
 
 
 /***/ }),
@@ -36956,54 +36802,31 @@ class ReviewService {
         };
     }
     /**
-     * Production: Review themes from Phase 1 output
+     * Production: Review themes from Phase 1 output using recursive bottom-up approach
      */
     async reviewThemes(themes) {
         const startTime = Date.now();
-        logger_1.logger.info('REVIEW_SERVICE', `Starting review of ${themes.length} themes`);
-        const nodeReviews = [];
-        // Review each theme node
-        for (const theme of themes) {
-            try {
-                const nodeReview = await this.reviewSingleNode(theme);
-                nodeReviews.push(nodeReview);
-            }
-            catch (error) {
-                logger_1.logger.error('REVIEW_SERVICE', `Failed to review node ${theme.id}: ${error}`);
-                // Create fallback review for failed nodes
-                const fallbackReview = {
-                    nodeId: theme.id,
-                    nodeName: theme.name,
-                    nodeType: 'integration-hybrid',
-                    findings: {
-                        issues: [{
-                                severity: 'minor',
-                                category: 'test',
-                                description: 'Review failed due to processing error',
-                                suggestedFix: 'Manual review recommended'
-                            }],
-                        strengths: [],
-                        testRecommendations: ['Manual testing recommended'],
-                        riskLevel: 'medium'
-                    },
-                    confidence: 0.1,
-                    processingTime: 0
-                };
-                nodeReviews.push(fallbackReview);
-            }
+        logger_1.logger.info('REVIEW_SERVICE', `🚀 Starting recursive review of ${themes.length} root themes`);
+        // Process all root themes in parallel using recursion
+        // Each reviewTheme call returns all reviews from that subtree
+        const rootSubtrees = await Promise.all(themes.map(rootTheme => this.reviewTheme(rootTheme)));
+        // Flatten all subtree results to get all individual node reviews
+        const allNodeReviews = [];
+        for (const subtree of rootSubtrees) {
+            allNodeReviews.push(...subtree);
         }
-        const overallRecommendation = this.determineOverallRecommendation(nodeReviews);
-        const summary = this.generateReviewSummary(nodeReviews);
+        const overallRecommendation = this.determineOverallRecommendation(allNodeReviews);
+        const summary = this.generateReviewSummary(allNodeReviews);
         const processingTime = Date.now() - startTime;
-        const averageConfidence = nodeReviews.reduce((sum, review) => sum + review.confidence, 0) / nodeReviews.length;
-        logger_1.logger.info('REVIEW_SERVICE', `Review completed in ${processingTime}ms with ${overallRecommendation} recommendation`);
+        const averageConfidence = allNodeReviews.reduce((sum, review) => sum + review.confidence, 0) / allNodeReviews.length;
+        logger_1.logger.info('REVIEW_SERVICE', `✅ Recursive review completed: ${allNodeReviews.length} themes in ${processingTime}ms with ${overallRecommendation} recommendation`);
         return {
             overallRecommendation,
             summary,
-            nodeReviews,
+            nodeReviews: allNodeReviews,
             processingTime,
             metadata: {
-                totalNodes: themes.length,
+                totalNodes: allNodeReviews.length,
                 averageConfidence,
                 timestamp: new Date().toISOString()
             }
@@ -37018,6 +36841,151 @@ class ReviewService {
             ? test_data_loader_1.TestDataLoader.loadTestOutput(filename)
             : test_data_loader_1.TestDataLoader.loadLatestTestOutput();
         return this.reviewThemes(themes);
+    }
+    /**
+     * Recursively review a theme and all its children (bottom-up)
+     * Children are reviewed first, then their results inform parent review
+     * Returns all reviews from this subtree (current theme + all descendants)
+     */
+    async reviewTheme(theme) {
+        const startTime = Date.now();
+        logger_1.logger.info('REVIEW_SERVICE', `🔄 Starting recursive review: ${theme.name} (level ${theme.level || 0})`);
+        const allReviews = [];
+        // Step 1: Review all children in parallel if they exist
+        const childResults = [];
+        if (theme.childThemes && theme.childThemes.length > 0) {
+            logger_1.logger.debug('REVIEW_SERVICE', `📊 Theme ${theme.name} has ${theme.childThemes.length} children - processing them first`);
+            const childPromises = theme.childThemes.map(child => this.reviewTheme(child));
+            const childSubtrees = await Promise.all(childPromises);
+            // Flatten all child subtree results
+            for (const subtree of childSubtrees) {
+                allReviews.push(...subtree);
+            }
+            // Extract just the direct child reviews for context compression
+            childResults.push(...childSubtrees.map(subtree => subtree[subtree.length - 1])); // Last review in each subtree is the direct child
+            logger_1.logger.debug('REVIEW_SERVICE', `✅ Completed ${allReviews.length} total reviews from children of ${theme.name}`);
+        }
+        // Step 2: Compress child context if children were reviewed
+        let hierarchyContext;
+        if (childResults.length > 0) {
+            try {
+                const compressedChildContext = await this.compressChildContext(childResults, theme);
+                hierarchyContext = this.getHierarchyContext(theme, compressedChildContext);
+                logger_1.logger.debug('REVIEW_SERVICE', `🗜️ Compressed ${childResults.length} child reviews for ${theme.name}`);
+            }
+            catch (error) {
+                logger_1.logger.error('REVIEW_SERVICE', `❌ Failed to compress child context for ${theme.name}: ${error}`);
+                throw new Error(`AI context compression failed for theme "${theme.name}": ${error}\n` +
+                    `Cannot proceed with parent review without child context compression.\n` +
+                    `This is an AI-first system - no fallback compression available.`);
+            }
+        }
+        else {
+            hierarchyContext = this.getHierarchyContext(theme, null);
+        }
+        // Step 3: Review current theme with hierarchy-aware context
+        const nodeReview = await this.reviewSingleNodeWithContext(theme, hierarchyContext);
+        allReviews.push(nodeReview);
+        const processingTime = Date.now() - startTime;
+        logger_1.logger.info('REVIEW_SERVICE', `✅ Completed recursive review: ${theme.name} in ${processingTime}ms - ${allReviews.length} total reviews in subtree`);
+        return allReviews;
+    }
+    /**
+     * AI compresses child review results for parent theme review
+     * NO mechanical truncation - only intelligent AI selection
+     */
+    async compressChildContext(childResults, parentTheme) {
+        // Extract only essential fields for parent review (complete fields, never truncated)
+        const essentialChildData = childResults.map(child => ({
+            nodeName: child.nodeName,
+            nodeType: child.nodeType,
+            riskLevel: child.findings.riskLevel,
+            issues: child.findings.issues, // Complete issues array, never truncated
+            confidence: child.confidence
+        }));
+        const prompt = `Compress these child review results for parent theme review.
+  
+PARENT THEME: ${parentTheme.name}
+BUSINESS GOAL: ${parentTheme.businessImpact || 'Not specified'}
+PARENT LEVEL: ${parentTheme.level || 0}
+
+CHILD REVIEWS:
+${JSON.stringify(essentialChildData, null, 2)}
+
+Select and summarize most relevant information for reviewing the parent.
+Focus on: integration risks, blocking issues, business alignment.
+Choose complete sections, never truncate.
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "compressedSummary": "essential context for parent review",
+  "criticalIssues": ["blocking issues only"],
+  "riskAggregation": "low|medium|high|critical",
+  "recommendation": "overall child consensus"
+}`;
+        try {
+            const response = await this.claudeClient.callClaude(prompt, 'context-compression');
+            const result = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['compressedSummary', 'criticalIssues', 'riskAggregation', 'recommendation']);
+            if (!result.success) {
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 JSON extraction failed for context compression`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Original Claude response: ${response}`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Extraction error: ${result.error}`);
+                throw new Error(`JSON extraction failed: ${result.error}`);
+            }
+            return JSON.stringify(result.data);
+        }
+        catch (error) {
+            throw new Error(`AI context compression failed: ${error}`);
+        }
+    }
+    /**
+     * Generate hierarchy-aware context to help AI understand review focus
+     */
+    getHierarchyContext(theme, childContext) {
+        const hasChildren = theme.childThemes && theme.childThemes.length > 0;
+        const depth = theme.level || 0;
+        if (!hasChildren) {
+            return `
+HIERARCHY POSITION: Leaf node (depth: ${depth})
+YOUR FOCUS: Implementation details, code quality, unit testing
+REVIEW SCOPE: This specific code change only
+${childContext ? `\nCHILD CONTEXT: None (leaf node)` : ''}`;
+        }
+        if (depth === 0) {
+            return `
+HIERARCHY POSITION: Root theme (${theme.childThemes.length} direct children)
+YOUR FOCUS: Business value delivery, user experience, system coherence
+REVIEW SCOPE: How the entire feature works as a complete system
+CHILD COMPONENTS: ${childContext}`;
+        }
+        return `
+HIERARCHY POSITION: Intermediate node (depth: ${depth}, ${theme.childThemes.length} children)
+YOUR FOCUS: Component integration, data flow, architectural decisions
+REVIEW SCOPE: How these components work together
+CHILD COMPONENTS: ${childContext}`;
+    }
+    /**
+     * Review a single theme node with hierarchy-aware context
+     */
+    async reviewSingleNodeWithContext(theme, hierarchyContext) {
+        const startTime = Date.now();
+        logger_1.logger.debug('REVIEW_SERVICE', `🔍 Reviewing node: ${theme.name} (with hierarchy context)`);
+        // AI-driven node type classification with hierarchy awareness
+        const nodeType = await this.classifyNodeTypeWithContext(theme, hierarchyContext);
+        // AI-driven review analysis with hierarchy context
+        const findings = await this.analyzeNodeFindingsWithContext(theme, nodeType, hierarchyContext);
+        // AI confidence in review
+        const confidence = this.calculateReviewConfidence(theme, findings);
+        const processingTime = Date.now() - startTime;
+        logger_1.logger.debug('REVIEW_SERVICE', `✅ Completed review of ${theme.name} in ${processingTime}ms`);
+        return {
+            nodeId: theme.id,
+            nodeName: theme.name,
+            nodeType,
+            findings,
+            confidence,
+            processingTime
+        };
     }
     /**
      * Review a single theme node (Week 1 strategy: basic node review)
@@ -37041,6 +37009,61 @@ class ReviewService {
             confidence,
             processingTime
         };
+    }
+    /**
+     * AI determines node type based on context with hierarchy awareness
+     */
+    async classifyNodeTypeWithContext(theme, hierarchyContext) {
+        const prompt = `You are analyzing a code change to determine its review approach.
+    
+CONTEXT:
+Theme: ${theme.name}
+Description: ${theme.description || 'Not specified'}
+Business Impact: ${theme.businessImpact || 'Not specified'}
+Technical Details: ${theme.combinedTechnicalDetails || 'Not specified'}
+Files: ${theme.affectedFiles?.join(', ') || 'Not specified'}
+Has Code: ${theme.codeSnippets?.length > 0 ? 'Yes' : 'No'}
+Child Themes: ${theme.childThemes?.length || 0}
+
+${hierarchyContext}
+
+TASK: Classify this change for review approach.
+
+CLASSIFICATION RULES:
+- atomic-technical: Single technical change, unit-testable, affects few files
+- business-feature: Business capability change, affects user workflows
+- integration-hybrid: Multiple components working together, architectural changes
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "nodeType": "atomic-technical|business-feature|integration-hybrid",
+  "reasoning": "Why this classification was chosen",
+  "confidence": 0.0-1.0
+}`;
+        try {
+            logger_1.logger.info('REVIEW_SERVICE', '🔍 ENTERING classifyNodeTypeWithContext method');
+            const response = await this.claudeClient.callClaude(prompt, 'node-type-classification');
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Claude response for node type classification: ${response}`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['nodeType', 'reasoning', 'confidence']);
+            if (!extractionResult.success) {
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 JSON extraction failed for node type classification`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Original Claude response: ${response}`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Extraction error: ${extractionResult.error}`);
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const parsed = extractionResult.data;
+            if (!parsed.nodeType || !['atomic-technical', 'business-feature', 'integration-hybrid'].includes(parsed.nodeType)) {
+                throw new Error(`Invalid node type: ${parsed.nodeType}`);
+            }
+            logger_1.logger.debug('REVIEW_SERVICE', `Node type classified as: ${parsed.nodeType} (confidence: ${parsed.confidence})`);
+            return parsed.nodeType;
+        }
+        catch (error) {
+            throw new Error(`AI node type classification failed for theme "${theme.name}": ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
+        }
     }
     /**
      * AI determines node type based on context
@@ -37071,9 +37094,16 @@ RESPOND WITH ONLY VALID JSON:
   "confidence": 0.0-1.0
 }`;
         try {
+            logger_1.logger.info('REVIEW_SERVICE', '🔍 ENTERING classifyNodeType method');
             const response = await this.claudeClient.callClaude(prompt, 'node-type-classification');
-            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Claude response for node type classification: ${response}`);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Response length: ${response?.length}`);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Response type: ${typeof response}`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['nodeType', 'reasoning', 'confidence']);
             if (!extractionResult.success) {
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 JSON extraction failed for node type classification (old method)`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Original Claude response: ${response}`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Extraction error: ${extractionResult.error}`);
                 throw new Error(`JSON extraction failed: ${extractionResult.error}`);
             }
             const parsed = extractionResult.data;
@@ -37084,8 +37114,90 @@ RESPOND WITH ONLY VALID JSON:
             return parsed.nodeType;
         }
         catch (error) {
-            logger_1.logger.warn('REVIEW_SERVICE', `Failed to classify node type: ${error}`);
-            return 'integration-hybrid'; // Safe fallback
+            throw new Error(`AI node type classification failed for theme "${theme.name}": ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
+        }
+    }
+    /**
+     * AI analyzes node for review findings with hierarchy awareness
+     */
+    async analyzeNodeFindingsWithContext(theme, nodeType, hierarchyContext) {
+        // Extract file context from existing theme data
+        const fileContext = this.extractFileContext(theme);
+        const enhancedCodeContext = this.buildEnhancedCodeContext(theme, fileContext);
+        const prompt = `You are performing a code review with ${nodeType.toUpperCase()} focus.
+
+CONTEXT:
+Theme: ${theme.name}
+Description: ${theme.description || 'Not specified'}
+Business Impact: ${theme.businessImpact || 'Not specified'}
+Node Type: ${nodeType}
+Files Affected: ${theme.affectedFiles?.join(', ') || 'Not specified'}
+
+${hierarchyContext}
+
+CODE CHANGES:
+${enhancedCodeContext}
+
+TASK: Provide a thorough code review focusing on the node type and hierarchy position.
+
+REVIEW FOCUS BY TYPE:
+- atomic-technical: Code correctness, unit testing, logic validation
+- business-feature: Business requirement validation, user impact, E2E testing
+- integration-hybrid: Component integration, architectural coherence, integration testing
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "issues": [
+    {
+      "severity": "critical|major|minor|suggestion",
+      "category": "logic|security|performance|style|test",
+      "description": "Clear description of the issue",
+      "suggestedFix": "How to fix it (optional)"
+    }
+  ],
+  "strengths": ["What was done well"],
+  "testRecommendations": ["What tests are needed"],
+  "riskLevel": "low|medium|high|critical"
+}`;
+        try {
+            logger_1.logger.info('REVIEW_SERVICE', '🔍 ENTERING analyzeNodeFindingsWithContext method');
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Prompt size: ${prompt.length} characters`);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Enhanced context size: ${enhancedCodeContext.length} characters`);
+            const response = await this.claudeClient.callClaude(prompt, 'code-review-analysis');
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Claude response for code review analysis: ${response}`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['issues', 'strengths', 'testRecommendations', 'riskLevel']);
+            if (!extractionResult.success) {
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 JSON extraction failed for code review analysis`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Original Claude response: ${response}`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Extraction error: ${extractionResult.error}`);
+                throw new Error(`JSON extraction failed: ${extractionResult.error}`);
+            }
+            const parsed = extractionResult.data;
+            // Validate response structure
+            if (!parsed.issues || !Array.isArray(parsed.issues)) {
+                parsed.issues = [];
+            }
+            if (!parsed.strengths || !Array.isArray(parsed.strengths)) {
+                parsed.strengths = [];
+            }
+            if (!parsed.testRecommendations || !Array.isArray(parsed.testRecommendations)) {
+                parsed.testRecommendations = [];
+            }
+            if (!parsed.riskLevel || !['low', 'medium', 'high', 'critical'].includes(parsed.riskLevel)) {
+                parsed.riskLevel = 'medium';
+            }
+            logger_1.logger.debug('REVIEW_SERVICE', `Found ${parsed.issues.length} issues, risk level: ${parsed.riskLevel}`);
+            // Enrich findings with location context
+            return this.enrichFindingsWithLocation(parsed, fileContext);
+        }
+        catch (error) {
+            throw new Error(`AI node findings analysis failed for theme "${theme.name}": ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
         }
     }
     /**
@@ -37129,9 +37241,18 @@ RESPOND WITH ONLY VALID JSON:
   "riskLevel": "low|medium|high|critical"
 }`;
         try {
+            logger_1.logger.info('REVIEW_SERVICE', '🔍 ENTERING analyzeNodeFindings method');
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Prompt size: ${prompt.length} characters`);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Enhanced context size: ${enhancedCodeContext.length} characters`);
             const response = await this.claudeClient.callClaude(prompt, 'code-review-analysis');
-            const extractionResult = json_extractor_1.JsonExtractor.extractJson(response);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Claude response for code review analysis: ${response}`);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Response length: ${response?.length}`);
+            logger_1.logger.info('REVIEW_SERVICE', `🔍 Response type: ${typeof response}`);
+            const extractionResult = json_extractor_1.JsonExtractor.extractAndValidateJson(response, 'object', ['issues', 'strengths', 'testRecommendations', 'riskLevel']);
             if (!extractionResult.success) {
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 JSON extraction failed for code review analysis (old method)`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Original Claude response: ${response}`);
+                logger_1.logger.error('REVIEW_SERVICE', `🚨 Extraction error: ${extractionResult.error}`);
                 throw new Error(`JSON extraction failed: ${extractionResult.error}`);
             }
             const parsed = extractionResult.data;
@@ -37153,13 +37274,10 @@ RESPOND WITH ONLY VALID JSON:
             return this.enrichFindingsWithLocation(parsed, fileContext);
         }
         catch (error) {
-            logger_1.logger.warn('REVIEW_SERVICE', `Failed to analyze node findings: ${error}`);
-            return {
-                issues: [],
-                strengths: [],
-                testRecommendations: [],
-                riskLevel: 'medium'
-            };
+            throw new Error(`AI node findings analysis failed for theme "${theme.name}": ${error}\n` +
+                `This indicates an AI configuration or API issue that must be resolved.\n` +
+                `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+                `No algorithmic fallback is available - fix AI integration to proceed.`);
         }
     }
     /**
@@ -38126,6 +38244,21 @@ class Logger {
             Logger.logFileStream = null;
         }
     }
+    static flushLiveLogging() {
+        if (Logger.logFileStream) {
+            try {
+                // Force immediate write without waiting for buffer
+                Logger.logFileStream.write('');
+                // Use callback version to ensure it's written
+                Logger.logFileStream.once('drain', () => {
+                    // Stream is ready, data has been written
+                });
+            }
+            catch (error) {
+                // Ignore flush errors - don't break logging
+            }
+        }
+    }
     static closeLiveLogging() {
         if (Logger.logFileStream) {
             Logger.logFileStream.end();
@@ -38160,6 +38293,7 @@ class Logger {
             const formatted = Logger.formatMessage('ERROR', service, message);
             console.error(formatted);
             Logger.writeToLog(formatted);
+            Logger.flushLiveLogging(); // Force flush errors immediately
         }
     }
     static warn(service, message) {
@@ -39417,6 +39551,7 @@ class ClaudeClient {
                     logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Exit code: ${exitCode}`);
                     logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Prompt size: ${prompt.length} chars, ${promptLines.length} lines`);
                     logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Prompt preview: ${promptPreview}...`);
+                    logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Standard output: ${output}`);
                     logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Error output: ${errorOutput}`);
                     throw new Error(`Claude CLI failed with exit code ${exitCode}. ` +
                         `Error: ${errorOutput || 'No error output'}. ` +
@@ -39433,7 +39568,9 @@ class ClaudeClient {
             }
         }
         catch (error) {
-            throw new Error(`Claude API call failed: ${error}`);
+            logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Exception details: ${error instanceof Error ? error.message : String(error)}`);
+            logger_1.logger.error(constants_1.LoggerServices.CLAUDE_CLIENT, `Full error object: ${JSON.stringify(error, null, 2)}`);
+            throw new Error(`Claude API call failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
     updateContextCounter(map, context, value = 1) {
@@ -40190,163 +40327,6 @@ class PerformanceTracker {
 exports.PerformanceTracker = PerformanceTracker;
 // Export singleton instance
 exports.performanceTracker = PerformanceTracker.getInstance();
-
-
-/***/ }),
-
-/***/ 241:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.SimilarityCalculator = void 0;
-class SimilarityCalculator {
-    quickSimilarityCheck(theme1, theme2) {
-        // Quick name similarity check
-        const nameScore = this.calculateNameSimilarity(theme1.name, theme2.name);
-        // Exact or near-exact name match - very likely to merge
-        if (nameScore >= 0.95) {
-            return {
-                shouldSkipAI: true,
-                similarity: {
-                    nameScore,
-                    descriptionScore: 0.9, // Assume high description similarity
-                    fileOverlap: this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles),
-                    patternScore: 0.8,
-                    businessScore: 0.9,
-                    combinedScore: 0.92,
-                },
-                reason: 'Near-identical names detected, skipping AI',
-            };
-        }
-        // No file overlap and completely different file types - very unlikely to merge
-        const fileOverlap = this.calculateFileOverlap(theme1.affectedFiles, theme2.affectedFiles);
-        if (fileOverlap === 0 && this.hasDifferentFileTypes(theme1, theme2)) {
-            return {
-                shouldSkipAI: true,
-                similarity: {
-                    nameScore,
-                    descriptionScore: 0.2,
-                    fileOverlap: 0,
-                    patternScore: 0.1,
-                    businessScore: 0.2,
-                    combinedScore: 0.15,
-                },
-                reason: 'No file overlap and different file types, skipping AI',
-            };
-        }
-        // Very different names and no file overlap - unlikely to merge
-        if (nameScore < 0.1 && fileOverlap === 0) {
-            return {
-                shouldSkipAI: true,
-                similarity: {
-                    nameScore,
-                    descriptionScore: 0.2,
-                    fileOverlap: 0,
-                    patternScore: 0.2,
-                    businessScore: 0.2,
-                    combinedScore: 0.18,
-                },
-                reason: 'Very different names and no file overlap, skipping AI',
-            };
-        }
-        // Need AI analysis for uncertain cases
-        return {
-            shouldSkipAI: false,
-            reason: 'Uncertain case, using AI analysis',
-        };
-    }
-    calculateNameSimilarity(name1, name2) {
-        const words1 = name1.toLowerCase().split(/\s+/);
-        const words2 = name2.toLowerCase().split(/\s+/);
-        const intersection = words1.filter((word) => words2.includes(word));
-        const union = new Set([...words1, ...words2]);
-        return intersection.length / union.size;
-    }
-    calculateDescriptionSimilarity(desc1, desc2) {
-        const words1 = desc1.toLowerCase().split(/\s+/);
-        const words2 = desc2.toLowerCase().split(/\s+/);
-        const intersection = words1.filter((word) => words2.includes(word));
-        const union = new Set([...words1, ...words2]);
-        return intersection.length / union.size;
-    }
-    calculateFileOverlap(files1, files2) {
-        const set1 = new Set(files1);
-        const set2 = new Set(files2);
-        const intersection = new Set([...set1].filter((file) => set2.has(file)));
-        const union = new Set([...set1, ...set2]);
-        return union.size === 0 ? 0 : intersection.size / union.size;
-    }
-    hasDifferentFileTypes(theme1, theme2) {
-        const getFileTypes = (files) => new Set(files.map((f) => f.split('.').pop()?.toLowerCase() || 'unknown'));
-        const types1 = getFileTypes(theme1.affectedFiles);
-        const types2 = getFileTypes(theme2.affectedFiles);
-        // Check if they have any common file types
-        const commonTypes = new Set([...types1].filter((type) => types2.has(type)));
-        return commonTypes.size === 0;
-    }
-    calculatePatternSimilarity(theme1, theme2) {
-        // Extract patterns from context
-        const patterns1 = this.extractPatterns(theme1.context);
-        const patterns2 = this.extractPatterns(theme2.context);
-        const intersection = patterns1.filter((p) => patterns2.includes(p));
-        const union = new Set([...patterns1, ...patterns2]);
-        return union.size === 0 ? 0 : intersection.length / union.size;
-    }
-    calculateBusinessSimilarity(theme1, theme2) {
-        const business1 = this.extractBusinessKeywords(theme1.description);
-        const business2 = this.extractBusinessKeywords(theme2.description);
-        const intersection = business1.filter((k) => business2.includes(k));
-        const union = new Set([...business1, ...business2]);
-        return union.size === 0 ? 0 : intersection.length / union.size;
-    }
-    extractPatterns(context) {
-        const patterns = [];
-        const text = context.toLowerCase();
-        if (text.includes('add') || text.includes('implement'))
-            patterns.push('addition');
-        if (text.includes('remove') || text.includes('delete'))
-            patterns.push('removal');
-        if (text.includes('update') || text.includes('modify'))
-            patterns.push('modification');
-        if (text.includes('refactor'))
-            patterns.push('refactoring');
-        if (text.includes('interface') || text.includes('type'))
-            patterns.push('type_definition');
-        if (text.includes('service') || text.includes('class'))
-            patterns.push('service_implementation');
-        if (text.includes('test'))
-            patterns.push('testing');
-        if (text.includes('configuration') || text.includes('config'))
-            patterns.push('configuration');
-        return patterns;
-    }
-    extractBusinessKeywords(description) {
-        const keywords = [];
-        const text = description.toLowerCase();
-        if (text.includes('greeting'))
-            keywords.push('greeting');
-        if (text.includes('authentication') || text.includes('auth'))
-            keywords.push('authentication');
-        if (text.includes('user') || text.includes('customer'))
-            keywords.push('user_experience');
-        if (text.includes('api') || text.includes('service'))
-            keywords.push('api_service');
-        if (text.includes('data') || text.includes('storage'))
-            keywords.push('data_management');
-        if (text.includes('security'))
-            keywords.push('security');
-        if (text.includes('performance'))
-            keywords.push('performance');
-        if (text.includes('integration'))
-            keywords.push('integration');
-        if (text.includes('workflow') || text.includes('process'))
-            keywords.push('workflow');
-        return keywords;
-    }
-}
-exports.SimilarityCalculator = SimilarityCalculator;
 
 
 /***/ }),

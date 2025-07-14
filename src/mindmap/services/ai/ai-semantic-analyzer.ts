@@ -44,12 +44,16 @@ export class AISemanticAnalyzer {
         const data = result.data as AISemanticAnalysis;
         return this.validateSemanticAnalysis(data);
       }
+      
+      throw new Error(`JSON extraction failed: ${result.error}`);
     } catch (error) {
-      logInfo(`AI semantic analysis failed: ${error}`);
+      throw new Error(
+        `AI semantic analysis failed: ${error}\n` +
+        `This indicates an AI configuration or API issue that must be resolved.\n` +
+        `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+        `No algorithmic fallback is available - fix AI integration to proceed.`
+      );
     }
-
-    // Graceful degradation: return basic analysis
-    return this.createFallbackAnalysis(context);
   }
 
   /**
@@ -203,87 +207,6 @@ RESPOND WITH ONLY VALID JSON:
     };
   }
 
-  /**
-   * Create fallback analysis when AI fails
-   * PRD: "Graceful degradation - always provide meaningful output"
-   */
-  private createFallbackAnalysis(
-    context: AIAnalysisContext
-  ): AISemanticAnalysis {
-    const filePath = context.filePath.toLowerCase();
-    const diff = context.completeDiff.toLowerCase();
-
-    // Basic heuristics for fallback
-    const isTest = filePath.includes('test') || filePath.includes('spec');
-    const isConfig = filePath.includes('config') || filePath.endsWith('.json');
-    const hasDeletions = diff.includes('-') && !diff.includes('+');
-    const hasAdditions = diff.includes('+') && !diff.includes('-');
-    // const hasBoth = diff.includes('+') && diff.includes('-');
-
-    if (isTest) {
-      return {
-        changeType: 'refactoring',
-        semanticImpact: 'internal',
-        userImpact: 'Improves test coverage and reliability',
-        technicalNature: 'Test modifications for quality assurance',
-        affectedCapabilities: ['Testing Infrastructure'],
-        confidence: 0.4,
-        reasoning: 'Test file detected - quality assurance changes',
-        filePurpose: 'Test coverage and validation',
-      };
-    }
-
-    if (isConfig) {
-      return {
-        changeType: 'refactoring',
-        semanticImpact: 'internal',
-        userImpact: 'System configuration adjustments',
-        technicalNature: 'Configuration file modifications',
-        affectedCapabilities: ['System Configuration'],
-        confidence: 0.4,
-        reasoning: 'Configuration file detected - infrastructure changes',
-        filePurpose: 'System configuration management',
-      };
-    }
-
-    if (hasDeletions && !hasAdditions) {
-      return {
-        changeType: 'refactoring',
-        semanticImpact: 'internal',
-        userImpact: 'Code cleanup and simplification',
-        technicalNature: 'Code removal and cleanup',
-        affectedCapabilities: ['Code Quality'],
-        confidence: 0.3,
-        reasoning: 'Deletion-only changes suggest cleanup or removal',
-        filePurpose: 'System component',
-      };
-    }
-
-    if (hasAdditions && !hasDeletions) {
-      return {
-        changeType: 'new-feature',
-        semanticImpact: 'enhancement',
-        userImpact: 'New functionality or improvements',
-        technicalNature: 'New code additions',
-        affectedCapabilities: ['System Functionality'],
-        confidence: 0.3,
-        reasoning: 'Addition-only changes suggest new functionality',
-        filePurpose: 'System component',
-      };
-    }
-
-    // Mixed changes - most common case
-    return {
-      changeType: 'refactoring',
-      semanticImpact: 'internal',
-      userImpact: 'System improvements and modifications',
-      technicalNature: 'Code modifications and updates',
-      affectedCapabilities: ['System Functionality'],
-      confidence: 0.2,
-      reasoning: 'AI analysis unavailable - mixed code changes detected',
-      filePurpose: 'System component',
-    };
-  }
 
   /**
    * Analyze file purpose from content using AI
@@ -310,12 +233,16 @@ RESPOND WITH ONLY VALID JSON:
         const data = result.data as Record<string, unknown>;
         return this.createAIFileContext(filePath, data);
       }
+      
+      throw new Error(`JSON extraction failed: ${result.error}`);
     } catch (error) {
-      logInfo(`AI file purpose analysis failed: ${error}`);
+      throw new Error(
+        `AI file purpose analysis failed for ${filePath}: ${error}\n` +
+        `This indicates an AI configuration or API issue that must be resolved.\n` +
+        `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+        `No algorithmic fallback is available - fix AI integration to proceed.`
+      );
     }
-
-    // Fallback to basic file context
-    return this.createFallbackFileContext(filePath);
   }
 
   /**
@@ -367,10 +294,13 @@ RESPOND WITH ONLY VALID JSON:
     filePath: string,
     data: Record<string, unknown>
   ): AIFileContext {
-    const basicContext = this.createFallbackFileContext(filePath);
-
     return {
-      ...basicContext,
+      functionName: undefined,
+      className: undefined,
+      namespace: undefined,
+      startLine: 0,
+      endLine: 0,
+      contextType: (data.contextType as any) || 'function',
       actualPurpose: this.trimToWordLimit(
         (data.actualPurpose as string) || 'System component',
         10
@@ -392,51 +322,6 @@ RESPOND WITH ONLY VALID JSON:
     };
   }
 
-  /**
-   * Create fallback file context when AI analysis fails
-   */
-  private createFallbackFileContext(filePath: string): AIFileContext {
-    const fileName = filePath.split('/').pop() || '';
-    const extension = fileName.split('.').pop()?.toLowerCase() || '';
-    const isTest = filePath.includes('test') || filePath.includes('spec');
-    const isConfig =
-      filePath.includes('config') ||
-      ['json', 'yaml', 'yml'].includes(extension);
-    const isComponent =
-      filePath.includes('component') || filePath.includes('ui');
-
-    const contextType = isTest ? 'test' : isConfig ? 'config' : 'function';
-
-    return {
-      functionName: undefined,
-      className: undefined,
-      namespace: undefined,
-      startLine: 0,
-      endLine: 0,
-      contextType,
-      actualPurpose: isTest
-        ? 'Test coverage'
-        : isConfig
-          ? 'Configuration'
-          : 'System component',
-      businessRelevance: isComponent
-        ? 'User interface and interaction'
-        : isTest
-          ? 'Quality assurance and reliability'
-          : 'System functionality support',
-      technicalRole: isTest
-        ? 'Testing infrastructure'
-        : isConfig
-          ? 'System configuration'
-          : 'Application logic',
-      userFacing: isComponent,
-      architecturalSignificance: isConfig
-        ? 'high'
-        : isTest
-          ? 'medium'
-          : 'medium',
-    };
-  }
 
   /**
    * Analyze related changes across multiple files
@@ -482,11 +367,16 @@ RESPOND WITH ONLY VALID JSON:
           }>;
         };
       }
+      
+      throw new Error(`JSON extraction failed: ${result.error}`);
     } catch (error) {
-      logInfo(`Related changes analysis failed: ${error}`);
+      throw new Error(
+        `AI related changes analysis failed: ${error}\n` +
+        `This indicates an AI configuration or API issue that must be resolved.\n` +
+        `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+        `No algorithmic fallback is available - fix AI integration to proceed.`
+      );
     }
-
-    return { clusters: [], crossCuttingConcerns: [] };
   }
 
   /**

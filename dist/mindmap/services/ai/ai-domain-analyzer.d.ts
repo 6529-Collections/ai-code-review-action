@@ -30,11 +30,6 @@ export declare class AIDomainAnalyzer {
      */
     private validateDomainClassification;
     /**
-     * Create fallback business capability when AI analysis fails
-     * PRD: "Graceful degradation - never fail completely"
-     */
-    private createFallbackDomain;
-    /**
      * Analyze multiple changes for domain grouping
      * PRD: "Intelligent cross-referencing" and domain relationships
      */
@@ -53,7 +48,7 @@ export declare class AIDomainAnalyzer {
      */
     private buildMultiDomainAnalysisPrompt;
     /**
-     * Generate complexity profile for the given context
+     * Generate AI-driven complexity profile for the given context
      */
     private generateComplexityProfile;
     /**

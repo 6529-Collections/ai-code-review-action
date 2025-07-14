@@ -1,16 +1,13 @@
 import { Theme } from '@/shared/types/theme-types';
 import { AISimilarityResult } from '../../types/similarity-types';
-import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
 import { JsonExtractor } from '@/shared/utils/json-extractor';
 import { ClaudeClient } from '@/shared/utils/claude-client';
 import { logger } from '@/shared/logger/logger';
 
 export class AISimilarityService {
-  private similarityCalculator: SimilarityCalculator;
   private claudeClient: ClaudeClient;
 
-  constructor(private readonly anthropicApiKey: string) {
-    this.similarityCalculator = new SimilarityCalculator();
+  constructor(anthropicApiKey: string) {
     this.claudeClient = new ClaudeClient(anthropicApiKey);
   }
 
@@ -28,11 +25,15 @@ export class AISimilarityService {
       );
       const result = this.parseAISimilarityResponse(output);
 
-
+      logger.debug('AI_SIMILARITY', `AI similarity analysis completed for ${theme1.name} vs ${theme2.name}`);
       return result;
     } catch (error) {
-      // Fallback to basic string matching
-      return this.createFallbackSimilarity(theme1, theme2);
+      throw new Error(
+        `AI similarity analysis failed for themes "${theme1.name}" vs "${theme2.name}": ${error}\n` +
+        `This indicates an AI configuration or API issue that must be resolved.\n` +
+        `Check: 1) API key validity, 2) Network connectivity, 3) Claude API status\n` +
+        `No algorithmic fallback is available - fix AI integration to proceed.`
+      );
     }
   }
 
@@ -172,32 +173,6 @@ CRITICAL: Respond with ONLY valid JSON.
     };
   }
 
-  private createFallbackSimilarity(
-    theme1: Theme,
-    theme2: Theme
-  ): AISimilarityResult {
-    // Fallback when AI fails - conservative approach
-    const nameScore = this.similarityCalculator.calculateNameSimilarity(
-      theme1.name,
-      theme2.name
-    );
-
-    // Only merge if names are extremely similar (fallback is conservative)
-    const shouldMerge = nameScore > 0.9;
-
-    return {
-      shouldMerge,
-      confidence: 0.3, // Low confidence for fallback
-      reasoning:
-        'AI analysis failed - conservative fallback based on name similarity only',
-      semanticScore: shouldMerge ? 0.6 : 0.2,
-      // Legacy scores - not used
-      nameScore: 0,
-      descriptionScore: 0,
-      patternScore: 0,
-      businessScore: 0,
-    };
-  }
 
   /**
    * Calculate similarity for multiple theme pairs in a single AI call

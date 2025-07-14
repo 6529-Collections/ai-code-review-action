@@ -1,14 +1,14 @@
-# Product Requirements Document: Dynamic AI-Powered PR Mindmap
+# Product Requirements Document: Intent-Aware Dynamic AI-Powered PR Mindmap
 
 ## Vision Statement
-Create an intelligent, self-organizing mindmap that adapts its depth to match the complexity of code changes, ensuring every change is represented at its natural level of abstraction - from high-level business themes down to atomic, testable code units.
+Create an intelligent, self-organizing mindmap that first detects the intent behind code changes, then adapts its depth to match the complexity of implementing that intent - ensuring every change is understood in context of what it's trying to achieve.
 
 ## Core Concept
 An AI-driven system that:
-- **Dynamically determines depth** based on change complexity
-- **Self-organizes** into natural hierarchical structures
-- **Maintains complete context** at every level
-- **Adapts** from simple 2-level typo fixes to complex 30-level system implementations
+- **Detects intent** from code patterns before organizing changes
+- **Self-organizes** based on how changes serve the detected intent
+- **Maintains intent context** at every level of the hierarchy
+- **Adapts depth** based on intent complexity and completeness
 
 ## Dynamic Hierarchy Principles
 
@@ -20,20 +20,20 @@ An AI-driven system that:
 
 ### Level Characteristics
 
-#### Root Level (Business Themes)
-- **Definition**: Distinct user flow, story, or business capability
-- **Examples**: "User Authentication", "Search Optimization", "Fix Documentation Typos"
-- **Content**: Complete business context for this theme
+#### Root Level (Detected Intents)
+- **Definition**: The systematic purpose detected from analyzing code patterns
+- **Examples**: "Systematic Removal: Eliminate algorithmic fallbacks", "Refactoring: Async/await conversion", "Enhancement: Add comprehensive logging"
+- **Content**: Intent type, confidence score, evidence, and scope
 
-#### Intermediate Levels (Dynamic)
-- **Definition**: Logical decomposition of parent functionality
-- **Depth**: As many levels as needed for clarity
-- **Content**: Focused on specific aspect of parent theme
+#### Intermediate Levels (Intent Application)
+- **Definition**: How the intent is applied to different components/areas
+- **Depth**: As many levels as needed to show complete intent implementation
+- **Content**: Component-specific application of the parent intent
 
 #### Leaf Level (Atomic Changes)
-- **Definition**: Smallest unit-testable code change
-- **Characteristics**: Single responsibility, independently testable
-- **Content**: Specific code diff that could have its own unit test
+- **Definition**: Smallest unit-testable code change that serves the intent
+- **Characteristics**: Single responsibility, verifiable against intent
+- **Content**: Specific code diff with intent alignment score
 
 ## Data Structure at Each Level
 
@@ -41,16 +41,29 @@ An AI-driven system that:
 ```yaml
 Node:
   id: Unique identifier
-  name: Clear, contextual title (audience-appropriate)
+  name: Clear, contextual title (intent-aware)
   description: Detailed explanation (1-3 sentences)
-  businessContext: Why this change matters
+  
+  # Intent context
+  intent: 
+    type: removal|refactoring|enhancement|bugfix|optimization
+    confidence: 0.0-1.0
+    alignment: supports|contradicts|unrelated
+  
+  # Context fields
+  intentContext: How this change serves the detected intent
   technicalContext: What this change does
+  businessContext: Why this matters (if applicable)
+  
+  # Structure
   affectedFiles: List of files involved at this level
   codeDiff: Relevant code changes for this specific node
   metrics:
     complexity: low|medium|high
     affectedFiles: number
     changeTypes: [config|logic|ui|test]
+    intentCompleteness: 0.0-1.0 # How much this contributes to intent
+  
   children: [] (empty for leaves)
   crossReferences: [] (IDs of related nodes for shared code)
 ```
@@ -61,19 +74,49 @@ Node:
 - **Progressive detail**: More technical as you go deeper
 - **Audience-aware**: Language adapts to expected viewer at each level
 
+## Intent Detection Framework
+
+### Pattern Analysis Phase
+Before building the hierarchy, the system analyzes all code changes to detect the primary intent:
+
+1. **Pattern Recognition**: Identify repeated patterns across files
+2. **Intent Inference**: Map patterns to likely intent types
+3. **Confidence Scoring**: Assess how clearly the intent is expressed
+4. **Conflict Detection**: Identify mixed or conflicting intents
+
+### Core Intent Types
+- **Systematic Removal**: Removing patterns/features across codebase
+- **Refactoring**: Changing implementation while preserving behavior  
+- **Enhancement**: Adding new capabilities or features
+- **Bug Fix**: Correcting incorrect behavior
+- **Optimization**: Improving performance or efficiency
+- **Hardening**: Adding validation, error handling, or security
+
+### Intent Confidence Levels
+- **High (>0.8)**: Clear, consistent pattern across all changes
+- **Medium (0.5-0.8)**: Dominant pattern with some exceptions
+- **Low (<0.5)**: Mixed patterns or unclear intent
+
+### Multi-Intent Handling
+When multiple intents are detected:
+- Create separate root nodes for each high-confidence intent
+- Group changes under their most aligned intent
+- Flag changes that don't clearly align with any intent
+- Suggest PR splitting for better clarity
+
 ## AI Decision Framework
 
 ### When to Create Child Nodes
-1. **Multiple concerns**: Parent contains distinct functional areas
-2. **Complexity threshold**: Single node too complex to understand atomically  
-3. **Different audiences**: Technical vs business aspects need separation
-4. **Testability**: Changes aren't independently testable at current level
+1. **Intent branching**: Different components implement the intent differently
+2. **Incomplete implementation**: Part of intent is missing in this area
+3. **Complexity threshold**: Single node too complex for clear intent verification
+4. **Mixed alignment**: Some changes support intent, others don't
 
 ### When to Stop Decomposition
-1. **Atomic change**: Code change is unit-testable as-is
-2. **Single responsibility**: Node does exactly one thing
-3. **Clarity achieved**: Further breakdown adds no value
-4. **Natural boundary**: Reached indivisible code unit
+1. **Atomic intent unit**: Change clearly serves or contradicts intent
+2. **Single responsibility**: Node does exactly one thing for the intent
+3. **Intent clarity**: Can definitively say if this supports the intent
+4. **Natural boundary**: Reached indivisible intent-serving unit
 
 ## Coverage Philosophy
 
@@ -113,29 +156,34 @@ Reusable Component:
 
 ### Simple Change (2 levels)
 ```
-Root: "Fix Documentation Typos"
+Root: "Bug Fix: Correct spelling errors" (Intent confidence: 0.95)
 └── Leaf: "README.md: Fix spelling of 'authentication'"
+    - Intent alignment: supports
     - Diff: -authntication +authentication
 ```
 
-### Complex Change with Shared Components
+### Intent-Driven Decomposition
 ```
-Root: "Implement User Authentication"
-├── "Add OAuth2 Integration"
-│   ├── "Create OAuth Utilities" (PRIMARY)
-│   │   └── Leaf: "Add token validation helper"
-│   ├── "Google OAuth Provider"
-│   │   └── Uses: token validation helper (REFERENCE)
-│   └── "GitHub OAuth Provider"
-│       └── Uses: token validation helper (REFERENCE)
-└── "Secure API Endpoints"
-    └── "Add Authentication Middleware"
-        └── Uses: token validation helper (REFERENCE)
+Root: "Systematic Removal: Eliminate algorithmic fallbacks" (Intent confidence: 0.92)
+├── "Response Validation: Remove fallback mechanisms"
+│   ├── Intent alignment: supports
+│   ├── "Remove quick validation checks" 
+│   └── "Remove partial validation methods"
+├── "Domain Analysis: Remove fallback creation"
+│   ├── Intent alignment: supports
+│   └── "Delete createFallbackDomain method"
+└── "Unaligned Changes"
+    └── "Add debug logging" 
+        └── Intent alignment: unrelated (flag for review)
 
-Root: "Improve Error Handling"
-└── "Standardize Error Messages"
-    └── "Update OAuth Errors"
-        └── Modifies: token validation helper (SECONDARY CONTEXT)
+Root: "Mixed Intent PR - Consider Splitting"
+├── Intent 1: "Enhancement: Add OAuth2" (confidence: 0.85)
+│   ├── "Create OAuth Utilities"
+│   ├── "Add Google Provider"
+│   └── "Add GitHub Provider"
+└── Intent 2: "Refactoring: Standardize errors" (confidence: 0.78)
+    └── "Update error message format"
+        └── Warning: Modifies OAuth utilities from Intent 1
 ```
 
 ## Key Differentiators
@@ -157,13 +205,13 @@ Root: "Improve Error Handling"
 
 ## Success Criteria
 
-1. **Natural Structure**: Depth feels intuitive, not forced
-2. **Comprehensive Coverage**: All changes represented, with intelligent handling of shared code
-3. **Minimal Redundancy**: Duplication only where it adds understanding
-4. **Standalone Nodes**: Each node understandable in isolation
-5. **Testable Leaves**: Every leaf represents unit-testable change
-6. **Business Alignment**: Root themes match actual business value
-7. **Cross-Reference Clarity**: Shared components clearly marked and linked
+1. **Accurate Intent Detection**: Correctly identifies the primary purpose of changes
+2. **Intent Alignment**: All changes properly categorized by intent support
+3. **Complete Implementation Tracking**: Shows what % of intent is implemented
+4. **Mixed Intent Detection**: Identifies and flags PRs that should be split
+5. **Contextual Understanding**: Reviews understand intent, not just code quality
+6. **Reduced False Positives**: No flagging intended changes as problems
+7. **Actionable Insights**: Clear indication of what's missing for intent completion
 
 ## Use Cases
 
@@ -328,31 +376,51 @@ Good examples:
 
 ### Prompt Templates by Purpose
 
-#### Decomposition Analysis
+#### Intent Detection
 ```
-Current theme: [name and details]
-Complexity indicators: [metrics]
-Question: Should this be broken into sub-themes?
-Criteria: [specific rules]
-Respond: {"shouldExpand": boolean, "reasoning": "max 15 words"}
+Analyze this complete diff and identify the primary intent:
+[Full PR diff]
+
+Common patterns to look for:
+- Systematic removal (deleting similar code across files)
+- Refactoring (changing HOW without changing WHAT)
+- Enhancement (adding new capabilities)
+- Bug fix (correcting wrong behavior)
+
+Respond: {
+  "intent": "type",
+  "confidence": 0.0-1.0,
+  "evidence": ["pattern1", "pattern2"],
+  "conflictingPatterns": ["if any"]
+}
 ```
 
-#### Similarity Detection
+#### Intent-Aware Decomposition
 ```
-Compare these themes:
-Theme A: [details]
-Theme B: [details]
-Focus on: Business logic overlap, not implementation
-Respond: {"similarity": 0.0-1.0, "reasoning": "specific overlap"}
+Parent intent: [Systematic Removal: algorithmic fallbacks]
+Current code section: [specific component]
+Question: How does this section implement the intent?
+
+Respond: {
+  "shouldExpand": boolean,
+  "intentAlignment": "supports|contradicts|unrelated",
+  "subIntents": ["specific applications of parent intent"],
+  "completeness": 0.0-1.0
+}
 ```
 
-#### Business Context Extraction
+#### Intent Verification
 ```
+Detected intent: [Remove all fallbacks]
 Code change: [specific diff]
-Technical context: [what changed]
-Task: Explain the business value
-Perspective: End user benefit, not technical details
-Respond: {"businessValue": "max 12 words"}
+Task: Verify if this change supports the intent
+
+Respond: {
+  "alignment": "supports|contradicts|unrelated", 
+  "confidence": 0.0-1.0,
+  "reasoning": "max 20 words",
+  "completesIntent": boolean
+}
 ```
 
 ### Prompt Optimization Strategies
@@ -457,4 +525,15 @@ Respond: {"businessValue": "max 12 words"}
 
 ---
 
-This dynamic approach ensures the mindmap naturally reflects code complexity while intelligently handling shared components and utilities, maintaining complete context at every level without forcing rigid one-to-one mappings. The system is designed to scale gracefully, maintain high quality through intelligent fallbacks, and continuously improve through pattern recognition and user feedback.
+## Intent-Based Architecture Summary
+
+This evolution from feature-based to intent-based mindmaps represents a fundamental shift in how we understand code changes. By detecting intent first, we solve the core problem of contextual understanding - the system now knows what changes are trying to achieve, not just what they affect.
+
+Key transformations:
+- **Root nodes** now represent detected intents, not business features
+- **Hierarchy** organizes by how changes serve the intent, not by component structure  
+- **Review context** understands intended changes aren't bugs
+- **Task generation** focuses on completing the detected intent
+- **Success** is measured by accurate intent detection and reduced false positives
+
+This approach is particularly crucial for AI-generated code, where understanding intent helps distinguish between incomplete implementation and intentional design choices. The mindmap becomes not just a visualization, but an intent verification system that ensures AI code achieves its stated purpose.

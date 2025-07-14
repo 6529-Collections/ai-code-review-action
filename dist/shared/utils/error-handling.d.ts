@@ -26,9 +26,10 @@ export declare class ErrorHandler {
      */
     static retryWithBackoff<T>(operation: () => Promise<T>, operationName: string, config?: Partial<RetryConfig>, input?: unknown): Promise<T>;
     /**
-     * Execute operation with fallback when AI fails
+     * Execute AI operation with enhanced retry logic and hard error on failure
+     * AI-first approach: No fallbacks to algorithmic alternatives
      */
-    static executeWithFallback<T>(primaryOperation: () => Promise<T>, fallbackOperation: () => T | Promise<T>, operationName: string, input?: unknown): Promise<T>;
+    static executeWithAIRetry<T>(aiOperation: () => Promise<T>, operationName: string, config?: Partial<RetryConfig>, input?: unknown): Promise<T>;
     /**
      * Handle JSON parsing errors with detailed diagnostics
      */
@@ -38,9 +39,10 @@ export declare class ErrorHandler {
      */
     static handleProcessError(error: Error, operation: string, command?: string): AIServiceError;
     /**
-     * Create error for analysis failures with fallback recommendations
+     * Create error for AI analysis failures with no fallback alternatives
+     * AI-first approach: Hard error when AI fails
      */
-    static createAnalysisError(operation: string, input: unknown, error: Error, fallbackAvailable?: boolean): AIServiceError;
+    static createAIAnalysisError(operation: string, input: unknown, error: Error): AIServiceError;
     /**
      * Determine if an error is retryable
      */

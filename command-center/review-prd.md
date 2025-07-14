@@ -1,303 +1,235 @@
-# Product Requirements Document: Hierarchical AI Code Review (Phase 2)
+# Product Requirements Document: Intent-Aware Hierarchical AI Code Review (Phase 2)
 
 ## Vision Statement
-Transform the hierarchical PR mindmap into an intelligent, context-aware code review system that performs bottom-up analysis - starting from atomic code changes and progressively building understanding up to business-level impact.
+Transform the intent-based hierarchical PR mindmap into an intelligent, context-aware code review system that validates changes against their detected intent - ensuring code achieves its intended purpose rather than just meeting quality standards.
 
 ## AI-First Review Philosophy
 
 ### Core Principle: AI-Driven Review Decisions
-- **All review analysis must use AI**: Code quality assessment, risk evaluation, test coverage analysis
-- **No algorithmic shortcuts**: Never use mechanical rules like "if file contains 'test' then skip review"
-- **Context-aware review**: Let AI determine review depth and focus based on actual code complexity
-- **Reject procedural logic**: Review decisions emerge from AI understanding, not counting patterns
+All review analysis must use AI for code quality assessment, risk evaluation, and test coverage analysis. Never use algorithmic shortcuts or mechanical rules like checking if files contain 'test' to skip review. Let AI determine review depth and focus based on actual code complexity, rejecting procedural logic in favor of decisions that emerge from AI understanding rather than counting patterns.
 
 ### AI Decision Supremacy
-- **Code Analysis**: AI analyzes actual code patterns, logic, and implementation quality
-- **Risk Assessment**: AI evaluates real risks based on code changes, not file name patterns
-- **Test Strategy**: AI determines testing needs based on code complexity and change patterns
-- **Review Depth**: AI decides when to dig deeper vs. when change is sufficiently reviewed
-- **Complexity Classification**: AI determines node type (atomic/business/hybrid) from code context, not mechanical rules
-- **Review Strategy Selection**: AI chooses appropriate review approach based on understanding, not file patterns
+AI analyzes actual code patterns in context of the detected intent rather than abstract quality standards. AI evaluates whether changes achieve their intended purpose, not just correctness. AI determines if the implementation is complete based on intent requirements. AI identifies contradictions between code changes and stated intent. AI adapts review criteria based on intent type (removal, refactoring, enhancement, etc.).
 
-### Node Type Detection (AI-Driven)
-AI analyzes each mindmap node to determine its review approach:
+### Intent-Aware Node Review (AI-Driven)
+AI analyzes each mindmap node in context of its detected intent:
 
 ```yaml
 AI Input Context:
-  - businessImpact: Rich business context
+  - detectedIntent: Type and confidence from Phase 1
+  - intentAlignment: How this node serves the intent
   - codeSnippets: Full git diffs
-  - combinedTechnicalDetails: Technical implementation summary
-  - keyChanges: Change categories from Phase 1
-  - mainFunctionsChanged: Function-level changes
+  - intentCompleteness: Progress toward intent completion
+  - contradictions: Changes that oppose the intent
 
 AI Determines:
-  - nodeType: atomic-technical|business-feature|integration-hybrid
-  - reviewDepth: shallow|standard|deep
-  - testingStrategy: unit|integration|e2e|mixed
-  - riskLevel: low|medium|high|critical
-  - reviewFocus: [security, performance, logic, business-alignment]
+  - reviewFocus: intent-completion|intent-contradiction|intent-quality
+  - issueTypes: missing-implementation|contradicts-intent|poor-execution
+  - completionGaps: What's needed to fully achieve intent
+  - riskLevel: Based on intent incompleteness or contradictions
+  - recommendations: Intent-specific suggestions
 ```
 
-**No Algorithmic Classification**: Never use rules like "if childThemes.length === 0 then atomic" or "if fileName.includes('test') then skip". Let AI understand the actual change context and determine appropriate treatment.
+**Intent-Driven Classification**: Review criteria change based on intent type. A "removal" intent flags remaining instances as issues. A "refactoring" intent flags behavior changes as issues. An "enhancement" intent flags missing functionality as issues.
 
 ## Executive Summary
-Phase 2 leverages the hierarchical mindmap from Phase 1 to enable sophisticated AI-driven code reviews. By starting at the atomic leaf level and working upward, the system builds comprehensive understanding while maintaining context at every level of abstraction.
+Phase 2 leverages the intent-based hierarchical mindmap from Phase 1 to validate that code changes achieve their detected intent. Rather than reviewing for generic quality, the system verifies intent completion, identifies contradictions, and ensures changes serve their stated purpose.
 
 ## Core Review Philosophy
 
 ### Bottom-Up Analysis
-- **Start Small**: Begin with atomic, unit-testable changes
-- **Build Understanding**: Each level adds context from its children
-- **Progressive Validation**: Verify correctness at each abstraction level
-- **Context Accumulation**: Higher levels inherit insights from below
+The system starts small with atomic, unit-testable changes and builds understanding where each level adds context from its children. Progressive validation verifies correctness at each abstraction level while higher levels inherit insights from below through context accumulation.
 
 ### Review Dimensions at Each Level
-1. **Code Quality**: Is the implementation correct and well-written?
-2. **Test Coverage**: Are changes properly tested?
-3. **Design Coherence**: Do changes fit the broader architecture?
-4. **Business Alignment**: Does implementation match stated intent?
-5. **Risk Assessment**: What could go wrong at this level?
+Each level examines intent alignment to verify changes support the detected intent, assesses completeness to ensure the intent is fully implemented, identifies contradictions where changes work against the intent, evaluates execution quality within the context of the intent, and performs risk assessment based on intent incompleteness or conflicts.
 
 ## Review Process Architecture
 
 ### Level-Specific Review Types
 
 #### Leaf Level (Atomic Changes)
-**Focus**: Code correctness and implementation quality
-```yaml
-Review Aspects:
-  - Syntax and style compliance
-  - Logic correctness
-  - Error handling
-  - Performance implications
-  - Security considerations
-  - Unit test existence and quality
-Context Needed:
-  - Code diff
-  - File type and purpose
-  - Immediate dependencies
-```
+Leaf level reviews verify each atomic change serves the intent. They examine whether the change supports or contradicts the intent, if the implementation is complete for this atomic unit, quality of execution within intent context, and identification of missing pieces needed for intent completion. The context needed includes detected intent, this node's intent alignment score, and the specific code changes.
 
 #### Intermediate Levels
-**Focus**: Integration and design coherence
-```yaml
-Review Aspects:
-  - Component interaction correctness
-  - Design pattern consistency
-  - API contract adherence
-  - Integration test coverage
-  - Cross-cutting concerns
-Context Needed:
-  - All child node reviews
-  - Parent's business intent
-  - Related component changes
-```
+Intermediate levels assess how components collectively serve the intent. They verify all child nodes align with the intent, identify gaps in intent implementation across components, check for contradictions between different parts, and evaluate if the combined changes achieve the intent goal. The context needed includes parent intent, all child intent alignments, and completion metrics from children.
 
-#### Root Level (Business Themes)
-**Focus**: Business value and system impact
-```yaml
-Review Aspects:
-  - Feature completeness
-  - Business requirement satisfaction
-  - System-wide impact assessment
-  - User experience implications
-  - Deployment risks
-Context Needed:
-  - All descendant reviews
-  - PR description and intent
-  - Historical context
-```
+#### Root Level (Intent Verification)
+Root level reviews confirm the overall intent is achieved. They validate the detected intent matches actual changes, assess overall completeness percentage, identify all remaining gaps for full intent achievement, and evaluate risks of incomplete or contradictory implementation. The context needed includes the detected intent with confidence, all descendant completion metrics, and any unaligned changes.
 
 ## Review Data Structure
 
-### Input: Mindmap Node (from Phase 1)
-```yaml
-MindmapNode:
-  id: string # Unique identifier
-  name: string # Clear, contextual title
-  description: string # Detailed explanation (1-3 sentences)
-  businessImpact: string # Why this change matters (rich business context)
-  affectedFiles: string[] # List of files involved at this level
-  codeSnippets: string[] # Full git diffs with line-by-line changes
-  confidence: number # 0-1 AI decision confidence from Phase 1
-  childThemes: MindmapNode[] # Hierarchy structure
-  sourceThemes: string[] # Cross-references to related nodes
-  combinedTechnicalDetails: string # Technical context summary
-  unifiedUserImpact: string # User-facing impact description
-  keyChanges: string[] # Key change categories
-  level: number # Hierarchy depth (0=root)
-```
+### Data Structures
+Input comes from Phase 1 mindmap nodes containing ID, name, description, business impact, affected files, code snippets, confidence scores, child themes, technical details, and user impact. Output produces review nodes with source references, review analysis including findings and quality metrics, context integration from the mindmap data, and final decisions with recommendations and reasoning.
 
-### Output: Review Node Format
-```yaml
-ReviewNode:
-  # Source Reference
-  nodeId: string # Reference to mindmap node ID
-  level: leaf|intermediate|root # Derived from childThemes.length
-  reviewType: implementation|integration|business # Based on hierarchy level
+## Recursive Review Algorithm
+
+### Core Approach: Natural Recursion
+```typescript
+async reviewTheme(theme: ConsolidatedTheme): Promise<ReviewResult> {
+  // Step 1: Review all children in parallel (natural dependency handling)
+  const childResults = await Promise.all(
+    theme.childThemes?.map(child => this.reviewTheme(child)) || []
+  );
   
-  # Review Analysis
-  findings:
-    issues:
-      - severity: critical|major|minor|suggestion
-        category: logic|security|performance|style|test
-        description: Clear explanation
-        suggestedFix: Concrete improvement
-        codeContext: string # Extracted from codeSnippets
+  // Step 2: AI compresses child context for parent review
+  const compressedContext = childResults.length > 0 
+    ? await this.compressChildContext(childResults, theme)
+    : null;
     
-    strengths:
-      - aspect: What was done well
-        impact: Why it matters
-    
-    risks:
-      - probability: high|medium|low
-        impact: high|medium|low
-        description: What could go wrong
-        mitigation: How to prevent it
-  
-  # Quality Metrics
-  metrics:
-    codeQuality: 0-100
-    testCoverage: 0-100
-    riskScore: 0-100
-    reviewConfidence: 0-100 # How confident AI is in this review
-    sourceConfidence: number # Original mindmap confidence
-  
-  # Context Integration
-  contextUsed:
-    businessImpact: string # From mindmap.businessImpact
-    technicalDetails: string # From mindmap.combinedTechnicalDetails
-    codeSnippets: string[] # From mindmap.codeSnippets
-    crossReferences: string[] # From mindmap.sourceThemes
-    fromChildren: ReviewNode[] # Child review summaries
-  
-  # Decision
-  decision:
-    recommendation: approve|requestChanges|needsDiscussion
-    reasoning: Clear justification
-    blockingIssues: string[] # Must fix before approval
+  // Step 3: Review this theme with compressed child context
+  return await this.reviewSingleTheme(theme, compressedContext);
+}
 ```
 
-## Progressive Review Algorithm
+### Benefits of Recursive Approach
+The recursive approach automatically handles dependencies since children always complete before parents, enables natural parallelization where all themes at the same level process simultaneously, provides simple coordination through the recursion stack, and achieves optimal resource usage without complex orchestration.
 
-### Phase 1: Leaf Analysis (Code-Level Review)
-```
-For each leaf node (childThemes.length === 0):
-  1. Extract code diffs from codeSnippets array
-  2. Parse git diffs for function/method changes
-  3. Analyze implementation quality from actual code
-  4. Assess change patterns and complexity
-  5. Generate atomic-level review findings
-  
-Available Context:
-  - Full git diffs with line-by-line changes
-  - Business impact explanation
-  - Technical implementation details
-  - Confidence score from Phase 1 analysis
+### Context Flow Management
+```typescript
+// AI compresses child results to prevent context explosion
+async compressChildContext(childResults: ReviewResult[], parentTheme: ConsolidatedTheme) {
+  // AI selects relevant child information for parent review
+  // Prevents 47 individual reviews from overwhelming parent context
+  // Maintains AI-first principle (no mechanical filtering)
+}
 ```
 
-### Phase 2: Bottom-Up Aggregation (Integration Review)
+### Parallel Processing Strategy
 ```
-For each intermediate level (childThemes.length > 0):
-  1. Collect child review summaries
-  2. Analyze business coherence across children
-  3. Assess technical integration patterns
-  4. Leverage cross-references (sourceThemes)
-  5. Roll up risks and quality metrics
-  
-Available Context:
-  - Combined technical details
-  - Business impact of the theme group
-  - Cross-reference relationships
-  - Child review findings
+Root Theme A (20 levels deep) |
+Root Theme B (18 levels deep) | → Process in parallel
+Root Theme C (5 levels deep)  |
+
+Within each root:
+  Level N: All themes process in parallel
+  Level N-1: Waits for Level N to complete, then processes in parallel
+  Level N-2: Waits for Level N-1 to complete, then processes in parallel
+  ...
+  Root: Waits for Level 1 to complete, then processes
+```
+### Processing Flow Example
+
+**Given hierarchy:**
+```
+Root: "User Authentication"
+├── Intermediate: "OAuth Integration" 
+│   ├── Leaf: "Token Validation"
+│   └── Leaf: "Session Management"
+└── Intermediate: "Password Security"
+    ├── Leaf: "Hash Algorithm"
+    └── Leaf: "Input Validation"
 ```
 
-### Phase 3: Holistic Assessment (Business Review)
-```
-At root level:
-  1. Synthesize business impact assessment
-  2. Validate against original business context
-  3. Calculate overall risk from aggregated metrics
-  4. Generate executive-level recommendation
-  
-Available Context:
-  - Rich business impact descriptions
-  - User-facing impact summaries
-  - Complete hierarchy of technical findings
-  - Cross-cutting concerns via sourceThemes
-```
+**Execution order (automatic via recursion):**
+1. **Parallel Leaf Processing**: "Token Validation", "Session Management", "Hash Algorithm", "Input Validation" all start simultaneously
+2. **Intermediate Processing**: Once leaves complete, "OAuth Integration" and "Password Security" start in parallel (each with compressed child context)
+3. **Root Processing**: Once intermediates complete, "User Authentication" processes with compressed intermediate context
 
-## AI Prompting Strategy
+**Context Compression at Each Level:**
+- **Leaves**: Raw code review (implementation correctness)
+- **Intermediates**: Integration assessment with compressed leaf summaries
+- **Root**: Business value assessment with compressed intermediate summaries
 
-### Context Building
-- **Rich Context Available**: Leverage full git diffs, business impact, and confidence scores
-- **Incremental Enhancement**: Add child review summaries as moving up hierarchy
-- **Cross-Reference Integration**: Utilize sourceThemes for related change context
+**Key Insight**: Each level focuses on appropriate abstraction level, with AI managing context relevance through intelligent compression rather than mechanical rules.
+
+## Simplified AI Prompting Strategy
+
+### Context Building Through Recursion
+Leaf levels receive direct code review with git diffs and business context, while parent levels review with AI-compressed child context. Recursion naturally provides appropriate context at each level without complex orchestration.
 
 ### Review Prompt Templates
 
-#### Leaf Level Prompt (Code Review)
+#### Leaf Level Prompt (Intent Validation)
 ```
-Role: You are a senior developer reviewing atomic code changes.
-Task: Review this specific code change for correctness and quality.
+You are reviewing if this atomic change serves its intended purpose.
 
-Available Context:
-- Full git diff: {codeSnippets}
-- Business Impact: {businessImpact}
-- Technical Details: {combinedTechnicalDetails}
-- Files Affected: {affectedFiles}
-- Phase 1 Confidence: {confidence}
+DETECTED INTENT: {intentType} - {intentDescription}
+INTENT CONFIDENCE: {intentConfidence}
+THIS NODE'S ALIGNMENT: {intentAlignment}
 
-Focus: Implementation details, code quality, potential issues.
-Output: Structured review with specific code references.
-```
+CODE CHANGES:
+{codeSnippets}
 
-#### Integration Level Prompt (Architecture Review)
-```
-Role: You are a software architect reviewing component integration.
-Task: Assess how these changes work together cohesively.
+Verify if this change correctly implements the intent.
+For "{intentType}" intent, check:
+- Does it support the intent goal?
+- Is it complete for this atomic unit?
+- Are there contradictions?
 
-Available Context:
-- Theme Description: {name} - {description}
-- Business Impact: {businessImpact}
-- Technical Integration: {combinedTechnicalDetails}
-- Child Reviews: {childThemes reviews}
-- Cross-References: {sourceThemes}
-
-Focus: Design coherence, integration patterns, architectural alignment.
-Output: Integration assessment with architectural recommendations.
+RESPOND WITH ONLY VALID JSON:
+{
+  "intentSupport": "supports|contradicts|unrelated",
+  "completeness": 0.0-1.0,
+  "issues": ["intent-specific problems"],
+  "missingForIntent": ["what's needed to fully support intent"],
+  "recommendation": "approve|fix-intent-issues|reconsider-intent"
+}
 ```
 
-#### Business Level Prompt (Product Review)
+#### Parent Level Prompt (Intent Integration Review)
 ```
-Role: You are a technical product manager reviewing feature delivery.
-Task: Evaluate if implementation achieves business goals.
+You are reviewing how components collectively serve the intent.
 
-Available Context:
-- Business Impact: {businessImpact}
-- User Impact: {unifiedUserImpact}
-- Key Changes: {keyChanges}
-- Technical Summary: {combinedTechnicalDetails}
-- All Child Reviews: {complete hierarchy}
+INTENT: {parentIntent}
+NODE: {name}
+INTENT ALIGNMENT: {intentAlignment}
 
-Focus: Business value delivery, user impact, strategic alignment.
-Output: Executive summary with business recommendation.
+CHILD INTENT RESULTS:
+{compressedChildContext}
+
+Assess if children collectively achieve this node's intent contribution.
+Check for:
+- Completeness across all child components
+- Contradictions between children
+- Missing pieces for full intent achievement
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "overallIntentProgress": 0.0-1.0,
+  "childrenAlignment": "all-aligned|mostly-aligned|conflicts-exist",
+  "integrationGaps": ["missing intent implementations"],
+  "contradictions": ["conflicting implementations"],
+  "recommendation": "intent-achieved|partial-implementation|intent-blocked"
+}
 ```
 
-## Risk Aggregation Model
+#### Context Compression Prompt
+```
+Compress child review results for parent intent verification.
+
+PARENT INTENT: {parentIntent}
+PARENT NODE: {parentTheme.name}
+EXPECTED ALIGNMENT: {parentTheme.intentAlignment}
+
+CHILD INTENT REVIEWS:
+{JSON.stringify(childResults)}
+
+Select information relevant to intent achievement.
+Focus on: intent completion gaps, contradictions, alignment issues.
+Preserve specific examples of incomplete or contradictory implementations.
+
+RESPOND WITH ONLY VALID JSON:
+{
+  "aggregateCompletion": 0.0-1.0,
+  "alignmentSummary": "how well children support parent intent",
+  "criticalGaps": ["specific missing implementations"],
+  "contradictions": ["specific conflicting changes"],
+  "recommendation": "proceed|address-gaps|reconsider-approach"
+}
+```
+
+## Risk Aggregation Through Recursion
+
+### Natural Risk Propagation
+Leaf risks come from direct code issues identified in leaf reviews, while parent risks combine child risks with integration risks. Recursion automatically propagates risks by naturally bubbling up the highest risks through the hierarchy.
 
 ### Risk Calculation
-- **Leaf risks**: Direct code issues
-- **Integration risks**: Emerge from component interaction
-- **System risks**: Overall impact on production
-
-### Risk Propagation
-```yaml
-Parent Risk = Max(
-  Own Risk Level,
-  Highest Child Risk,
-  Aggregated Risk Score
-)
+```typescript
+// Risk automatically aggregates through recursive calls
+const childResults = await Promise.all(children.map(child => reviewTheme(child)));
+const maxChildRisk = Math.max(...childResults.map(r => r.riskScore));
+const integrationRisk = await assessIntegrationRisk(theme, childResults);
+const overallRisk = Math.max(maxChildRisk, integrationRisk);
 ```
 
 ## Review Quality Assurance
@@ -332,6 +264,36 @@ Parent Risk = Max(
 - **No Mechanical Fallbacks**: Absolutely no rule-based, pattern-matching, or algorithmic alternatives to AI review
 - **Complete Context**: Always provide full code context to AI - let AI decide what's relevant
 - **Fail Fast**: Better to fail explicitly than provide misleading non-AI review results
+
+#### Intent-Aware Review Examples
+
+```typescript
+// Example: Reviewing under "Systematic Removal" intent
+if (intent.type === 'removal') {
+  // ✅ CORRECT - Flag remaining instances as issues
+  const remainingInstances = await ai.findRemainingPatterns(intent.targetPattern);
+  if (remainingInstances.length > 0) {
+    return {
+      issue: 'Incomplete removal - instances remain',
+      locations: remainingInstances,
+      severity: 'critical' // Critical because it directly contradicts intent
+    };
+  }
+}
+
+// Example: Reviewing under "Refactoring" intent  
+if (intent.type === 'refactoring') {
+  // ✅ CORRECT - Verify behavior unchanged
+  const behaviorAnalysis = await ai.compareBehavior(oldCode, newCode);
+  if (behaviorAnalysis.changed) {
+    return {
+      issue: 'Refactoring changed behavior',
+      details: behaviorAnalysis.differences,
+      severity: 'critical' // Refactoring must preserve behavior
+    };
+  }
+}
+```
 
 #### Prohibited Review Fallback Patterns
 ```typescript
@@ -380,34 +342,43 @@ const riskAnalysis = await ai.assessRisk({
 
 ### Developer-Friendly Format
 ```markdown
-## 🔍 AI Code Review Summary
+## 🔍 Intent-Based Code Review Summary
 
-### ✅ Overall Recommendation: [Approve/Request Changes]
+### 🎯 Detected Intent: [Systematic Removal: Eliminate algorithmic fallbacks]
+- **Confidence**: 92%
+- **Completion**: 85%
 
-### 📊 Metrics
-- Code Quality: 85/100
-- Test Coverage: 92/100
-- Risk Level: Low
+### ✅ Overall Recommendation: [Fix Intent Gaps Before Merging]
 
-### 🚨 Critical Issues (Must Fix)
-1. **Memory leak in auth handler** (auth-service.ts:45)
-   - Risk: High
-   - Fix: Add cleanup in useEffect
+### 📊 Intent Achievement Metrics
+- Changes Supporting Intent: 43/47 (91%)
+- Contradicting Changes: 2/47 (4%)
+- Unrelated Changes: 2/47 (4%)
+- Missing Implementations: 3 components
 
-### ⚠️ Suggestions for Improvement
-1. **Consider caching API responses** (api-client.ts:23)
-   - Impact: Performance
-   - Benefit: 50% faster subsequent loads
+### 🚨 Intent Completion Gaps (Must Fix)
+1. **Fallback remains in ErrorHandler** (error-handler.ts:67)
+   - Still has algorithmic fallback for network errors
+   - Fix: Remove fallback, throw error directly
 
-### 💪 Strengths
-- Excellent test coverage for new features
-- Clean separation of concerns
-- Good error handling patterns
+2. **Incomplete removal in ConfigLoader** (config-loader.ts:23)
+   - Partial fallback logic still present
+   - Fix: Complete the removal pattern
+
+### ⚠️ Intent Contradictions
+1. **New fallback added in Logger** (logger.ts:45)
+   - Contradicts removal intent
+   - Fix: Remove or justify why this is needed
+
+### 💪 Intent Achievements
+- Response validation fully converted to AI-first
+- Domain analysis successfully removed all fallbacks
+- Complexity analyzer properly throws on AI failure
 
 ### 📈 Risk Assessment
-- **Deployment Risk**: Low
-- **Performance Impact**: Minimal
-- **Security Concerns**: None identified
+- **Intent Risk**: Medium (85% complete)
+- **Contradiction Risk**: Low (2 instances)
+- **Missing Implementation Risk**: High (critical components)
 ```
 
 ### Hierarchical Review Navigation
@@ -416,64 +387,35 @@ const riskAnalysis = await ai.assessRisk({
 - **Severity sorting**: Critical issues first
 
 ## Implementation Phases
-
-### MVP Features
-1. Basic leaf-level code review
-2. Simple risk aggregation
-3. Final recommendation generation
-
-### Enhanced Features
-1. Multi-level integration analysis
-2. Cross-reference impact assessment
-3. Historical pattern learning
-
-### Advanced Features
-1. Auto-fix generation for common issues
-2. Performance regression prediction
-3. Security vulnerability scanning
+Start with basic leaf-level code review, simple risk aggregation, and final recommendation generation. Enhanced features will add multi-level integration analysis, cross-reference impact assessment, and historical pattern learning. Advanced features can include auto-fix generation for common issues, performance regression prediction, and security vulnerability scanning.
 
 ## Success Metrics
 
-### Review Quality
-- **False positive rate**: <10%
-- **Issue detection rate**: >90% of human-found issues
-- **Actionable feedback**: >95% of suggestions implementable
+### Intent Detection Accuracy
+The system should correctly identify primary intent in over 85% of PRs, properly categorize 90% of changes by intent alignment, and flag mixed-intent PRs that need splitting with 95% accuracy.
+
+### Review Effectiveness  
+The system should reduce false positives by 50% through intent context, catch 95% of incomplete intent implementations, identify all contradictions between code and intent, and provide clear guidance for intent completion.
 
 ### Developer Experience
-- **Review quality**: High-confidence, actionable findings
-- **Clarity score**: 4.5/5 developer rating
-- **Adoption rate**: >80% of teams using
-- **Processing approach**: Thorough analysis takes appropriate time for quality results
-
-### Business Impact
-- **Defect reduction**: 30% fewer production issues
-- **Review quality**: Comprehensive AI-driven analysis
-- **Deployment confidence**: 90% successful deployments
+Developers should understand why changes are flagged based on intent, receive actionable tasks to complete detected intent, see clear progress toward intent achievement, and trust that intended changes won't be flagged as issues.
 
 ## Integration Points
-
-### With Phase 1 Mindmap
-- **Direct consumption**: Use existing hierarchy
-- **Metadata enrichment**: Add review data to nodes
-- **Bidirectional updates**: Review findings update mindmap
-
-### With Development Workflow
-- **PR comments**: Post findings as GitHub comments
-- **Status checks**: Block merge on critical issues
-- **IDE integration**: Show findings in editor
+The system integrates with Phase 1 mindmaps through direct consumption of existing hierarchy, metadata enrichment by adding review data to nodes, and bidirectional updates where review findings update the mindmap. Integration with development workflows includes posting findings as GitHub PR comments, blocking merges on critical issues through status checks, and showing findings in editor through IDE integration.
 
 ## Future Considerations
-
-### Learning System
-- **Pattern database**: Common issue patterns
-- **Team preferences**: Customized review focus
-- **Codebase knowledge**: Repository-specific rules
-
-### Collaborative Reviews
-- **Human override**: Accept/reject AI findings
-- **Explanation requests**: AI clarifies decisions
-- **Continuous improvement**: Learn from human feedback
+Future learning systems could build pattern databases of common issue patterns, accommodate team preferences for customized review focus, and develop codebase knowledge with repository-specific rules. Collaborative reviews would enable human override to accept or reject AI findings, explanation requests where AI clarifies decisions, and continuous improvement through learning from human feedback.
 
 ---
 
-This hierarchical review system transforms code review from a flat, file-based process into an intelligent, context-aware analysis that builds understanding from atomic changes up to business impact, ensuring both code quality and business value delivery.
+## Intent-Based Review Summary
+
+This evolution from quality-focused to intent-aware review represents a paradigm shift in code review philosophy. By understanding what code is trying to achieve, the system can distinguish between bugs and intended changes, dramatically reducing false positives.
+
+Key transformations:
+- **Review focus** shifts from generic quality to intent achievement
+- **Issue detection** based on intent incompleteness, not abstract standards
+- **Risk assessment** derived from how far the code is from achieving its intent
+- **Recommendations** become intent-specific tasks rather than generic improvements
+
+For AI-generated code, this is particularly crucial - the system can now verify that the AI correctly understood and implemented the requested changes, catching subtle misinterpretations that traditional quality-focused reviews would miss. The review becomes a verification that code achieves its purpose, not just that it follows best practices.

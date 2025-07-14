@@ -1,5 +1,6 @@
 /**
- * Utility for analyzing code change complexity for theme naming strategy
+ * AI-driven complexity analysis for theme naming strategy
+ * Replaces algorithmic pattern matching with Claude AI analysis
  */
 export interface ComplexityAnalysis {
     isSimpleTechnicalChange: boolean;
@@ -15,28 +16,21 @@ export interface ChangeComplexityProfile {
     detectedPatterns: string[];
 }
 export declare class ComplexityAnalyzer {
+    private static claudeClient;
     /**
-     * Analyze code changes and file patterns to determine complexity
+     * Initialize with API key for AI analysis
      */
-    static analyzeChangeComplexity(codeChanges: string, filePath: string, contextSummary?: string): ComplexityAnalysis;
+    static initialize(anthropicApiKey: string): void;
     /**
-     * Generate comprehensive complexity profile with recommendations
+     * AI-driven analysis of code change complexity
      */
-    static generateComplexityProfile(themeCount: number, affectedFiles: string[], themeName?: string, themeDescription?: string, codeChanges?: string, contextSummary?: string): ChangeComplexityProfile;
+    static analyzeChangeComplexity(codeChanges: string, filePath: string, contextSummary?: string): Promise<ComplexityAnalysis>;
     /**
-     * Check for simple technical patterns
+     * AI-driven comprehensive complexity profile generation
      */
-    private static isSimpleTechnicalPattern;
+    static generateComplexityProfile(themeCount: number, affectedFiles: string[], themeName?: string, themeDescription?: string, codeChanges?: string, contextSummary?: string): Promise<ChangeComplexityProfile>;
     /**
-     * Check for business feature patterns
+     * AI-driven pattern examples generation
      */
-    private static hasBusinessFeaturePatterns;
-    /**
-     * Analyze context summary for complexity indicators
-     */
-    private static analyzeContextPatterns;
-    /**
-     * Get examples for detected complexity patterns
-     */
-    static getPatternExamples(detectedPatterns: string[]): string[];
+    static getPatternExamples(detectedPatterns: string[]): Promise<string[]>;
 }

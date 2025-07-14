@@ -6,7 +6,6 @@ import {
   ThemePair,
 } from '../types/similarity-types';
 import { SimilarityCache } from './similarity-cache';
-import { SimilarityCalculator } from '@/shared/utils/similarity-calculator';
 import { AISimilarityService } from './ai/ai-similarity';
 import { BusinessDomainService } from './business-domain';
 import { ThemeNamingService } from './theme-naming';
@@ -26,7 +25,6 @@ export interface SimilarityEffectiveness {
 export class ThemeSimilarityService {
   private config: ConsolidationConfig;
   private similarityCache: SimilarityCache;
-  private similarityCalculator: SimilarityCalculator;
   private aiSimilarityService: AISimilarityService;
   private businessDomainService: BusinessDomainService;
   private themeNamingService: ThemeNamingService;
@@ -53,7 +51,6 @@ export class ThemeSimilarityService {
 
     // Initialize services
     this.similarityCache = new SimilarityCache();
-    this.similarityCalculator = new SimilarityCalculator();
     this.aiSimilarityService = new AISimilarityService(anthropicApiKey);
     this.businessDomainService = new BusinessDomainService(anthropicApiKey);
     this.themeNamingService = new ThemeNamingService();
@@ -99,29 +96,7 @@ export class ThemeSimilarityService {
     theme2: Theme,
     cacheKey: string
   ): Promise<SimilarityMetrics> {
-    // Only skip if absolutely certain they're different
-    const fileOverlap = this.similarityCalculator.calculateFileOverlap(
-      theme1.affectedFiles,
-      theme2.affectedFiles
-    );
-    const nameSimilarity = this.similarityCalculator.calculateNameSimilarity(
-      theme1.name,
-      theme2.name
-    );
-
-    // Skip only if NO file overlap AND completely different names
-    if (fileOverlap === 0 && nameSimilarity < 0.1) {
-      const result = {
-        combinedScore: 0,
-        nameScore: 0,
-        descriptionScore: 0,
-        fileOverlap: 0,
-        patternScore: 0,
-        businessScore: 0,
-      };
-      this.similarityCache.cacheSimilarity(cacheKey, result);
-      return result;
-    }
+    // AI-first approach: No algorithmic pre-filtering
 
     // Ask Claude with full context
     const aiResult = await this.aiSimilarityService.calculateAISimilarity(
@@ -136,7 +111,7 @@ export class ThemeSimilarityService {
         : (1 - aiResult.confidence) * 0.3,
       nameScore: 0, // Not used anymore
       descriptionScore: 0, // Not used anymore
-      fileOverlap, // Keep for reference
+      fileOverlap: 0, // Not used in AI-first approach
       patternScore: 0, // Not used anymore
       businessScore: 0, // Not used anymore
     };

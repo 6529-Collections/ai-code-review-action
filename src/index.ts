@@ -329,6 +329,18 @@ export async function run(): Promise<void> {
     performanceTracker.generateReport();
 
   } catch (error) {
+    // Force log flush before error handling
+    if (isLocal && logFilePath) {
+      Logger.flushLiveLogging();
+      // Brief delay to ensure write completion
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    logger.error('MAIN', `Process failing with error: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof Error && error.stack) {
+      logger.error('MAIN', `Error stack: ${error.stack}`);
+    }
+    
     handleError(error);
   } finally {
     // Close live logging if it was initialized

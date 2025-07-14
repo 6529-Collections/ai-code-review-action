@@ -36,7 +36,7 @@ export declare const ResponseSchemas: {
         fileType: string;
         isConfigFile: boolean;
         architecturalPatterns: string[];
-        codeComplexity: "low" | "medium" | "high";
+        codeComplexity: "high" | "low" | "medium";
     }, {
         isTestFile: boolean;
         businessDomain: string;
@@ -47,7 +47,7 @@ export declare const ResponseSchemas: {
         fileType: string;
         isConfigFile: boolean;
         architecturalPatterns: string[];
-        codeComplexity: "low" | "medium" | "high";
+        codeComplexity: "high" | "low" | "medium";
     }>;
     theme_extraction: z.ZodObject<{
         themeName: z.ZodString;
@@ -136,6 +136,7 @@ export declare const ResponseSchemas: {
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
         confidence: number;
+        reasoning: string;
         subThemes: {
             name: string;
             description: string;
@@ -144,9 +145,9 @@ export declare const ResponseSchemas: {
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
-        reasoning: string;
     }, {
         confidence: number;
+        reasoning: string;
         subThemes: {
             name: string;
             description: string;
@@ -155,7 +156,6 @@ export declare const ResponseSchemas: {
             relatedFiles: string[];
         }[];
         shouldExpand: boolean;
-        reasoning: string;
     }>;
     domain_extraction: z.ZodObject<{
         domains: z.ZodArray<z.ZodObject<{
@@ -165,27 +165,27 @@ export declare const ResponseSchemas: {
             userValue: z.ZodString;
         }, "strip", z.ZodTypeAny, {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }, {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }>, "many">;
     }, "strip", z.ZodTypeAny, {
         domains: {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }[];
     }, {
         domains: {
             themes: string[];
-            userValue: string;
             confidence: number;
+            userValue: string;
             domain: string;
         }[];
     }>;
@@ -194,12 +194,12 @@ export declare const ResponseSchemas: {
         alternativeNames: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
         reasoning: z.ZodString;
     }, "strip", z.ZodTypeAny, {
-        themeName: string;
         reasoning: string;
+        themeName: string;
         alternativeNames?: string[] | undefined;
     }, {
-        themeName: string;
         reasoning: string;
+        themeName: string;
         alternativeNames?: string[] | undefined;
     }>;
     batch_similarity: z.ZodObject<{

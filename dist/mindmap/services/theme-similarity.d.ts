@@ -13,7 +13,6 @@ export interface SimilarityEffectiveness {
 export declare class ThemeSimilarityService {
     private config;
     private similarityCache;
-    private similarityCalculator;
     private aiSimilarityService;
     private businessDomainService;
     private themeNamingService;

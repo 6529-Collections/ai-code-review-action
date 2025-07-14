@@ -26,11 +26,6 @@ export declare class AISemanticAnalyzer {
      */
     private validateSemanticAnalysis;
     /**
-     * Create fallback analysis when AI fails
-     * PRD: "Graceful degradation - always provide meaningful output"
-     */
-    private createFallbackAnalysis;
-    /**
      * Analyze file purpose from content using AI
      * PRD: "File type intelligence" - understand actual purpose, not just extension
      */
@@ -43,10 +38,6 @@ export declare class AISemanticAnalyzer {
      * Create AI file context from analysis result
      */
     private createAIFileContext;
-    /**
-     * Create fallback file context when AI analysis fails
-     */
-    private createFallbackFileContext;
     /**
      * Analyze related changes across multiple files
      * PRD: "Cross-file relationships and patterns"
